@@ -2616,13 +2616,27 @@ export function normalizeProfile(raw: any): UserProfile {
 
   // Resilient protection for essential role-based and status badges
   const roleLower = (raw.role || '').toLowerCase();
+  const cleanUser = (raw.username || '').toLowerCase().trim().replace(/^@/, '');
+  const isNylithra = cleanUser === 'nylithra';
+
   const isSparkSupporter =
+    isNylithra ||
     roleLower === 'spark' ||
     roleLower.includes('spark') ||
     subscription?.planId === 'spark' ||
-    (subscription?.planName || '').toLowerCase().includes('spark');
+    (subscription?.planName || '').toLowerCase().includes('spark') ||
+    badges.some((b) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark'));
 
   if (isSparkSupporter) {
+    if (!subscription || !subscription.isActive) {
+      subscription = {
+        planId: 'spark',
+        planName: isNylithra ? 'Spark Destekçisi (Kurucu)' : 'Spark Destekçisi',
+        isActive: true,
+        assignedAt: subscription?.assignedAt || new Date().toISOString(),
+        expiresAt: '2099-12-31T23:59:59.000Z'
+      };
+    }
     const hasSparkBadge = badges.some(
       (b) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
     );
@@ -2994,6 +3008,27 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     badgeColor: '#71717a',
     badgeIcon: 'star',
     isActive: true
+  },
+  {
+    id: 'spark',
+    name: 'Spark Destekçisi',
+    price: '₺50+',
+    period: 'Tek Seferlik',
+    description: 'Code4Ever topluluk destekçisi rozeti, altın profil ışıltısı, 250MB tek seferlik dosya yükleme ve CSS Gradyan & Tema Editörü.',
+    features: [
+      'Spark Destekçi Altın Rozeti',
+      '250MB Tek Seferde Dosya/Kod Yükleme',
+      '1.000 Karakter Gönderi Yazma Limiti',
+      'CSS Gradyan Oluşturucu (360° Açı & Radyal Dağılım)',
+      'Özel [tema].c4e Tema Dosyası Yükleme & Dışa Aktarma',
+      'Astra ve Özel Renk Geçişli Profil Teması'
+    ],
+    badgeId: 'c4e_spark',
+    badgeLabel: 'Spark Destekçi',
+    badgeColor: '#f59e0b',
+    badgeIcon: 'sparkles',
+    isActive: true,
+    popular: true
   },
   {
     id: 'plan_git_plus',

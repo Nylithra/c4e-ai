@@ -1303,11 +1303,19 @@ export default function App() {
             />
           )}
 
-          {(activeTab === 'support' || activeTab === 'subscriptions') && (
+          {activeTab === 'support' && (
             <SupportView
               user={user}
               language={language}
               onUpdateUser={handleUpdateProfile}
+            />
+          )}
+
+          {activeTab === 'subscriptions' && (
+            <SubscriptionsView
+              plans={subscriptionPlans}
+              user={user}
+              language={language}
             />
           )}
 

@@ -19,12 +19,14 @@ import {
   Globe,
   GitBranch,
   Star,
-  GitFork
+  GitFork,
+  Palette
 } from 'lucide-react';
 import { UserProfile, Community } from '../types';
 import { UserBadges } from './UserBadges';
 import { sanitizeUrl } from '../utils/securityHelper';
 import { getSupabaseClient, loadStoredAllUsers, normalizeProfile } from '../services/supabaseClient';
+import { AppThemeConfig } from '../utils/themeHelper';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -395,90 +397,128 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           </div>
         ) : profileData ? (
           /* USER PROFILE VIEW */
-          <div>
-            {/* Banner */}
-            <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
-              <img
-                src={
-                  profileData.banner_url ||
-                  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
-                }
-                alt="Profile Banner"
-                className="w-full h-full object-cover opacity-80"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#121215] via-transparent to-black/30" />
-            </div>
-
-            {/* Main Info */}
-            <div className="px-5 pb-5 relative">
-              {/* Avatar & Follow Button */}
-              <div className="flex justify-between items-end -mt-12 mb-3">
-                <div className="relative">
-                  <img
-                    src={
-                      profileData.avatar_url ||
-                      `https://unavatar.io/github/${profileData.username}`
-                    }
-                    alt={profileData.display_name}
-                    className="w-20 h-20 rounded-2xl object-cover ring-4 ring-[#121215] shadow-xl bg-zinc-900"
-                  />
+          (() => {
+            const profileTheme = profileData.custom_fields?.theme as AppThemeConfig | undefined;
+            return (
+              <div
+                style={{
+                  backgroundColor: profileTheme?.main || '#121215',
+                  color: profileTheme?.text || undefined
+                }}
+              >
+                {/* Banner */}
+                <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
+                  {profileTheme?.isGradient && profileTheme.gradientCss ? (
+                    <div
+                      className="w-full h-full absolute inset-0 opacity-85"
+                      style={{ background: profileTheme.gradientCss }}
+                    />
+                  ) : (
+                    <img
+                      src={
+                        profileData.banner_url ||
+                        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
+                      }
+                      alt="Profile Banner"
+                      className="w-full h-full object-cover opacity-80"
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
                 </div>
 
-                {currentUser.username?.toLowerCase() !== profileData.username?.toLowerCase() && (
-                  <div className="flex items-center gap-2">
-                    {onStartDirectChat && (
-                      <button
-                        onClick={() => {
-                          onStartDirectChat(profileData);
-                          onClose();
-                        }}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
-                        title={language === 'tr' ? 'Mesaj Gönder' : 'Send Message'}
-                      >
-                        <Mail className="w-3.5 h-3.5 text-blue-400" />
-                        <span>{language === 'tr' ? 'Mesaj' : 'Message'}</span>
-                      </button>
+                {/* Main Info */}
+                <div className="px-5 pb-5 relative">
+                  {/* Avatar & Follow Button */}
+                  <div className="flex justify-between items-end -mt-12 mb-3">
+                    <div className="relative">
+                      <img
+                        src={
+                          profileData.avatar_url ||
+                          `https://unavatar.io/github/${profileData.username}`
+                        }
+                        alt={profileData.display_name}
+                        className="w-20 h-20 rounded-2xl object-cover ring-4 ring-[#121215] shadow-xl bg-zinc-900"
+                      />
+                    </div>
+
+                    {currentUser.username?.toLowerCase() !== profileData.username?.toLowerCase() && (
+                      <div className="flex items-center gap-2">
+                        {onStartDirectChat && (
+                          <button
+                            onClick={() => {
+                              onStartDirectChat(profileData);
+                              onClose();
+                            }}
+                            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+                            title={language === 'tr' ? 'Mesaj Gönder' : 'Send Message'}
+                          >
+                            <Mail className="w-3.5 h-3.5 text-blue-400" />
+                            <span>{language === 'tr' ? 'Mesaj' : 'Message'}</span>
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => setIsFollowing(!isFollowing)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer ${
+                            isFollowing
+                              ? 'bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 border border-zinc-700 text-zinc-300'
+                              : 'text-white'
+                          }`}
+                          style={{
+                            backgroundColor: !isFollowing ? (profileTheme?.buttons || '#2563eb') : undefined
+                          }}
+                        >
+                          {isFollowing ? (
+                            <>
+                              <UserCheck className="w-3.5 h-3.5" />
+                              <span>{language === 'tr' ? 'Takip Ediliyor' : 'Following'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="w-3.5 h-3.5" />
+                              <span>{language === 'tr' ? 'Takip Et' : 'Follow'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     )}
-
-                    <button
-                      onClick={() => setIsFollowing(!isFollowing)}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer ${
-                        isFollowing
-                          ? 'bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 border border-zinc-700 text-zinc-300'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white'
-                      }`}
-                    >
-                      {isFollowing ? (
-                        <>
-                          <UserCheck className="w-3.5 h-3.5" />
-                          <span>{language === 'tr' ? 'Takip Ediliyor' : 'Following'}</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus className="w-3.5 h-3.5" />
-                          <span>{language === 'tr' ? 'Takip Et' : 'Follow'}</span>
-                        </>
-                      )}
-                    </button>
                   </div>
-                )}
-              </div>
 
-              {/* Names & Bio */}
-              <div className="space-y-2">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-base font-extrabold text-white">{profileData.display_name}</h3>
-                    <UserBadges user={profileData} showTextLabels={false} />
-                  </div>
-                  <span className="text-xs text-zinc-400 font-mono">@{profileData.username}</span>
-                </div>
+                  {/* Names & Bio */}
+                  <div className="space-y-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base font-extrabold text-white">{profileData.display_name}</h3>
+                        <UserBadges user={profileData} showTextLabels={false} />
+                        {profileTheme?.name && (
+                          <span
+                            className="px-2 py-0.5 rounded-md text-[10px] font-mono border flex items-center gap-1 font-bold shadow-sm"
+                            style={{
+                              borderColor: `${profileTheme.buttons || '#a855f7'}60`,
+                              backgroundColor: `${profileTheme.buttons || '#a855f7'}15`,
+                              color: profileTheme.buttons || '#c084fc'
+                            }}
+                            title={language === 'tr' ? 'Özel Profil Teması' : 'Custom Profile Theme'}
+                          >
+                            <Palette className="w-2.5 h-2.5" />
+                            <span>{profileTheme.name}</span>
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-zinc-400 font-mono">@{profileData.username}</span>
+                    </div>
 
-                {profileData.bio && (
-                  <p className="text-xs text-zinc-300 leading-relaxed font-sans bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800/80">
-                    {profileData.bio}
-                  </p>
-                )}
+                    {profileData.bio && (
+                      <p
+                        className="text-xs leading-relaxed font-sans p-3 rounded-2xl border border-zinc-800/80"
+                        style={{
+                          backgroundColor: profileTheme?.profile || 'rgba(9, 9, 11, 0.6)',
+                          color: profileTheme?.text || '#d4d4d8'
+                        }}
+                      >
+                        {profileData.bio}
+                      </p>
+                    )}
 
                 {/* Metadata */}
                 <div className="pt-2 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-zinc-400 font-mono">
@@ -617,7 +657,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               )}
             </div>
           </div>
-        ) : null}
+        );
+      })()
+    ) : null}
       </div>
     </div>
   );

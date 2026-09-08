@@ -1718,15 +1718,27 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
 
             {(() => {
-              const activeSupporters = allUsers.filter(
-                (u) =>
-                  (u.role || '').toLowerCase() === 'spark' ||
-                  u.subscription?.planId === 'spark' ||
-                  u.badges?.some(
-                    (b) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
-                  ) ||
-                  Boolean(u.subscription?.isActive)
-              );
+              const isSupporterOrSubscriber = (u: any) => {
+                const username = (u.username || '').toLowerCase().trim().replace(/^@/, '');
+                if (username === 'nylithra') return true;
+                const role = (u.role || '').toLowerCase();
+                if (role.includes('spark') || role === 'admin' || role === 'founder' || role.includes('yetkili')) return true;
+                if (u.subscription?.planId === 'spark' || Boolean(u.subscription?.isActive)) return true;
+                return u.badges?.some(
+                  (b: any) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
+                );
+              };
+
+              // Make sure currentUser if nylithra is merged in if somehow absent
+              let userList = [...allUsers];
+              if (
+                currentUser.username?.toLowerCase() === 'nylithra' &&
+                !userList.some((u) => (u.username || '').toLowerCase() === 'nylithra')
+              ) {
+                userList.unshift(currentUser);
+              }
+
+              const activeSupporters = userList.filter(isSupporterOrSubscriber);
 
               if (activeSupporters.length === 0) {
                 return (
@@ -1739,10 +1751,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {activeSupporters.map((supporter) => {
+                    const isNylithra = (supporter.username || '').toLowerCase().replace(/^@/, '') === 'nylithra';
                     const isSpark =
+                      isNylithra ||
                       (supporter.role || '').toLowerCase() === 'spark' ||
+                      supporter.subscription?.planId === 'spark' ||
                       supporter.badges?.some(
-                        (b) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
+                        (b: any) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
                       );
 
                     return (

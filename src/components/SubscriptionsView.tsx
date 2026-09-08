@@ -8,10 +8,12 @@ import {
   Zap,
   Gift,
   HelpCircle,
-  AlertCircle
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { SubscriptionPlan, UserProfile } from '../types';
 import { UserBadges } from './UserBadges';
+import { isUserSpark } from '../utils/fileUploadHelper';
 
 interface SubscriptionsViewProps {
   plans: SubscriptionPlan[];
@@ -26,6 +28,9 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
 }) => {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [selectedPlanInfo, setSelectedPlanInfo] = useState<SubscriptionPlan | null>(null);
+
+  const isNylithra = (user.username || '').toLowerCase().replace(/^@/, '') === 'nylithra';
+  const isSparkSupporter = isNylithra || isUserSpark(user) || user.subscription?.planId === 'spark';
 
   const activePlans = plans.filter((p) => p.isActive);
 
@@ -49,6 +54,38 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
             ? 'Code4Ever topluluğuna destek olun, profilinizde özel unvan rozetleri kazanın ve yapay zeka ayrıcalıklarının tadını çıkarın.'
             : 'Support the Code4Ever community, earn exclusive profile badges, and enjoy advanced AI features.'}
         </p>
+
+        {/* Active Supporter Status Card */}
+        {isSparkSupporter && (
+          <div className="p-5 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl text-left">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center flex-shrink-0 shadow-lg shadow-amber-950/40">
+                <Sparkles className="w-6 h-6 fill-amber-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-extrabold text-white">
+                    {language === 'tr' ? 'Mevcut Aboneliğiniz: Spark Destekçisi' : 'Current Subscription: Spark Supporter'}
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-mono font-bold">
+                    {isNylithra ? (language === 'tr' ? 'KURUCU & ÖMÜR BOYU' : 'FOUNDER & LIFETIME') : (language === 'tr' ? 'ÖMÜR BOYU AKTİF' : 'LIFETIME ACTIVE')}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-300 mt-0.5 leading-relaxed">
+                  {language === 'tr'
+                    ? 'Hesabınızda Spark Destekçi ayrıcalıkları (250MB dosya yükleme, 1000 karakter sınırı, CSS Gradyan & Tema Oluşturucu) aktiftir.'
+                    : 'Spark Supporter perks (250MB upload, 1000 character limit, CSS Gradient & Theme Generator) are active.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs font-mono text-emerald-400 font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{language === 'tr' ? 'Abonelik Aktif' : 'Subscription Active'}</span>
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Notice: Purchases Closed */}
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold shadow-md">
@@ -93,7 +130,9 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
       {/* Plans Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {activePlans.map((plan) => {
-          const isCurrentPlan = user.subscription?.planId === plan.id && user.subscription.isActive;
+          const isCurrentPlan =
+            (user.subscription?.planId === plan.id && user.subscription.isActive) ||
+            (plan.id === 'spark' && isSparkSupporter);
 
           return (
             <div

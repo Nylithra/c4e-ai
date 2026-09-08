@@ -17,9 +17,18 @@ import {
   Users,
   Bot,
   Layers,
-  Check
+  Check,
+  Palette,
+  Download,
+  FileCode,
+  Sliders,
+  Sun,
+  Moon,
+  Lock,
+  RefreshCw,
+  FolderDown
 } from 'lucide-react';
-import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
+import { validateFileSize, notifyFileSizeExceeded, isUserSpark } from '../utils/fileUploadHelper';
 import { isPWARunningStandalone } from '../utils/pwaHelper';
 import {
   getNotificationPermission,
@@ -28,6 +37,18 @@ import {
 } from '../utils/notificationSound';
 import { IntegrationsSettings } from './IntegrationsSettings';
 import { sanitizeUrl } from '../utils/securityHelper';
+import {
+  PRESET_THEMES,
+  AppThemeConfig,
+  GradientStop,
+  getEffectiveTheme,
+  applyThemeToDom,
+  parseC4ETheme,
+  downloadC4EThemeFile,
+  serializeC4ETheme,
+  buildGradientCss
+} from '../utils/themeHelper';
+import { CssGradientGenerator } from './CssGradientGenerator';
 
 interface SettingsViewProps {
   user: UserProfile;
@@ -38,7 +59,7 @@ interface SettingsViewProps {
   onOpenInstallPWA?: () => void;
 }
 
-type SettingsSection = 'overview' | 'profile' | 'integrations' | 'notifications' | 'privacy' | 'preferences';
+type SettingsSection = 'overview' | 'profile' | 'appearance' | 'integrations' | 'notifications' | 'privacy' | 'preferences';
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   user,
@@ -73,11 +94,121 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isStandalone, setIsStandalone] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
 
+  const isSpark = isUserSpark(user) || (user.username || '').toLowerCase() === 'nylithra';
+  const [currentTheme, setCurrentTheme] = useState<AppThemeConfig>(() => getEffectiveTheme(user));
+  const [themeSaveSuccess, setThemeSaveSuccess] = useState(false);
+  const themeFileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     setIsStandalone(isPWARunningStandalone());
     setNotifPermission(getNotificationPermission());
     setFormData(getInitialFormData(user));
+    const eff = getEffectiveTheme(user);
+    setCurrentTheme(eff);
   }, [user]);
+
+  const handleSelectPresetTheme = (preset: AppThemeConfig) => {
+    if (preset.isSparkExclusive && !isSpark) {
+      alert(language === 'tr' ? 'Bu gradyant tema Spark Destekçilerine özeldir. Standart renkleri dilediğiniz gibi özelleştirebilirsiniz.' : 'This gradient theme is exclusive to Spark Supporters.');
+      return;
+    }
+    const updated: AppThemeConfig = {
+      ...preset,
+      id: `theme_${Date.now()}`
+    };
+    setCurrentTheme(updated);
+    applyThemeToDom(updated);
+  };
+
+  const handleThemeColorField = (field: 'text' | 'main' | 'buttons' | 'profile' | 'font', value: string) => {
+    const updated: AppThemeConfig = {
+      ...currentTheme,
+      [field]: value
+    };
+    setCurrentTheme(updated);
+    applyThemeToDom(updated);
+  };
+
+  const handleGradientChange = (data: {
+    stops: GradientStop[];
+    gradientType: 'linear' | 'radial';
+    gradientAngle: number;
+    radialShape: 'circle' | 'ellipse';
+    css: string;
+  }) => {
+    const updated: AppThemeConfig = {
+      ...currentTheme,
+      isGradient: true,
+      gradientType: data.gradientType,
+      gradientAngle: data.gradientAngle,
+      radialShape: data.radialShape,
+      stops: data.stops,
+      gradientCss: data.css
+    };
+    setCurrentTheme(updated);
+    applyThemeToDom(updated);
+  };
+
+  const handleSaveTheme = () => {
+    applyThemeToDom(currentTheme);
+    const updatedUser: UserProfile = {
+      ...user,
+      ...formData,
+      theme_color: currentTheme.main,
+      accent_color: currentTheme.buttons,
+      custom_fields: {
+        ...(user.custom_fields || {}),
+        ...(formData.custom_fields || {}),
+        theme: currentTheme
+      }
+    };
+    setFormData(updatedUser);
+    onUpdateProfile(updatedUser);
+    setThemeSaveSuccess(true);
+    setTimeout(() => setThemeSaveSuccess(false), 3000);
+  };
+
+  const handleC4EFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!isSpark) {
+      alert(language === 'tr' ? 'Özel .c4e tema dosyası yükleme Spark Destekçilerine özeldir!' : '.c4e theme upload is exclusive to Spark Supporters!');
+      if (themeFileInputRef.current) themeFileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      if (content) {
+        try {
+          const parsed = parseC4ETheme(content, file.name.replace(/\.c4e$/i, ''));
+          setCurrentTheme(parsed);
+          applyThemeToDom(parsed);
+          const updatedUser: UserProfile = {
+            ...user,
+            ...formData,
+            theme_color: parsed.main,
+            accent_color: parsed.buttons,
+            custom_fields: {
+              ...(user.custom_fields || {}),
+              ...(formData.custom_fields || {}),
+              theme: parsed
+            }
+          };
+          setFormData(updatedUser);
+          onUpdateProfile(updatedUser);
+          setThemeSaveSuccess(true);
+          setTimeout(() => setThemeSaveSuccess(false), 3000);
+        } catch (err) {
+          console.error('Failed to parse .c4e theme file', err);
+        }
+      }
+    };
+    reader.readAsText(file);
+    if (themeFileInputRef.current) themeFileInputRef.current.value = '';
+  };
 
   const handleRequestNotif = async () => {
     const res = await requestNotificationPermission();
@@ -180,6 +311,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const sectionTitles: Record<SettingsSection, string> = {
     overview: language === 'tr' ? 'Ayarlar' : 'Settings',
     profile: language === 'tr' ? 'Profil Bilgilerini Düzenle' : 'Edit Profile Information',
+    appearance: language === 'tr' ? 'Görünüm, Temalar & Gradyan Editörü' : 'Appearance, Themes & Gradient Editor',
     integrations: language === 'tr' ? 'Webhook & Entegrasyonlar' : 'Webhook & Integrations',
     notifications: language === 'tr' ? 'Bildirimler & Ses' : 'Notifications & Sound',
     privacy: language === 'tr' ? 'Grup & Gizlilik Ayarları' : 'Group & Privacy Settings',
@@ -241,6 +373,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {/* Navigation Grid / List */}
             <div className="grid grid-cols-1 gap-2.5">
+              {/* Appearance & Themes */}
+              <button
+                type="button"
+                onClick={() => setActiveSection('appearance')}
+                className="w-full flex items-center justify-between p-4 rounded-2xl bg-[#0c0c0e] hover:bg-zinc-900/60 border border-purple-900/30 hover:border-purple-800/60 transition-all text-left group cursor-pointer shadow-lg shadow-purple-950/10"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-purple-950/60 text-purple-400 border border-purple-900/40 group-hover:scale-105 transition-transform">
+                    <Palette className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white block group-hover:text-purple-400 transition-colors">
+                        {language === 'tr' ? 'Görünüm, Temalar & CSS Gradyan Editörü' : 'Appearance, Themes & CSS Gradient Editor'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[9px] font-mono font-bold flex items-center gap-1">
+                        <Sparkles className="w-2.5 h-2.5 fill-amber-400" />
+                        <span>SPARK .C4E</span>
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-zinc-400 font-mono block">
+                      {language === 'tr'
+                        ? 'Astra teması, açık/koyu mod, renk geçişleri ve .c4e tema yükleme'
+                        : 'Astra theme, light/dark mode, color gradients and .c4e theme upload'}
+                    </span>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" />
+              </button>
+
               {/* 1. Integrations */}
               <button
                 type="button"
@@ -570,6 +732,389 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span>{language === 'tr' ? 'Sistem ve Sesli Bildirimler Etkin' : 'System and Sound Notifications Enabled'}</span>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Appearance, Themes & Gradient Generator Section */}
+        {activeSection === 'appearance' && (
+          <div className="space-y-6">
+            {/* Header / Intro Card */}
+            <div className="bg-[#0c0c0e] border border-zinc-800/80 rounded-3xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/60 pb-5">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-purple-950/60 text-purple-400 border border-purple-900/40">
+                      <Palette className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-base font-bold text-white">
+                      {language === 'tr' ? 'Özel Temalar & CSS Renk Geçişleri' : 'Custom Themes & CSS Gradients'}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    {language === 'tr'
+                      ? 'Tema renklerini özelleştirin, CSS gradyanları oluşturun ve profilinizi renklendirin. Profilinizi ziyaret eden diğer kullanıcılar sizin seçtiğiniz temayı görecektir!'
+                      : 'Customize theme colors, build CSS gradients, and style your profile. Other developers viewing your profile will see your chosen theme!'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {isSpark ? (
+                    <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                      <Sparkles className="w-4 h-4 fill-amber-400" />
+                      <span>{language === 'tr' ? 'Spark Ayrıcalığı Aktif' : 'Spark Perks Active'}</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-medium flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-zinc-500" />
+                      <span>{language === 'tr' ? 'Standart Üye' : 'Standard Member'}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {themeSaveSuccess && (
+                <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl text-emerald-400 font-mono text-xs flex items-center gap-2.5 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                  <span>
+                    {language === 'tr'
+                      ? 'Temanız başarıyla kaydedildi ve profilinize uygulandı! Diğer kullanıcılar profilinizi bu temayla görecektir.'
+                      : 'Theme successfully saved and applied! Visitors will now see your profile in this style.'}
+                  </span>
+                </div>
+              )}
+
+              {/* Preset Themes */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider font-mono">
+                    {language === 'tr' ? 'Hazır Temalar' : 'Preset Themes'}
+                  </label>
+                  <span className="text-[11px] text-zinc-500">
+                    {language === 'tr' ? 'Seçmek için tıklayın' : 'Click to select'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {PRESET_THEMES.map((preset) => {
+                    const isSelected = currentTheme.name === preset.name;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleSelectPresetTheme(preset)}
+                        className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group cursor-pointer ${
+                          isSelected
+                            ? 'border-purple-500 ring-2 ring-purple-500/30 bg-purple-950/20'
+                            : 'border-zinc-800/80 bg-zinc-950 hover:border-zinc-700'
+                        }`}
+                      >
+                        {/* Theme preview ribbon */}
+                        <div
+                          className="h-10 w-full rounded-xl mb-3 border border-white/10 shadow-inner flex items-center justify-center text-xs font-bold"
+                          style={{
+                            background: preset.isGradient ? preset.gradientCss : preset.main,
+                            color: preset.text
+                          }}
+                        >
+                          <span
+                            className="px-2.5 py-0.5 rounded-lg text-[10px] font-mono shadow-sm"
+                            style={{ background: preset.buttons, color: '#ffffff' }}
+                          >
+                            Button
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors">
+                              {preset.name}
+                            </p>
+                            <p className="text-[10px] text-zinc-500 font-mono">
+                              {preset.isGradient ? 'Gradient / Renk Geçişli' : 'Solid / Düz'}
+                            </p>
+                          </div>
+
+                          {preset.isSparkExclusive && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border border-amber-500/30">
+                              <Sparkles className="w-2.5 h-2.5 fill-amber-400" />
+                              <span>Spark</span>
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Core Theme Colors (HTML Color Codes - Everyone can edit) */}
+            <div className="bg-[#0c0c0e] border border-zinc-800/80 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-zinc-800/60 pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-blue-400" />
+                    <span>{language === 'tr' ? 'Tema Renkleri & Yazı Tipi' : 'Theme Colors & Font'}</span>
+                  </h4>
+                  <p className="text-[11px] text-zinc-400">
+                    {language === 'tr'
+                      ? 'Herkes bu renkleri istediği gibi değiştirebilir (#HTML kodları).'
+                      : 'Everyone can edit these colors as desired (#HTML color codes).'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 1. Main Background Color */}
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono font-bold text-zinc-300">
+                      main: # <span className="text-zinc-500 font-normal">({language === 'tr' ? 'Ana Arka Plan' : 'Main Background'})</span>
+                    </label>
+                    <div
+                      className="w-5 h-5 rounded-full border border-zinc-700 shadow-sm"
+                      style={{ backgroundColor: currentTheme.main }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={currentTheme.main.startsWith('#') ? currentTheme.main : '#09090b'}
+                      onChange={(e) => handleThemeColorField('main', e.target.value)}
+                      className="w-9 h-9 rounded-xl border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <input
+                      type="text"
+                      value={currentTheme.main}
+                      onChange={(e) => handleThemeColorField('main', e.target.value)}
+                      placeholder="#09090b"
+                      className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 2. Text Color */}
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono font-bold text-zinc-300">
+                      text: # <span className="text-zinc-500 font-normal">({language === 'tr' ? 'Yazı Rengi' : 'Text Color'})</span>
+                    </label>
+                    <div
+                      className="w-5 h-5 rounded-full border border-zinc-700 shadow-sm"
+                      style={{ backgroundColor: currentTheme.text }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={currentTheme.text.startsWith('#') ? currentTheme.text : '#f8fafc'}
+                      onChange={(e) => handleThemeColorField('text', e.target.value)}
+                      className="w-9 h-9 rounded-xl border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <input
+                      type="text"
+                      value={currentTheme.text}
+                      onChange={(e) => handleThemeColorField('text', e.target.value)}
+                      placeholder="#f8fafc"
+                      className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 3. Buttons Color */}
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono font-bold text-zinc-300">
+                      buttons: # <span className="text-zinc-500 font-normal">({language === 'tr' ? 'Buton & Vurgu' : 'Button & Accent'})</span>
+                    </label>
+                    <div
+                      className="w-5 h-5 rounded-full border border-zinc-700 shadow-sm"
+                      style={{ backgroundColor: currentTheme.buttons }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={currentTheme.buttons.startsWith('#') ? currentTheme.buttons : '#6366f1'}
+                      onChange={(e) => handleThemeColorField('buttons', e.target.value)}
+                      className="w-9 h-9 rounded-xl border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <input
+                      type="text"
+                      value={currentTheme.buttons}
+                      onChange={(e) => handleThemeColorField('buttons', e.target.value)}
+                      placeholder="#6366f1"
+                      className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 4. Profile Card Color */}
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono font-bold text-zinc-300">
+                      profile: # <span className="text-zinc-500 font-normal">({language === 'tr' ? 'Profil Kartı' : 'Profile Card'})</span>
+                    </label>
+                    <div
+                      className="w-5 h-5 rounded-full border border-zinc-700 shadow-sm"
+                      style={{ backgroundColor: currentTheme.profile }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={currentTheme.profile.startsWith('#') ? currentTheme.profile : '#121118'}
+                      onChange={(e) => handleThemeColorField('profile', e.target.value)}
+                      className="w-9 h-9 rounded-xl border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <input
+                      type="text"
+                      value={currentTheme.profile}
+                      onChange={(e) => handleThemeColorField('profile', e.target.value)}
+                      placeholder="#121118"
+                      className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 5. Font Link */}
+                <div className="sm:col-span-2 p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                  <label className="text-xs font-mono font-bold text-zinc-300">
+                    font: &lt;fontlinki&gt; <span className="text-zinc-500 font-normal">({language === 'tr' ? 'Google Fonts Linki veya Boş Bırakın' : 'Google Fonts Link or Leave Empty for Site Font'})</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={currentTheme.font}
+                    onChange={(e) => handleThemeColorField('font', e.target.value)}
+                    placeholder="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans..."
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="text-[10px] text-zinc-500">
+                    {language === 'tr'
+                      ? 'Boş bırakırsanız sitenin kendi yazı tipi kullanılır.'
+                      : 'If left empty, the platform default typography will be used.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* CSS Gradient (Renk Geçişi) Oluşturucu Modülü */}
+            <div className="bg-[#0c0c0e] border border-zinc-800/80 rounded-3xl p-6 space-y-4">
+              <CssGradientGenerator
+                stops={currentTheme.stops || [
+                  { id: '1', color: '#3b0764', position: 0 },
+                  { id: '2', color: '#1e1b4b', position: 50 },
+                  { id: '3', color: '#09090b', position: 100 }
+                ]}
+                gradientAngle={currentTheme.gradientAngle ?? 135}
+                gradientType={currentTheme.gradientType ?? 'linear'}
+                radialShape={currentTheme.radialShape ?? 'circle'}
+                isSpark={isSpark}
+                language={language}
+                onChange={handleGradientChange}
+              />
+            </div>
+
+            {/* .c4e Theme File Upload & Export (Spark Supporter Exclusive) */}
+            <div className="bg-[#0c0c0e] border border-zinc-800/80 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-zinc-800/60 pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <FileCode className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-sm font-bold text-white">
+                      {language === 'tr' ? 'Tema Dosyası (.c4e) İşlemleri' : 'Theme File (.c4e) Actions'}
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[9px] font-mono font-bold">
+                      SPARK ÖZEL
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    {language === 'tr'
+                      ? 'Spark Destekçileri [temaadı].c4e dosyasını sisteme yükleyebilir ve mevcut temalarını dışa aktarabilir.'
+                      : 'Spark Supporters can upload [themename].c4e files and export their custom themes.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Format explanation box */}
+              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2 font-mono text-xs">
+                <div className="text-zinc-400 text-[11px] font-bold">
+                  {language === 'tr' ? '.c4e Dosya Yapısı Şablonu:' : '.c4e File Structure Template:'}
+                </div>
+                <div className="p-3 rounded-xl bg-black/60 border border-zinc-800 text-purple-300 select-all whitespace-pre text-[11px] leading-relaxed">
+{`text: ${currentTheme.text}
+main: ${currentTheme.main}
+buttons: ${currentTheme.buttons}
+profile: ${currentTheme.profile}
+font: ${currentTheme.font || '<fontlinki>'}`}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <input
+                  type="file"
+                  ref={themeFileInputRef}
+                  accept=".c4e,.txt"
+                  onChange={handleC4EFileUpload}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isSpark) {
+                      alert(language === 'tr' ? 'Tema dosyası yükleme Spark Destekçilerine özeldir. Lütfen Spark Destekçisi olun!' : 'Uploading .c4e themes is exclusive to Spark Supporters.');
+                      return;
+                    }
+                    themeFileInputRef.current?.click();
+                  }}
+                  className={`px-4 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                    isSpark
+                      ? 'bg-amber-600 hover:bg-amber-500 text-zinc-950 border-amber-500 shadow-lg shadow-amber-600/20'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>{language === 'tr' ? 'Tema Dosyası Yükle (.c4e)' : 'Upload Theme File (.c4e)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => downloadC4EThemeFile(currentTheme)}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white text-xs font-bold flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-cyan-400" />
+                  <span>{language === 'tr' ? 'Mevcut Temayı .c4e Olarak İndir' : 'Download Current as .c4e'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Save Bar */}
+            <div className="p-4 rounded-3xl bg-zinc-950 border border-purple-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 sticky bottom-4 shadow-2xl backdrop-blur-xl ring-1 ring-purple-500/20">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-8 h-8 rounded-full border border-white/20 shadow-sm flex-shrink-0"
+                  style={{ background: currentTheme.isGradient ? currentTheme.gradientCss : currentTheme.main }}
+                />
+                <div>
+                  <span className="text-xs font-bold text-white block">
+                    {currentTheme.name || 'Özel Tema'}
+                  </span>
+                  <span className="text-[11px] text-zinc-400 font-mono block">
+                    {language === 'tr' ? 'Profiliniz ve uygulamanız için geçerli tema' : 'Theme applied to your profile and app'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveTheme}
+                className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-xl shadow-purple-600/30 active:scale-95 transition-all cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>{language === 'tr' ? 'Değişiklikleri Kaydet & Profilime Uygula' : 'Save & Apply to Profile'}</span>
+              </button>
             </div>
           </div>
         )}

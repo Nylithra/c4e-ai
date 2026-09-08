@@ -29,11 +29,13 @@ import {
   Sparkles,
   Globe,
   Mail,
-  Lock
+  Lock,
+  Palette
 } from 'lucide-react';
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { validateUsername, sanitizeText, sanitizeUrl, checkUsernameAvailability, verifyAdminAccess } from '../utils/securityHelper';
 import { ShowcaseReposModal } from './ShowcaseReposModal';
+import { AppThemeConfig } from '../utils/themeHelper';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -283,6 +285,8 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
 
   const isLikesHidden = !isOwnProfile && (user.show_liked_posts === false || formData.show_liked_posts === false);
 
+  const profileTheme = (formData.custom_fields?.theme || user.custom_fields?.theme) as AppThemeConfig | undefined;
+
   const displayedList =
     profileTab === 'posts'
       ? userAuthoredPosts
@@ -293,15 +297,28 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
       : userMediaPosts;
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
+    <div
+      className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 transition-colors"
+      style={{
+        backgroundColor: profileTheme?.main || '#09090b',
+        color: profileTheme?.text || undefined
+      }}
+    >
       <div className="relative group">
         <div className="h-44 w-full overflow-hidden bg-zinc-900 relative">
-          <img
-            src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
-            alt="Profile Banner"
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-transparent to-black/30" />
+          {profileTheme?.isGradient && profileTheme.gradientCss ? (
+            <div
+              className="w-full h-full absolute inset-0 opacity-85 transition-all"
+              style={{ background: profileTheme.gradientCss }}
+            />
+          ) : (
+            <img
+              src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
+              alt="Profile Banner"
+              className="w-full h-full object-cover"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
         </div>
 
         <div className="px-6 relative -mt-14 flex items-end justify-between pb-4 border-b border-zinc-800/40">
@@ -316,7 +333,11 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
           {isOwnProfile ? (
             <button
               onClick={() => setIsEditing(!isEditing)}
-              className="px-3.5 py-1.5 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-white text-xs font-semibold border border-zinc-700/60 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl text-white text-xs font-semibold border transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              style={{
+                backgroundColor: profileTheme?.buttons || '#27272a',
+                borderColor: profileTheme?.buttons ? `${profileTheme.buttons}90` : '#3f3f46'
+              }}
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>
@@ -329,7 +350,10 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
             onStartDirectChat && (
               <button
                 onClick={() => onStartDirectChat(formData)}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+                className="px-4 py-2 rounded-xl text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+                style={{
+                  backgroundColor: profileTheme?.buttons || '#2563eb'
+                }}
               >
                 <Mail className="w-3.5 h-3.5 text-white" />
                 <span>{language === 'tr' ? 'Mesaj Gönder' : 'Send Message'}</span>
@@ -351,12 +375,31 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-xl font-bold text-white tracking-tight">{formData.display_name}</h2>
             <UserBadges user={formData} showTextLabels={false} />
+            {profileTheme?.name && (
+              <span
+                className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold flex items-center gap-1.5 border shadow-sm"
+                style={{
+                  borderColor: `${profileTheme.buttons || '#a855f7'}60`,
+                  backgroundColor: `${profileTheme.buttons || '#a855f7'}15`,
+                  color: profileTheme.buttons || '#c084fc'
+                }}
+                title={language === 'tr' ? 'Özel Profil Teması' : 'Custom Profile Theme'}
+              >
+                <Palette className="w-3 h-3" />
+                <span>{profileTheme.name}</span>
+              </span>
+            )}
           </div>
-            <p className="text-xs text-zinc-400 font-mono">@{formData.username}</p>
-
+          <p className="text-xs text-zinc-400 font-mono">@{formData.username}</p>
         </div>
 
-        <p className="text-xs text-zinc-300 leading-relaxed bg-[#0c0c0e] p-3 rounded-xl border border-zinc-800/40">
+        <p
+          className="text-xs text-zinc-300 leading-relaxed p-3 rounded-xl border border-zinc-800/40"
+          style={{
+            backgroundColor: profileTheme?.profile || '#0c0c0e',
+            color: profileTheme?.text || undefined
+          }}
+        >
           {formData.bio || (language === 'tr' ? 'Code4Ever geliştirici üyesi.' : 'Code4Ever developer member.')}
         </p>
 
