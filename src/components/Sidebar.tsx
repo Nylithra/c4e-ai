@@ -16,7 +16,6 @@ import {
   ChevronRight,
   Shield,
   Sparkles,
-  Crown,
   Menu,
   X,
   User,
@@ -91,7 +90,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'projects', label: language === 'tr' ? 'Projeler' : 'Projects', icon: Code2 },
     { id: 'communities', label: language === 'tr' ? 'Topluluklar' : 'Communities', icon: Users },
     { id: 'bookmarks', label: language === 'tr' ? 'Yer İşaretleri' : 'Bookmarks', icon: Bookmark },
-    { id: 'subscriptions', label: language === 'tr' ? 'Abonelikler' : 'Subscriptions', icon: Crown },
     { id: 'support', label: language === 'tr' ? 'Destek Ol' : 'Support Us', icon: Sparkles },
     { id: 'settings', label: language === 'tr' ? 'Ayarlar' : 'Settings', icon: Settings },
     ...(hasAdminAccess

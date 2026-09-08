@@ -17,7 +17,8 @@ import {
   CreditCard,
   FileText,
   Send,
-  HelpCircle
+  HelpCircle,
+  Palette
 } from 'lucide-react';
 import { UserProfile, BadgeItem } from '../types';
 import { UserBadges } from './UserBadges';
@@ -289,8 +290,8 @@ export const SupportView: React.FC<SupportViewProps> = ({
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>
                 {language === 'tr'
-                  ? 'Abonelik Durumu: Spark Destekçisi (Ömür Boyu Doğrulanmış)'
-                  : 'Subscription Status: Spark Supporter (Lifetime Verified)'}
+                  ? 'Destekçi Durumu: Spark Destekçisi (Ömür Boyu Doğrulanmış)'
+                  : 'Supporter Status: Spark Supporter (Lifetime Verified)'}
               </span>
             </div>
           </div>
@@ -378,6 +379,15 @@ export const SupportView: React.FC<SupportViewProps> = ({
                 </div>
                 <span>
                   <strong className="text-white">1.000 Harf / Karakter Gönderi Sınırı</strong> — Normal kullanıcılar için 200 harf olan gönderi sınırı Spark Destekçileri için 1.000 harfe yükselir.
+                </span>
+              </li>
+
+              <li className="flex items-start gap-2.5">
+                <div className="p-1 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+                  <Palette className="w-3.5 h-3.5" />
+                </div>
+                <span>
+                  <strong className="text-white">{language === 'tr' ? 'Özel Temalar & CSS Gradyan Editörü' : 'Custom Themes & CSS Gradient Editor'}</strong> — {language === 'tr' ? 'Astra mor/mavi gradyan teması, çoklu renk geçişi oluşturucu ve .c4e tema dosyası yükleme ayrıcalığı.' : 'Astra purple/blue gradient theme, multi-color gradient builder, and .c4e theme file upload privilege.'}
                 </span>
               </li>
 

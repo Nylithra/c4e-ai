@@ -136,6 +136,11 @@ export const PRESET_THEMES: AppThemeConfig[] = [
   }
 ];
 
+export const DEFAULT_DARK_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_default_dark') || PRESET_THEMES[1];
+export const DEFAULT_LIGHT_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_light') || PRESET_THEMES[2];
+
+export const STORAGE_KEY_APP_THEME = 'c4e_app_theme';
+export const STORAGE_KEY_PROFILE_THEME = 'c4e_profile_theme';
 export const STORAGE_KEY_CURRENT_THEME = 'c4e_active_theme_config';
 
 /**
@@ -158,34 +163,34 @@ export function buildGradientCss(
 }
 
 /**
- * Loads user theme from profile or local storage.
+ * Loads the application theme (Uygulama Teması) for the logged-in user.
+ * Applied across Code4Ever for this user.
  */
-export function getEffectiveTheme(user?: Partial<UserProfile> | null): AppThemeConfig {
-  const defaultTheme = PRESET_THEMES[0]; // Astra default or dark
-
-  if (user?.custom_fields?.theme) {
+export function getEffectiveAppTheme(user?: Partial<UserProfile> | null): AppThemeConfig {
+  if (user?.custom_fields?.app_theme) {
+    const t = user.custom_fields.app_theme;
     return {
-      ...defaultTheme,
-      ...user.custom_fields.theme,
-      gradientCss: user.custom_fields.theme.gradientCss || buildGradientCss(
-        user.custom_fields.theme.gradientType || 'linear',
-        user.custom_fields.theme.stops || defaultTheme.stops,
-        user.custom_fields.theme.gradientAngle ?? defaultTheme.gradientAngle
+      ...DEFAULT_DARK_THEME,
+      ...t,
+      gradientCss: t.gradientCss || buildGradientCss(
+        t.gradientType || 'linear',
+        t.stops || DEFAULT_DARK_THEME.stops,
+        t.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
       )
     };
   }
 
   try {
-    const local = localStorage.getItem(STORAGE_KEY_CURRENT_THEME);
+    const local = localStorage.getItem(STORAGE_KEY_APP_THEME) || localStorage.getItem(STORAGE_KEY_CURRENT_THEME);
     if (local) {
       const parsed = JSON.parse(local);
       return {
-        ...defaultTheme,
+        ...DEFAULT_DARK_THEME,
         ...parsed,
         gradientCss: parsed.gradientCss || buildGradientCss(
           parsed.gradientType || 'linear',
-          parsed.stops || defaultTheme.stops,
-          parsed.gradientAngle ?? defaultTheme.gradientAngle
+          parsed.stops || DEFAULT_DARK_THEME.stops,
+          parsed.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
         )
       };
     }
@@ -193,29 +198,100 @@ export function getEffectiveTheme(user?: Partial<UserProfile> | null): AppThemeC
     // fallback
   }
 
-  return defaultTheme;
+  return DEFAULT_DARK_THEME;
 }
 
 /**
- * Applies theme CSS variables to the document root and body.
+ * Loads the public profile theme (Profil Teması) for any user.
+ * Only shown on their profile page and profile modal.
  */
-export function applyThemeToDom(theme: AppThemeConfig): void {
+export function getEffectiveProfileTheme(user?: Partial<UserProfile> | null): AppThemeConfig {
+  if (user?.custom_fields?.theme) {
+    const t = user.custom_fields.theme;
+    return {
+      ...DEFAULT_DARK_THEME,
+      ...t,
+      gradientCss: t.gradientCss || buildGradientCss(
+        t.gradientType || 'linear',
+        t.stops || DEFAULT_DARK_THEME.stops,
+        t.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
+      )
+    };
+  }
+
+  try {
+    const local = localStorage.getItem(STORAGE_KEY_PROFILE_THEME);
+    if (local) {
+      const parsed = JSON.parse(local);
+      return {
+        ...DEFAULT_DARK_THEME,
+        ...parsed,
+        gradientCss: parsed.gradientCss || buildGradientCss(
+          parsed.gradientType || 'linear',
+          parsed.stops || DEFAULT_DARK_THEME.stops,
+          parsed.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
+        )
+      };
+    }
+  } catch {
+    // fallback
+  }
+
+  return DEFAULT_DARK_THEME;
+}
+
+/**
+ * Legacy compatibility helper - returns app theme.
+ */
+export function getEffectiveTheme(user?: Partial<UserProfile> | null): AppThemeConfig {
+  return getEffectiveAppTheme(user);
+}
+
+/**
+ * Applies the Application Theme (Uygulama Teması) to the document root and body.
+ * This determines the app shell appearance.
+ */
+export function applyAppThemeToDom(theme: AppThemeConfig): void {
   if (typeof document === 'undefined') return;
 
   const root = document.documentElement;
 
-  // Set CSS Variables
+  // Set App Theme CSS Variables
+  root.style.setProperty('--c4e-app-text', theme.text || '#f8fafc');
+  root.style.setProperty('--c4e-app-main', theme.main || '#09090b');
+  root.style.setProperty('--c4e-app-buttons', theme.buttons || '#2563eb');
+  root.style.setProperty('--c4e-app-profile', theme.profile || '#121215');
+
   root.style.setProperty('--c4e-theme-text', theme.text || '#f8fafc');
   root.style.setProperty('--c4e-theme-main', theme.main || '#09090b');
-  root.style.setProperty('--c4e-theme-buttons', theme.buttons || '#6366f1');
-  root.style.setProperty('--c4e-theme-profile', theme.profile || '#13111c');
+  root.style.setProperty('--c4e-theme-buttons', theme.buttons || '#2563eb');
+  root.style.setProperty('--c4e-theme-profile', theme.profile || '#121215');
 
   const gradientCss = theme.gradientCss || buildGradientCss(
     theme.gradientType || 'linear',
     theme.stops || [],
     theme.gradientAngle ?? 135
   );
+  root.style.setProperty('--c4e-app-gradient', gradientCss);
   root.style.setProperty('--c4e-theme-gradient', gradientCss);
+
+  // Sync Tailwind root variables for clean Light / Dark mode consistency
+  const isLight = theme.id === 'theme_light' || theme.main === '#f8fafc';
+  if (isLight) {
+    root.style.setProperty('--background', '#f8fafc');
+    root.style.setProperty('--foreground', '#09090b');
+    root.style.setProperty('--card', '#ffffff');
+    root.style.setProperty('--card-foreground', '#09090b');
+    root.style.setProperty('--border', 'rgba(0, 0, 0, 0.12)');
+    root.style.setProperty('--primary', theme.buttons || '#2563eb');
+  } else {
+    root.style.setProperty('--background', theme.main || '#09090b');
+    root.style.setProperty('--foreground', theme.text || '#f8fafc');
+    root.style.setProperty('--card', theme.profile || '#121215');
+    root.style.setProperty('--card-foreground', theme.text || '#f8fafc');
+    root.style.setProperty('--border', 'rgba(255, 255, 255, 0.1)');
+    root.style.setProperty('--primary', theme.buttons || '#2563eb');
+  }
 
   // Apply background
   if (theme.isGradient && gradientCss) {
@@ -231,7 +307,6 @@ export function applyThemeToDom(theme: AppThemeConfig): void {
   if (theme.font && theme.font.trim()) {
     const fontVal = theme.font.trim();
     if (fontVal.startsWith('http://') || fontVal.startsWith('https://')) {
-      // Dynamic Google Font Link
       let linkEl = document.getElementById('c4e-custom-font-link') as HTMLLinkElement | null;
       if (!linkEl) {
         linkEl = document.createElement('link');
@@ -241,7 +316,6 @@ export function applyThemeToDom(theme: AppThemeConfig): void {
       }
       linkEl.href = fontVal;
 
-      // Extract font-family name from URL if possible
       const match = fontVal.match(/family=([^:&]+)/);
       if (match && match[1]) {
         const familyName = decodeURIComponent(match[1].replace(/\+/g, ' '));
@@ -251,16 +325,22 @@ export function applyThemeToDom(theme: AppThemeConfig): void {
       document.body.style.fontFamily = theme.font;
     }
   } else {
-    // Reset to default site font
     document.body.style.fontFamily = '';
   }
 
   // Persist locally
   try {
-    localStorage.setItem(STORAGE_KEY_CURRENT_THEME, JSON.stringify(theme));
+    localStorage.setItem(STORAGE_KEY_APP_THEME, JSON.stringify(theme));
   } catch {
     // ignore
   }
+}
+
+/**
+ * Legacy compatibility helper - applies app theme to DOM.
+ */
+export function applyThemeToDom(theme: AppThemeConfig): void {
+  applyAppThemeToDom(theme);
 }
 
 // ============================================================================

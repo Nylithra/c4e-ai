@@ -90,7 +90,6 @@ import { CommunitiesView } from './components/CommunitiesView';
 import { BookmarksView } from './components/BookmarksView';
 import { ProfileView } from './components/ProfileView';
 import { SettingsView } from './components/SettingsView';
-import { SubscriptionsView } from './components/SubscriptionsView';
 import { SupportView } from './components/SupportView';
 import { FileUploadWarningBanner } from './components/FileUploadWarningBanner';
 import { AuthScreen } from './components/AuthScreen';
@@ -220,7 +219,7 @@ export default function App() {
           return;
         }
         if (routeUser === 'abonelik' || routeUser === 'subscriptions') {
-          setActiveTab('subscriptions');
+          setActiveTab('support');
           return;
         }
         const systemTabs = ['feed', 'explore', 'notifications', 'messages', 'everychat', 'projects', 'communities', 'bookmarks', 'settings', 'profile', 'admin', 'abonelik', 'subscriptions', 'support', 'jobs'];
@@ -1300,6 +1299,7 @@ export default function App() {
               onChangeLanguage={handleChangeLanguage}
               onLogout={handleLogout}
               onOpenInstallPWA={() => setIsPWAInstallModalOpen(true)}
+              onNavigateToSupport={() => setActiveTab('support')}
             />
           )}
 
@@ -1308,14 +1308,6 @@ export default function App() {
               user={user}
               language={language}
               onUpdateUser={handleUpdateProfile}
-            />
-          )}
-
-          {activeTab === 'subscriptions' && (
-            <SubscriptionsView
-              plans={subscriptionPlans}
-              user={user}
-              language={language}
             />
           )}
 

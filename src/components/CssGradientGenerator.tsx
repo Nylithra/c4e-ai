@@ -233,15 +233,10 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
           <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <RotateCw className="w-4 h-4 text-amber-400" />
+                <RotateCw className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-bold text-zinc-200">
                   {language === 'tr' ? 'Açı Ayarı (Derece / deg):' : 'Angle Setting (Degrees / deg):'}
                 </span>
-                {!isSpark && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
-                    Spark Özel Yön
-                  </span>
-                )}
               </div>
               <div className="flex items-center gap-1.5">
                 <input
@@ -249,12 +244,11 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
                   min="0"
                   max="360"
                   value={gradientAngle}
-                  disabled={!isSpark}
                   onChange={(e) => {
                     const val = Number(e.target.value) || 0;
                     emitChange(stops, 'linear', val, radialShape);
                   }}
-                  className="w-16 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-white font-mono text-xs text-center focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                  className="w-16 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-white font-mono text-xs text-center focus:border-blue-500 focus:outline-none"
                 />
                 <span className="text-xs font-mono text-zinc-400">°</span>
               </div>
@@ -267,9 +261,8 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
                 min="0"
                 max="360"
                 value={gradientAngle}
-                disabled={!isSpark}
                 onChange={(e) => emitChange(stops, 'linear', Number(e.target.value), radialShape)}
-                className="w-full accent-blue-500 cursor-pointer disabled:opacity-40"
+                className="w-full accent-blue-500 cursor-pointer"
               />
               <div className="flex justify-between text-[10px] font-mono text-zinc-500">
                 <span>0° (Üst)</span>
@@ -287,29 +280,17 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
                 <button
                   key={ang}
                   type="button"
-                  disabled={!isSpark}
                   onClick={() => emitChange(stops, 'linear', ang, radialShape)}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
                     gradientAngle === ang
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-blue-600 text-white shadow-md'
                       : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800'
-                  } disabled:opacity-50 cursor-pointer`}
+                  }`}
                 >
                   {ang}°
                 </button>
               ))}
             </div>
-
-            {!isSpark && (
-              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2 text-amber-300 text-[11px]">
-                <Lock className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                <span>
-                  {language === 'tr'
-                    ? 'Serbest 360° yön ve açı ayarı Spark Destekçilerine özeldir. Normal kullanıcılar hazır açılardan yararlanabilir.'
-                    : 'Free 360° angle tuning is exclusive to Spark Supporters.'}
-                </span>
-              </div>
-            )}
           </div>
         ) : (
           /* Radial Settings */

@@ -81,7 +81,7 @@ export const getBadgeDetails = (
     return {
       id: badgeInput.id || 'git_plus',
       label: badgeInput.label || 'Git+',
-      description: badgeInput.description || 'Code4Ever Projesine üyelik veya abonelik yolu ile destek veren kullanıcılara verilen destekçi rozetidir.',
+      description: badgeInput.description || 'Code4Ever Projesine Destek Ol sayfası üzerinden katkı sunan geliştiricilere verilen özel Git+ rozetidir.',
       weight: 8,
       color: badgeInput.color || '#f97316',
       icon: 'git'
@@ -105,7 +105,7 @@ export const getBadgeDetails = (
     return {
       id: badgeInput.id || 'spark',
       label: badgeInput.label || 'Spark Destekçi',
-      description: badgeInput.description || 'Code4Ever açık kaynak projesine maddi destekte bulunan özel Spark destekçi rozetidir. 250MB tek seferde dosya yükleme ayrıcalığı tanır.',
+      description: badgeInput.description || 'Code4Ever açık kaynak projesine Destek Ol sekmesinden katkıda bulunan özel Spark destekçi rozetidir. 250MB dosya yükleme, özel Astra ve renk geçişli temalar ile .c4e tema yükleme ayrıcalığı tanır.',
       weight: 7,
       color: badgeInput.color || '#f59e0b',
       icon: 'sparkles'
@@ -158,7 +158,7 @@ export const getBadgeDetails = (
   else if (badgeInput.icon === 'git') iconType = 'git';
 
   const defaultDesc = badgeInput.label
-    ? `Code4Ever ${badgeInput.label} ayrıcalıklı üye ve abonelik rozetidir.`
+    ? `Code4Ever ${badgeInput.label} ayrıcalıklı topluluk ve destekçi rozetidir.`
     : 'Kullanıcıya özel olarak tanımlanmış özel topluluk rozeti.';
 
   return {

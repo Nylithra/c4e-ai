@@ -35,7 +35,7 @@ import {
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { validateUsername, sanitizeText, sanitizeUrl, checkUsernameAvailability, verifyAdminAccess } from '../utils/securityHelper';
 import { ShowcaseReposModal } from './ShowcaseReposModal';
-import { AppThemeConfig } from '../utils/themeHelper';
+import { AppThemeConfig, getEffectiveProfileTheme } from '../utils/themeHelper';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -285,7 +285,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
 
   const isLikesHidden = !isOwnProfile && (user.show_liked_posts === false || formData.show_liked_posts === false);
 
-  const profileTheme = (formData.custom_fields?.theme || user.custom_fields?.theme) as AppThemeConfig | undefined;
+  const profileTheme = getEffectiveProfileTheme(formData.custom_fields?.theme ? formData : user);
 
   const displayedList =
     profileTab === 'posts'
@@ -375,20 +375,6 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-xl font-bold text-white tracking-tight">{formData.display_name}</h2>
             <UserBadges user={formData} showTextLabels={false} />
-            {profileTheme?.name && (
-              <span
-                className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold flex items-center gap-1.5 border shadow-sm"
-                style={{
-                  borderColor: `${profileTheme.buttons || '#a855f7'}60`,
-                  backgroundColor: `${profileTheme.buttons || '#a855f7'}15`,
-                  color: profileTheme.buttons || '#c084fc'
-                }}
-                title={language === 'tr' ? 'Özel Profil Teması' : 'Custom Profile Theme'}
-              >
-                <Palette className="w-3 h-3" />
-                <span>{profileTheme.name}</span>
-              </span>
-            )}
           </div>
           <p className="text-xs text-zinc-400 font-mono">@{formData.username}</p>
         </div>

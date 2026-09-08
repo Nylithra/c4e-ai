@@ -26,7 +26,7 @@ import { UserProfile, Community } from '../types';
 import { UserBadges } from './UserBadges';
 import { sanitizeUrl } from '../utils/securityHelper';
 import { getSupabaseClient, loadStoredAllUsers, normalizeProfile } from '../services/supabaseClient';
-import { AppThemeConfig } from '../utils/themeHelper';
+import { AppThemeConfig, getEffectiveProfileTheme } from '../utils/themeHelper';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -398,7 +398,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         ) : profileData ? (
           /* USER PROFILE VIEW */
           (() => {
-            const profileTheme = profileData.custom_fields?.theme as AppThemeConfig | undefined;
+            const profileTheme = getEffectiveProfileTheme(profileData);
             return (
               <div
                 style={{
@@ -490,20 +490,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-base font-extrabold text-white">{profileData.display_name}</h3>
                         <UserBadges user={profileData} showTextLabels={false} />
-                        {profileTheme?.name && (
-                          <span
-                            className="px-2 py-0.5 rounded-md text-[10px] font-mono border flex items-center gap-1 font-bold shadow-sm"
-                            style={{
-                              borderColor: `${profileTheme.buttons || '#a855f7'}60`,
-                              backgroundColor: `${profileTheme.buttons || '#a855f7'}15`,
-                              color: profileTheme.buttons || '#c084fc'
-                            }}
-                            title={language === 'tr' ? 'Özel Profil Teması' : 'Custom Profile Theme'}
-                          >
-                            <Palette className="w-2.5 h-2.5" />
-                            <span>{profileTheme.name}</span>
-                          </span>
-                        )}
                       </div>
                       <span className="text-xs text-zinc-400 font-mono">@{profileData.username}</span>
                     </div>
