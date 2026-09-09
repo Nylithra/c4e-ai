@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Post, UserProfile, GitHubRepo, Community } from '../types';
 import { UserBadges } from './UserBadges';
 import { CodeSnippetBlock } from './CodeSnippetBlock';
@@ -31,10 +31,13 @@ import {
   Tag,
   Filter,
   Flag,
-  MoreHorizontal
+  MoreHorizontal,
+  Layers,
+  Globe,
+  X
 } from 'lucide-react';
 import { getGitHubToken } from '../services/supabaseClient';
-import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength } from '../utils/fileUploadHelper';
+import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength, compressAndOptimizeImage } from '../utils/fileUploadHelper';
 import { formatTimeAgo } from '../utils/timeAgo';
 import { verifyAdminAccess } from '../utils/securityHelper';
 
@@ -45,6 +48,9 @@ interface FeedViewProps {
   communities?: Community[];
   language: 'tr' | 'en';
   selectedHashtag?: string | null;
+  selectedFeedCommunity?: string | null;
+  onClearFeedCommunity?: () => void;
+  onSelectFeedCommunity?: (communityIdOrHandle: string) => void;
   onClearHashtag?: () => void;
   onSelectHashtag?: (hashtag: string) => void;
   onLikePost: (id: string) => void;
@@ -75,6 +81,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
   communities = [],
   language,
   selectedHashtag,
+  selectedFeedCommunity,
+  onClearFeedCommunity,
+  onSelectFeedCommunity,
   onClearHashtag,
   onSelectHashtag,
   onLikePost,
@@ -92,6 +101,21 @@ export const FeedView: React.FC<FeedViewProps> = ({
   const [feedCategoryFilter, setFeedCategoryFilter] = useState<string>('all');
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [dynamicCategories, setDynamicCategories] = useState<DynamicCategory[]>([]);
+
+  // Feed mode: 'general' (Genel Akış) vs. 'community' (Topluluk Akışı)
+  const [feedMode, setFeedMode] = useState<'general' | 'community'>(
+    selectedFeedCommunity ? 'community' : 'general'
+  );
+  const [communityFeedFilter, setCommunityFeedFilter] = useState<string>(
+    selectedFeedCommunity || 'all'
+  );
+
+  useEffect(() => {
+    if (selectedFeedCommunity) {
+      setFeedMode('community');
+      setCommunityFeedFilter(selectedFeedCommunity);
+    }
+  }, [selectedFeedCommunity]);
 
   useEffect(() => {
     setDynamicCategories(getStoredCategories());
@@ -239,14 +263,32 @@ export const FeedView: React.FC<FeedViewProps> = ({
 
     if (!isVid && !isImg) return;
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      if (ev.target?.result) {
-        setMediaUrl(ev.target.result as string);
-        setMediaType(isVid ? 'video' : 'image');
-      }
-    };
-    reader.readAsDataURL(file);
+    if (isImg) {
+      compressAndOptimizeImage(file, 1200, 0.85)
+        .then((compressedBase64) => {
+          setMediaUrl(compressedBase64);
+          setMediaType('image');
+        })
+        .catch(() => {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            if (ev.target?.result) {
+              setMediaUrl(ev.target.result as string);
+              setMediaType('image');
+            }
+          };
+          reader.readAsDataURL(file);
+        });
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          setMediaUrl(ev.target.result as string);
+          setMediaType('video');
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const fetchRepos = async () => {
@@ -303,7 +345,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
       };
     }
 
-    const selectedComm = communities.find((c) => c.id === selectedCommunityId);
+    const targetCommId =
+      selectedCommunityId ||
+      (feedMode === 'community' && activeCommunity ? activeCommunity.id : undefined);
+    const selectedComm = communities.find((c) => c.id === targetCommId);
 
     try {
       const res = await onCreatePost(
@@ -374,7 +419,21 @@ export const FeedView: React.FC<FeedViewProps> = ({
     return Array.from(map.values());
   })();
 
-  // Filter posts by category and hashtag
+  // Total community posts count
+  const communityPostsCount = useMemo(() => {
+    return posts.filter((p) => Boolean(p.community_id || p.community_handle)).length;
+  }, [posts]);
+
+  // Active community object when filtered
+  const activeCommunity = useMemo(() => {
+    if (!communityFeedFilter || communityFeedFilter === 'all') return null;
+    const cleanTarget = communityFeedFilter.replace(/^\/?c\/?@?/, '').replace(/^@/, '').toLowerCase();
+    return communities.find(
+      (c) => c.id === communityFeedFilter || c.handle.replace(/^@/, '').toLowerCase() === cleanTarget
+    );
+  }, [communityFeedFilter, communities]);
+
+  // Filter posts by category, hashtag and feedMode (strict isolation)
   const filteredPosts = posts.filter((post) => {
     if (selectedHashtag) {
       const tag = selectedHashtag.toLowerCase();
@@ -386,6 +445,24 @@ export const FeedView: React.FC<FeedViewProps> = ({
     if (feedCategoryFilter !== 'all') {
       const postCat = post.category || 'genel';
       if (postCat !== feedCategoryFilter) return false;
+    }
+
+    // STRICT ISOLATION:
+    // 1. Genel Akış: Topluluklara gönderilen gönderiler ASLA genel akışta görünmez!
+    if (feedMode === 'general') {
+      if (post.community_id || post.community_handle) return false;
+    } else {
+      // 2. Topluluk Akışı: Sadece topluluklara gönderilen gönderiler görünür!
+      const isCommunityPost = Boolean(post.community_id || post.community_handle);
+      if (!isCommunityPost) return false;
+
+      // Eğer belirli bir topluluk seçilmişse sadece onun feed'leri listelenir
+      if (communityFeedFilter && communityFeedFilter !== 'all') {
+        const cleanTarget = communityFeedFilter.replace(/^\/?c\/?@?/, '').replace(/^@/, '').toLowerCase();
+        const matchesId = post.community_id === communityFeedFilter;
+        const matchesHandle = post.community_handle?.replace(/^@/, '').toLowerCase() === cleanTarget;
+        if (!matchesId && !matchesHandle) return false;
+      }
     }
 
     return true;
@@ -401,8 +478,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
       )}
 
       {/* Sticky Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3 flex items-center justify-between">
+        <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
           <span>{language === 'tr' ? 'Akış & Gönderiler' : 'Feed & Posts'}</span>
           <span className="w-2 h-2 rounded-full bg-zinc-400" />
         </h2>
@@ -417,8 +494,182 @@ export const FeedView: React.FC<FeedViewProps> = ({
         )}
       </div>
 
+      {/* Primary Feed Mode Switcher: Genel Akış vs. Topluluk Akışı */}
+      <div className="grid grid-cols-2 border-b border-zinc-800/80 bg-[#0c0c0e]">
+        <button
+          type="button"
+          onClick={() => {
+            setFeedMode('general');
+            if (onClearFeedCommunity) onClearFeedCommunity();
+          }}
+          className={`py-3 px-4 text-xs font-bold transition-all flex items-center justify-center gap-2 border-b-2 cursor-pointer ${
+            feedMode === 'general'
+              ? 'border-blue-500 text-white bg-blue-500/10 shadow-inner'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+          }`}
+        >
+          <Globe className="w-4 h-4 text-blue-400" />
+          <span>{language === 'tr' ? 'Genel Akış' : 'General Feed'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setFeedMode('community');
+          }}
+          className={`py-3 px-4 text-xs font-bold transition-all flex items-center justify-center gap-2 border-b-2 cursor-pointer ${
+            feedMode === 'community'
+              ? 'border-purple-500 text-white bg-purple-500/10 shadow-inner'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+          }`}
+        >
+          <Layers className="w-4 h-4 text-purple-400" />
+          <span>{language === 'tr' ? 'Topluluk Akışı' : 'Community Feed'}</span>
+          {communityPostsCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-mono border border-purple-500/30">
+              {communityPostsCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Community Filter Bar (Visible when in Community Feed Mode) */}
+      {feedMode === 'community' && (
+        <div className="bg-purple-950/20 border-b border-purple-900/30 px-4 py-2.5 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-mono text-purple-300 flex items-center gap-1.5 font-bold">
+              <Users className="w-3.5 h-3.5 text-purple-400" />
+              <span>{language === 'tr' ? 'Topluluk Seçin:' : 'Select Community:'}</span>
+            </span>
+
+            {communityFeedFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCommunityFeedFilter('all');
+                  if (onClearFeedCommunity) onClearFeedCommunity();
+                }}
+                className="text-[11px] font-mono text-zinc-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <X className="w-3 h-3" />
+                <span>{language === 'tr' ? 'Tüm Toplulukları Göster' : 'Show All Communities'}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            <button
+              type="button"
+              onClick={() => {
+                setCommunityFeedFilter('all');
+                if (onClearFeedCommunity) onClearFeedCommunity();
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                communityFeedFilter === 'all'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'bg-zinc-900/90 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'
+              }`}
+            >
+              <span>🌟</span>
+              <span>{language === 'tr' ? 'Tüm Topluluklar' : 'All Communities'}</span>
+              <span className="text-[10px] opacity-75 font-normal">({communityPostsCount})</span>
+            </button>
+
+            {communities.map((comm) => {
+              const cleanComm = comm.handle.replace(/^@/, '').toLowerCase();
+              const isSelected =
+                communityFeedFilter === comm.id ||
+                communityFeedFilter?.replace(/^@/, '').toLowerCase() === cleanComm;
+              const postCountForComm = posts.filter(
+                (p) =>
+                  p.community_id === comm.id ||
+                  p.community_handle?.replace(/^@/, '').toLowerCase() === cleanComm
+              ).length;
+
+              return (
+                <button
+                  key={comm.id}
+                  type="button"
+                  onClick={() => {
+                    setCommunityFeedFilter(comm.id);
+                    if (onSelectFeedCommunity) onSelectFeedCommunity(comm.id);
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+                    isSelected
+                      ? 'bg-purple-600 text-white font-bold shadow-md ring-1 ring-purple-400'
+                      : 'bg-zinc-900/90 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'
+                  }`}
+                >
+                  <img
+                    src={comm.avatar_url}
+                    alt={comm.name}
+                    className="w-4 h-4 rounded-md object-cover"
+                  />
+                  <span>{comm.name}</span>
+                  <span className="text-[10px] opacity-70">({postCountForComm})</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Community Highlight Banner */}
+          {activeCommunity && (
+            <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-800/40 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <img
+                  src={activeCommunity.avatar_url}
+                  alt={activeCommunity.name}
+                  className="w-8 h-8 rounded-lg object-cover ring-1 ring-purple-500/30 flex-shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                    <span>{activeCommunity.name}</span>
+                    <span className="text-[10px] font-mono text-purple-400">
+                      /c/@{activeCommunity.handle.replace(/^@/, '')}
+                    </span>
+                  </div>
+                  <div className="text-[10px] font-mono text-zinc-400 truncate">
+                    {activeCommunity.members_count.toLocaleString()} {language === 'tr' ? 'üye' : 'members'} ·{' '}
+                    {posts.filter(
+                      (p) =>
+                        p.community_id === activeCommunity.id ||
+                        p.community_handle?.replace(/^@/, '').toLowerCase() ===
+                          activeCommunity.handle.replace(/^@/, '').toLowerCase()
+                    ).length}{' '}
+                    {language === 'tr' ? 'gönderi' : 'posts'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {onSelectCommunity && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectCommunity(activeCommunity)}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[11px] font-mono border border-zinc-800 transition-colors cursor-pointer"
+                  >
+                    {language === 'tr' ? 'Topluluk Profili' : 'Profile'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCommunityFeedFilter('all');
+                    if (onClearFeedCommunity) onClearFeedCommunity();
+                  }}
+                  className="p-1 rounded-lg hover:bg-purple-900/40 text-purple-300 transition-colors cursor-pointer"
+                  title={language === 'tr' ? 'Filtreyi Kaldır' : 'Clear Filter'}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Category Pills Filter Bar */}
-      <div className="px-4 py-2.5 bg-[#0a0a0c] border-b border-zinc-800/60 overflow-x-auto no-scrollbar flex items-center gap-1.5">
+      <div className="px-4 py-2 bg-[#0a0a0c] border-b border-zinc-800/60 overflow-x-auto no-scrollbar flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => setFeedCategoryFilter('all')}
@@ -736,16 +987,32 @@ export const FeedView: React.FC<FeedViewProps> = ({
       <div className="divide-y divide-zinc-800/40">
         {filteredPosts.length === 0 ? (
           <div className="p-12 text-center space-y-3">
-            <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-300">
-              <Sparkles className="w-6 h-6 text-white" />
+            <div className={`w-12 h-12 rounded-full border flex items-center justify-center mx-auto ${
+              feedMode === 'community'
+                ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-300'
+            }`}>
+              {feedMode === 'community' ? (
+                <Layers className="w-6 h-6" />
+              ) : (
+                <Sparkles className="w-6 h-6 text-white" />
+              )}
             </div>
             <h3 className="text-sm font-bold text-white">
-              {language === 'tr' ? 'Henüz Gönderi Yok' : 'No Posts Yet'}
+              {feedMode === 'community'
+                ? activeCommunity
+                  ? (language === 'tr' ? `${activeCommunity.name} için Gönderi Yok` : `No Posts in ${activeCommunity.name}`)
+                  : (language === 'tr' ? 'Topluluk Gönderisi Yok' : 'No Community Posts Yet')
+                : (language === 'tr' ? 'Henüz Gönderi Yok' : 'No Posts Yet')}
             </h3>
             <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              {language === 'tr'
-                ? 'Bu kategoride veya akışta henüz bir gönderi bulunmuyor.'
-                : 'No posts found in this category or feed.'}
+              {feedMode === 'community'
+                ? (language === 'tr'
+                    ? 'Bu toplulukta henüz gönderi paylaşılmamış. İlk gönderiyi yukarıdaki alandan paylaşabilirsiniz!'
+                    : 'No posts shared in this community yet. Be the first to share one above!')
+                : (language === 'tr'
+                    ? 'Bu kategoride veya akışta henüz bir gönderi bulunmuyor.'
+                    : 'No posts found in this category or feed.')}
             </p>
           </div>
         ) : (

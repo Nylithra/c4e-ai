@@ -20,7 +20,8 @@ import {
   GitBranch,
   Star,
   GitFork,
-  Palette
+  Palette,
+  Layers
 } from 'lucide-react';
 import { UserProfile, Community } from '../types';
 import { UserBadges } from './UserBadges';
@@ -38,6 +39,7 @@ interface UserProfileModalProps {
   onToggleJoinCommunity?: (id: string) => void;
   onNavigateToFullProfile?: (user: UserProfile) => void;
   onStartDirectChat?: (user: UserProfile) => void;
+  onViewCommunityPosts?: (communityIdOrHandle: string) => void;
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
@@ -49,7 +51,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   language,
   onToggleJoinCommunity,
   onNavigateToFullProfile,
-  onStartDirectChat
+  onStartDirectChat,
+  onViewCommunityPosts
 }) => {
   const [profileData, setProfileData] = useState<UserProfile | null>(null);
   const [communityData, setCommunityData] = useState<Community | null>(null);
@@ -392,6 +395,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     {language === 'tr' ? 'Topluluk Profili' : 'Community Profile'}
                   </span>
                 </div>
+
+                {/* Topluluk Gönderileri Butonu */}
+                <div className="pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      if (onViewCommunityPosts) {
+                        onViewCommunityPosts(currentComm.id || currentComm.handle);
+                      }
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span>{language === 'tr' ? 'Topluluk Gönderileri' : 'Community Posts'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -408,19 +428,21 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               >
                 {/* Banner */}
                 <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
-                  {profileTheme?.isGradient && profileTheme.gradientCss ? (
+                  {profileData.banner_url ? (
+                    <img
+                      src={profileData.banner_url}
+                      alt="Profile Banner"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : profileTheme?.isGradient && profileTheme.gradientCss ? (
                     <div
-                      className="w-full h-full absolute inset-0 opacity-85"
+                      className="w-full h-full absolute inset-0 opacity-90"
                       style={{ background: profileTheme.gradientCss }}
                     />
                   ) : (
-                    <img
-                      src={
-                        profileData.banner_url ||
-                        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
-                      }
-                      alt="Profile Banner"
-                      className="w-full h-full object-cover opacity-80"
+                    <div
+                      className="w-full h-full absolute inset-0 opacity-90"
+                      style={{ background: profileTheme?.profile || profileTheme?.main || '#18181b' }}
                     />
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />

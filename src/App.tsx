@@ -103,6 +103,7 @@ import { PWAInstallBanner } from './components/PWAInstallBanner';
 import { sendNativeNotification } from './utils/notificationSound';
 import { ReportErrorModal } from './components/ReportErrorModal';
 import { Sparkles, X, AlertTriangle, Lock } from 'lucide-react';
+import { getEffectiveAppTheme, applyAppThemeToDom, AppThemeConfig } from './utils/themeHelper';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -134,6 +135,13 @@ export default function App() {
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>(loadStoredSubscriptionPlans());
   const [badgeDefinitions, setBadgeDefinitions] = useState<BadgeDefinition[]>(loadStoredBadgeDefinitions());
   const [platformSettings, setPlatformSettings] = useState<PlatformSettings>(loadStoredPlatformSettings());
+  const [selectedFeedCommunity, setSelectedFeedCommunity] = useState<string | null>(null);
+
+  const handleViewCommunityPosts = (commIdOrHandle: string) => {
+    setSelectedFeedCommunity(commIdOrHandle);
+    setSelectedModalUsername(null);
+    setActiveTab('feed');
+  };
 
   const theme: DynamicTheme = {
     primaryHue: 260,
@@ -235,6 +243,23 @@ export default function App() {
       }
     }
   };
+
+  useEffect(() => {
+    // Synchronize App Theme on initial load and whenever user's app_theme changes
+    const effectiveTheme = getEffectiveAppTheme(user);
+    applyAppThemeToDom(effectiveTheme);
+
+    const handleThemeEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<AppThemeConfig>;
+      if (customEvent.detail) {
+        applyAppThemeToDom(customEvent.detail);
+      }
+    };
+    window.addEventListener('c4e-theme-changed', handleThemeEvent);
+    return () => {
+      window.removeEventListener('c4e-theme-changed', handleThemeEvent);
+    };
+  }, [user?.custom_fields?.app_theme, user?.custom_fields?.theme]);
 
   useEffect(() => {
     parseHashParams();
@@ -506,6 +531,9 @@ export default function App() {
     if (merged.id) {
       updateUserProfileInSupabase(merged.id, merged);
     }
+    // Immediately apply the new app theme to the DOM
+    const eff = getEffectiveAppTheme(merged);
+    applyAppThemeToDom(eff);
   };
 
   const handleSelectUser = (targetUsername: string) => {
@@ -1113,7 +1141,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-app-background text-app-foreground flex justify-center font-display selection:bg-blue-500 selection:text-white relative">
+    <div
+      className="min-h-screen w-full bg-app-background text-app-foreground flex justify-center font-display selection:bg-blue-500 selection:text-white relative"
+      style={{
+        background: 'var(--c4e-app-bg, var(--background))',
+        color: 'var(--c4e-app-text, var(--foreground))'
+      }}
+    >
       {rateLimitToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-black font-bold text-xs px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 border border-amber-300 animate-pulse">
           <AlertTriangle className="w-4 h-4 text-black flex-shrink-0" />
@@ -1167,6 +1201,9 @@ export default function App() {
               communities={displayCommunities}
               language={language}
               selectedHashtag={selectedHashtag}
+              selectedFeedCommunity={selectedFeedCommunity}
+              onClearFeedCommunity={() => setSelectedFeedCommunity(null)}
+              onSelectFeedCommunity={(cId) => setSelectedFeedCommunity(cId)}
               onClearHashtag={() => setSelectedHashtag(null)}
               onSelectHashtag={handleSelectHashtag}
               onLikePost={handleLikePost}
@@ -1255,6 +1292,7 @@ export default function App() {
               onUpdateCommunity={handleUpdateCommunity}
               onDeleteCommunity={handleDeleteCommunity}
               onSelectCommunity={handleSelectCommunity}
+              onViewCommunityPosts={handleViewCommunityPosts}
             />
           )}
 
@@ -1379,6 +1417,7 @@ export default function App() {
           setActiveTab('profile');
         }}
         onStartDirectChat={handleStartDirectChat}
+        onViewCommunityPosts={handleViewCommunityPosts}
       />
 
       <ReportErrorModal

@@ -108,6 +108,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [appTheme, setAppTheme] = useState<AppThemeConfig>(() => getEffectiveAppTheme(user));
   const [profileTheme, setProfileTheme] = useState<AppThemeConfig>(() => getEffectiveProfileTheme(user));
   const [themeSaveSuccess, setThemeSaveSuccess] = useState(false);
+  const [sparkNotice, setSparkNotice] = useState<string | null>(null);
   const themeFileInputRef = useRef<HTMLInputElement>(null);
 
   const activeTheme = themeTarget === 'app' ? appTheme : profileTheme;
@@ -145,6 +146,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleSelectPresetTheme = (preset: AppThemeConfig) => {
+    if ((preset.isSparkExclusive || preset.isGradient) && !isSpark) {
+      setSparkNotice(
+        language === 'tr'
+          ? '✨ Renk geçişli (gradyan) ve Spark özel temalar yalnızca Spark destekçilerimize özeldir. Destek Ol sekmesinden hemen Spark rolünü edinebilirsiniz!'
+          : '✨ Gradient and Spark exclusive themes are reserved for Spark supporters. You can acquire Spark in Support Us!'
+      );
+      setTimeout(() => setSparkNotice(null), 4000);
+      return;
+    }
     const updated: AppThemeConfig = {
       ...preset,
       id: `theme_${Date.now()}`
@@ -166,6 +176,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     radialShape: 'circle' | 'ellipse';
     css: string;
   }) => {
+    if (!isSpark) {
+      setSparkNotice(
+        language === 'tr'
+          ? '✨ CSS Gradyan renk geçişleri yalnızca Spark destekçilerimize özeldir.'
+          : '✨ CSS Gradients are only available to Spark supporters.'
+      );
+      setTimeout(() => setSparkNotice(null), 4000);
+      return;
+    }
     updateActiveTheme((prev) => ({
       ...prev,
       isGradient: true,
@@ -979,12 +998,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   >
                     {/* Profile Banner */}
                     <div
-                      className="h-16 w-full relative"
+                      className="h-16 w-full relative overflow-hidden"
                       style={{
-                        background: profileTheme.isGradient ? profileTheme.gradientCss : profileTheme.main,
+                        background: profileTheme.isGradient ? profileTheme.gradientCss : (profileTheme.profile || profileTheme.main),
                         borderBottom: '1px solid rgba(255,255,255,0.1)'
                       }}
-                    />
+                    >
+                      {(formData.banner_url || user.banner_url) && (
+                        <img
+                          src={formData.banner_url || user.banner_url}
+                          alt="Banner Preview"
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </div>
 
                     <div className="p-4 pt-0 -mt-6">
                       <div className="flex items-end justify-between mb-3">
@@ -1096,6 +1123,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               {/* Preset Themes */}
               <div className="space-y-3 pt-2">
+                {sparkNotice && (
+                  <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/50 text-amber-200 flex items-center justify-between gap-3 animate-fade-in shadow-xl">
+                    <div className="flex items-center gap-2.5">
+                      <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <span className="text-xs font-medium">{sparkNotice}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => window.dispatchEvent(new CustomEvent('c4e_open_support_tab'))}
+                      className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs whitespace-nowrap cursor-pointer transition-colors shadow-md"
+                    >
+                      {language === 'tr' ? 'Destek Ol' : 'Support'}
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider font-mono">
                     {language === 'tr' ? 'Hazır Temalar' : 'Preset Themes'}
@@ -1108,6 +1151,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {PRESET_THEMES.map((preset) => {
                     const isSelected = activeTheme.name === preset.name;
+                    const isLocked = (preset.isSparkExclusive || preset.isGradient) && !isSpark;
                     return (
                       <button
                         key={preset.id}
@@ -1116,12 +1160,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group cursor-pointer ${
                           isSelected
                             ? 'border-purple-500 ring-2 ring-purple-500/30 bg-purple-950/20'
+                            : isLocked
+                            ? 'border-zinc-800/80 bg-zinc-950/60 opacity-80 hover:border-amber-500/40'
                             : 'border-zinc-800/80 bg-zinc-950 hover:border-zinc-700'
                         }`}
                       >
                         {/* Theme preview ribbon */}
                         <div
-                          className="h-10 w-full rounded-xl mb-3 border border-white/10 shadow-inner flex items-center justify-center text-xs font-bold"
+                          className="h-10 w-full rounded-xl mb-3 border border-white/10 shadow-inner flex items-center justify-center text-xs font-bold relative"
                           style={{
                             background: preset.isGradient ? preset.gradientCss : preset.main,
                             color: preset.text
@@ -1133,6 +1179,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           >
                             Button
                           </span>
+                          {isLocked && (
+                            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] rounded-xl flex items-center justify-center">
+                              <Lock className="w-3.5 h-3.5 text-amber-300" />
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -1145,9 +1196,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             </p>
                           </div>
 
-                          {preset.isSparkExclusive && (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border border-amber-500/30">
-                              <Sparkles className="w-2.5 h-2.5 fill-amber-400" />
+                          {(preset.isSparkExclusive || preset.isGradient) && (
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border ${
+                              isLocked
+                                ? 'bg-zinc-900 border-amber-500/40 text-amber-300'
+                                : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                            }`}>
+                              {isLocked ? <Lock className="w-2.5 h-2.5" /> : <Sparkles className="w-2.5 h-2.5 fill-amber-400" />}
                               <span>Spark</span>
                             </span>
                           )}
@@ -1320,7 +1375,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 gradientAngle={activeTheme.gradientAngle ?? 135}
                 gradientType={activeTheme.gradientType ?? 'linear'}
                 radialShape={activeTheme.radialShape ?? 'circle'}
-                isSpark={true}
+                isSpark={isSpark}
                 language={language}
                 onChange={handleGradientChange}
               />

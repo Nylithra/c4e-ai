@@ -591,7 +591,26 @@ export function saveStoredPosts(posts: Post[]): void {
   const clean = (posts || [])
     .filter((p) => p && p.id && !(p as any).is_deleted && !deletedIds.has(p.id))
     .map((p) => normalizePost(p));
-  localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(clean));
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(clean));
+  } catch (e) {
+    // If browser localStorage quota exceeded, save the most recent 40 posts to maintain smooth UX
+    try {
+      localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(clean.slice(0, 40)));
+    } catch {
+      // Last-resort fallback: strip heavy media URLs from older posts
+      try {
+        const lightweight = clean.slice(0, 30).map((p, idx) => {
+          if (idx > 10 && p.media_url && p.media_url.length > 500) {
+            return { ...p, media_url: undefined };
+          }
+          return p;
+        });
+        localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(lightweight));
+      } catch {}
+    }
+  }
 }
 
 export async function syncDeletedPostsFromServer(): Promise<Set<string>> {
@@ -620,7 +639,7 @@ export function subscribeToPosts(onUpdate: (posts: Post[]) => void): () => void 
     const deletedIds = await syncDeletedPostsFromServer();
     const localPosts = loadStoredPosts();
 
-    // Map by post ID to deduplicate and preserve non-persisted recent local posts
+    // Map by post ID to deduplicate and preserve local posts
     const postsMap = new Map<string, Post>();
 
     // 1. Load remote posts
@@ -630,14 +649,10 @@ export function subscribeToPosts(onUpdate: (posts: Post[]) => void): () => void 
       }
     });
 
-    // 2. Preserve any very recently created local posts (< 5 minutes old) not yet indexed in remote
-    const now = Date.now();
+    // 2. Preserve any local posts not yet deleted
     localPosts.forEach((lp) => {
       if (lp && lp.id && !postsMap.has(lp.id) && !deletedIds.has(lp.id) && !(lp as any).is_deleted) {
-        const postTime = new Date(lp.created_at || '').getTime();
-        if (!isNaN(postTime) && now - postTime < 5 * 60 * 1000) {
-          postsMap.set(lp.id, normalizePost(lp));
-        }
+        postsMap.set(lp.id, normalizePost(lp));
       }
     });
 

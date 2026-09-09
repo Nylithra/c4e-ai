@@ -143,11 +143,13 @@
 
 /* Custom Theme Utilities */
 .bg-app-background {
-  background-color: var(--background);
+  background: var(--c4e-app-bg, var(--background));
+  background-color: var(--c4e-app-main, var(--background));
+  color: var(--c4e-app-text, var(--foreground));
 }
 
 .bg-app-card {
-  background-color: var(--card);
+  background-color: var(--c4e-app-profile, var(--card));
 }
 
 .bg-app-secondary {
@@ -163,7 +165,7 @@
 }
 
 .text-app-foreground {
-  color: var(--foreground);
+  color: var(--c4e-app-text, var(--foreground));
 }
 
 .text-app-muted {
@@ -196,4 +198,110 @@
 
 .theme-glow-bg {
   background-image: var(--glow);
+}
+
+/* Dynamic App Theme Overrides for Views, Sidebars and Panels */
+.bg-\[\#09090b\] {
+  background-color: var(--c4e-app-main, #09090b) !important;
+}
+
+.bg-\[\#09090b\]\/90 {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 90%, transparent) !important;
+}
+
+.bg-\[\#09090b\]\/95 {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 95%, transparent) !important;
+}
+
+.bg-\[\#0a0a0c\] {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 92%, var(--c4e-app-profile, #0a0a0c)) !important;
+}
+
+.bg-\[\#0c0c0e\] {
+  background-color: var(--c4e-app-profile, #0c0c0e) !important;
+}
+
+.bg-\[\#121215\] {
+  background-color: var(--c4e-app-profile, #121215) !important;
+}
+
+.bg-\[\#121215\]\/95 {
+  background-color: color-mix(in srgb, var(--c4e-app-profile, #121215) 95%, transparent) !important;
+}
+
+/* Gradient Mode Shell Glass Support */
+html[data-theme-gradient="true"] .bg-app-background {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html[data-theme-gradient="true"] .bg-\[\#09090b\] {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 75%, transparent) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+html[data-theme-gradient="true"] .bg-\[\#09090b\]\/90,
+html[data-theme-gradient="true"] .bg-\[\#09090b\]\/95 {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 80%, transparent) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+html[data-theme-gradient="true"] .bg-\[\#0c0c0e\],
+html[data-theme-gradient="true"] .bg-\[\#121215\] {
+  background-color: color-mix(in srgb, var(--c4e-app-profile, #121215) 80%, transparent) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Light Theme Mode Enhancements */
+html[data-theme-mode="light"] {
+  color-scheme: light;
+}
+
+html[data-theme-mode="light"] body {
+  background-image: none !important;
+}
+
+html[data-theme-mode="light"] .text-white {
+  color: #0f172a !important;
+}
+
+html[data-theme-mode="light"] .text-zinc-100,
+html[data-theme-mode="light"] .text-zinc-200 {
+  color: #1e293b !important;
+}
+
+html[data-theme-mode="light"] .text-zinc-300 {
+  color: #334155 !important;
+}
+
+html[data-theme-mode="light"] .text-zinc-400 {
+  color: #64748b !important;
+}
+
+html[data-theme-mode="light"] .text-zinc-500 {
+  color: #94a3b8 !important;
+}
+
+html[data-theme-mode="light"] .border-zinc-800,
+html[data-theme-mode="light"] .border-zinc-800\/40,
+html[data-theme-mode="light"] .border-zinc-800\/60,
+html[data-theme-mode="light"] .border-zinc-800\/80,
+html[data-theme-mode="light"] .border-zinc-700,
+html[data-theme-mode="light"] .border-zinc-700\/50,
+html[data-theme-mode="light"] .border-zinc-700\/80 {
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme-mode="light"] .bg-zinc-950 {
+  background-color: #f1f5f9 !important;
+}
+
+html[data-theme-mode="light"] .bg-zinc-900,
+html[data-theme-mode="light"] .bg-zinc-900\/60,
+html[data-theme-mode="light"] .bg-zinc-900\/80,
+html[data-theme-mode="light"] .bg-zinc-900\/90 {
+  background-color: #e2e8f0 !important;
 }

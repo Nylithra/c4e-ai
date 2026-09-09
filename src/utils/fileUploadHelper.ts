@@ -133,3 +133,78 @@ export function notifyFileSizeExceeded(result: FileSizeValidationResult): void {
     );
   }
 }
+
+/**
+ * Compresses and optimizes image files before uploading or storing them.
+ * Reduces large camera/phone photos (e.g. 5-15MB) into lightweight high-quality images (~80-160KB),
+ * preventing browser localStorage quota exceeded errors and network 413 Payload Too Large errors.
+ */
+export async function compressAndOptimizeImage(
+  file: File,
+  maxDimension = 1280,
+  quality = 0.82
+): Promise<string> {
+  // If not an image or if it's an animated GIF, return standard data URL
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const rawData = e.target?.result as string;
+      if (!rawData) {
+        resolve('');
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(rawData);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Try WebP first for great compression ratio, fallback to JPEG
+          try {
+            const webpData = canvas.toDataURL('image/webp', quality);
+            if (webpData && webpData.startsWith('data:image/webp')) {
+              resolve(webpData);
+              return;
+            }
+          } catch {}
+
+          const jpegData = canvas.toDataURL('image/jpeg', quality);
+          resolve(jpegData || rawData);
+        } catch {
+          resolve(rawData);
+        }
+      };
+      img.onerror = () => resolve(rawData);
+      img.src = rawData;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+

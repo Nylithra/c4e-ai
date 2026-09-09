@@ -54,6 +54,7 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
     newAngle: number,
     newShape: 'circle' | 'ellipse'
   ) => {
+    if (!isSpark) return;
     const css = buildGradientCss(newType, newStops, newAngle, newShape);
     onChange({
       stops: newStops,
@@ -157,7 +158,7 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
           </p>
         </div>
 
-        {onApplyToTheme && (
+        {onApplyToTheme && isSpark && (
           <button
             type="button"
             onClick={onApplyToTheme}
@@ -168,6 +169,36 @@ export const CssGradientGenerator: React.FC<CssGradientGeneratorProps> = ({
           </button>
         )}
       </div>
+
+      {!isSpark && (
+        <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/40 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <Lock className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-white">
+                {language === 'tr' ? '✨ Spark Destekçisi Özelliği' : '✨ Spark Supporter Feature'}
+              </p>
+              <p className="text-[11px] text-amber-300/80">
+                {language === 'tr'
+                  ? 'CSS Gradyan ve renk geçişli temalar yalnızca Spark destekçilerimize açıktır.'
+                  : 'CSS Gradient themes are only accessible to Spark supporters.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('c4e_open_support_tab'));
+            }}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-95 whitespace-nowrap"
+          >
+            <Sparkles className="w-3.5 h-3.5 fill-zinc-950" />
+            <span>{language === 'tr' ? 'Destek Ol (Spark Edin)' : 'Support Us (Get Spark)'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Interactive Live Preview Box */}
       <div className="space-y-2">

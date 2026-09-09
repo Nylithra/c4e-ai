@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, Plus, Check, UserPlus, AlertTriangle, Settings, Shield, Crown, Code2, Terminal, Share2, Link2 } from 'lucide-react';
+import { Users, Plus, Check, UserPlus, AlertTriangle, Settings, Shield, Crown, Code2, Terminal, Share2, Link2, Layers } from 'lucide-react';
 import { Community, UserProfile } from '../types';
 import { verifyAdminAccess } from '../utils/securityHelper';
 import { CommunitySettingsModal } from './CommunitySettingsModal';
@@ -15,6 +15,7 @@ interface CommunitiesViewProps {
   onUpdateCommunity?: (updated: Community) => void;
   onDeleteCommunity?: (communityId: string) => void;
   onSelectCommunity?: (comm: Community) => void;
+  onViewCommunityPosts?: (communityIdOrHandle: string) => void;
 }
 
 export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
@@ -26,7 +27,8 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
   onCreateCommunity,
   onUpdateCommunity,
   onDeleteCommunity,
-  onSelectCommunity
+  onSelectCommunity,
+  onViewCommunityPosts
 }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCommunity, setEditingCommunity] = useState<Community | null>(null);
@@ -277,6 +279,24 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
                         )}
                       </button>
                     </div>
+                  </div>
+
+                  {/* Card Bottom: Topluluk Gönderileri Butonu */}
+                  <div className="px-4 pb-3.5 pt-0 flex items-center justify-between gap-2 border-t border-zinc-900/80 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onViewCommunityPosts) {
+                          onViewCommunityPosts(comm.id || comm.handle);
+                        } else if (onSelectCommunity) {
+                          onSelectCommunity(comm);
+                        }
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 hover:border-purple-500 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-98"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>{language === 'tr' ? 'Topluluk Gönderileri' : 'Community Posts'}</span>
+                    </button>
                   </div>
                 </div>
               );

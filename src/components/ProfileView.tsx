@@ -306,16 +306,21 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
     >
       <div className="relative group">
         <div className="h-44 w-full overflow-hidden bg-zinc-900 relative">
-          {profileTheme?.isGradient && profileTheme.gradientCss ? (
+          {(formData.banner_url || user.banner_url) ? (
+            <img
+              src={formData.banner_url || user.banner_url}
+              alt="Profile Banner"
+              className="w-full h-full object-cover"
+            />
+          ) : profileTheme?.isGradient && profileTheme.gradientCss ? (
             <div
-              className="w-full h-full absolute inset-0 opacity-85 transition-all"
+              className="w-full h-full absolute inset-0 opacity-90 transition-all"
               style={{ background: profileTheme.gradientCss }}
             />
           ) : (
-            <img
-              src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
-              alt="Profile Banner"
-              className="w-full h-full object-cover"
+            <div
+              className="w-full h-full absolute inset-0 opacity-90 transition-all"
+              style={{ background: profileTheme?.profile || profileTheme?.main || '#18181b' }}
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />

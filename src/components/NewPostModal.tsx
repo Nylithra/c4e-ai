@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, Code, Send, Image as ImageIcon, Video, Trash2, Loader2, Users, Sparkles } from 'lucide-react';
 import { UserProfile, Community } from '../types';
-import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength } from '../utils/fileUploadHelper';
+import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength, compressAndOptimizeImage } from '../utils/fileUploadHelper';
 import { CategorySelector } from './CategorySelector';
 
 interface NewPostModalProps {
@@ -60,7 +60,7 @@ export const NewPostModal: React.FC<NewPostModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -77,14 +77,26 @@ export const NewPostModal: React.FC<NewPostModalProps> = ({
 
     if (!isVid && !isImg) return;
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      if (ev.target?.result) {
-        setMediaUrl(ev.target.result as string);
-        setMediaType(isVid ? 'video' : 'image');
+    if (isImg) {
+      try {
+        const compressed = await compressAndOptimizeImage(file);
+        if (compressed) {
+          setMediaUrl(compressed);
+          setMediaType('image');
+        }
+      } catch (err) {
+        console.warn('Image processing error:', err);
       }
-    };
-    reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          setMediaUrl(ev.target.result as string);
+          setMediaType('video');
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

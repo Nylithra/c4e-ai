@@ -198,6 +198,20 @@ export function getEffectiveAppTheme(user?: Partial<UserProfile> | null): AppThe
     // fallback
   }
 
+  // Fallback to custom_fields.theme if app_theme has not been set yet
+  if (user?.custom_fields?.theme) {
+    const t = user.custom_fields.theme;
+    return {
+      ...DEFAULT_DARK_THEME,
+      ...t,
+      gradientCss: t.gradientCss || buildGradientCss(
+        t.gradientType || 'linear',
+        t.stops || DEFAULT_DARK_THEME.stops,
+        t.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
+      )
+    };
+  }
+
   return DEFAULT_DARK_THEME;
 }
 
@@ -275,29 +289,47 @@ export function applyAppThemeToDom(theme: AppThemeConfig): void {
   root.style.setProperty('--c4e-app-gradient', gradientCss);
   root.style.setProperty('--c4e-theme-gradient', gradientCss);
 
+  const isGradient = Boolean(theme.isGradient && gradientCss);
+  const bgVal = isGradient ? gradientCss : (theme.main || '#09090b');
+  root.style.setProperty('--c4e-app-bg', bgVal);
+
   // Sync Tailwind root variables for clean Light / Dark mode consistency
-  const isLight = theme.id === 'theme_light' || theme.main === '#f8fafc';
+  const isLight = theme.id === 'theme_light' || theme.main === '#f8fafc' || theme.main?.toLowerCase() === '#ffffff';
   if (isLight) {
+    root.setAttribute('data-theme-mode', 'light');
+    root.classList.add('light');
+    root.classList.remove('dark');
     root.style.setProperty('--background', '#f8fafc');
     root.style.setProperty('--foreground', '#09090b');
     root.style.setProperty('--card', '#ffffff');
     root.style.setProperty('--card-foreground', '#09090b');
     root.style.setProperty('--border', 'rgba(0, 0, 0, 0.12)');
     root.style.setProperty('--primary', theme.buttons || '#2563eb');
+    root.style.setProperty('--primary-foreground', '#ffffff');
+    root.style.setProperty('--muted-foreground', 'oklch(0.45 0.01 260)');
   } else {
+    root.setAttribute('data-theme-mode', 'dark');
+    root.classList.add('dark');
+    root.classList.remove('light');
     root.style.setProperty('--background', theme.main || '#09090b');
     root.style.setProperty('--foreground', theme.text || '#f8fafc');
     root.style.setProperty('--card', theme.profile || '#121215');
     root.style.setProperty('--card-foreground', theme.text || '#f8fafc');
     root.style.setProperty('--border', 'rgba(255, 255, 255, 0.1)');
     root.style.setProperty('--primary', theme.buttons || '#2563eb');
+    root.style.setProperty('--primary-foreground', '#ffffff');
+    root.style.setProperty('--muted-foreground', 'oklch(0.62 0.008 260)');
   }
 
-  // Apply background
-  if (theme.isGradient && gradientCss) {
-    document.body.style.backgroundImage = gradientCss;
+  // Apply body background & gradient flag
+  if (isGradient) {
+    root.setAttribute('data-theme-gradient', 'true');
+    document.body.style.background = gradientCss;
+    document.body.style.backgroundAttachment = 'fixed';
     document.body.style.backgroundColor = theme.main || '#09090b';
   } else {
+    root.setAttribute('data-theme-gradient', 'false');
+    document.body.style.background = theme.main || '#09090b';
     document.body.style.backgroundImage = 'none';
     document.body.style.backgroundColor = theme.main || '#09090b';
   }
@@ -331,6 +363,13 @@ export function applyAppThemeToDom(theme: AppThemeConfig): void {
   // Persist locally
   try {
     localStorage.setItem(STORAGE_KEY_APP_THEME, JSON.stringify(theme));
+  } catch {
+    // ignore
+  }
+
+  // Broadcast global theme change event
+  try {
+    window.dispatchEvent(new CustomEvent('c4e-theme-changed', { detail: theme }));
   } catch {
     // ignore
   }
