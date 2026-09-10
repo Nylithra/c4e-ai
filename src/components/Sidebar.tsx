@@ -65,6 +65,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setIsStandalone(isPWARunningStandalone());
   }, []);
 
+  useEffect(() => {
+    if (isMobileDrawerOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isMobileDrawerOpen]);
+
   const navItems = [
     { id: 'feed', label: language === 'tr' ? 'Ana Sayfa' : 'Home', icon: Home },
     { id: 'explore', label: language === 'tr' ? 'Keşfet' : 'Explore', icon: Compass },
@@ -118,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 1. MOBILE TOP HEADER (Screens < md)                      */}
       {/* ======================================================== */}
-      <header className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[#09090b]/95 backdrop-blur-xl border-b border-zinc-800/80 px-4 py-2.5 flex items-center justify-between select-none">
+      <header className="md:hidden fixed top-0 left-0 right-0 z-40 c4e-topbar backdrop-blur-xl border-b h-[52px] px-4 py-2.5 flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => setIsMobileDrawerOpen(true)}
@@ -151,10 +162,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Quick New Post Button */}
           <button
             onClick={onOpenNewPost}
-            className="p-2 rounded-xl bg-zinc-100 text-zinc-950 hover:bg-white active:scale-95 transition-all shadow-sm font-bold flex items-center justify-center cursor-pointer"
+            className="p-2 rounded-xl bg-[var(--c4e-app-buttons,#ffffff)] text-[var(--c4e-app-button-text,#09090b)] hover:opacity-90 active:scale-95 transition-all shadow-sm font-bold flex items-center justify-center cursor-pointer"
             aria-label="New Post"
           >
-            <Plus className="w-4 h-4 text-zinc-950 stroke-[2.5px]" />
+            <Plus className="w-4 h-4 stroke-[2.5px]" />
           </button>
 
           {/* Quick Notifications Button */}
@@ -165,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[#09090b]" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[var(--c4e-app-main,#09090b)]" />
             )}
           </button>
 
@@ -192,12 +203,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => setIsMobileDrawerOpen(false)}
         >
           <div
-            className="w-72 max-w-[80vw] h-full bg-[#09090b] border-r border-zinc-800/80 p-4 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-left duration-250 shadow-2xl"
+            className="w-72 max-w-[80vw] h-full c4e-drawer border-r p-4 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-left duration-250 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="space-y-4">
               {/* Drawer Top Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800/60">
+              <div className="flex items-center justify-between pb-3 border-b border-c4e-app">
                 <span className="text-lg font-extrabold text-white tracking-tight">Code4Ever</span>
                 <button
                   onClick={() => setIsMobileDrawerOpen(false)}
@@ -213,7 +224,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setActiveTab('profile');
                   setIsMobileDrawerOpen(false);
                 }}
-                className="flex items-center gap-3 p-3 rounded-2xl bg-[#0c0c0e] border border-zinc-800/80 hover:border-zinc-700 cursor-pointer transition-all"
+                className="flex items-center gap-3 p-3 rounded-2xl bg-[var(--c4e-app-profile,#0c0c0e)] border border-[var(--c4e-app-border,rgba(255,255,255,0.1))] hover:border-zinc-700 cursor-pointer transition-all"
               >
                 <img
                   src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
@@ -276,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       style={
                         isActive
                           ? {
-                              borderLeftColor: theme.accentColor,
+                              borderLeftColor: 'var(--c4e-app-buttons, ' + (theme.accentColor || '#3b82f6') + ')',
                               borderLeftWidth: '3px'
                             }
                           : {}
@@ -319,15 +330,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onOpenNewPost();
                   setIsMobileDrawerOpen(false);
                 }}
-                className="w-full py-3 px-4 rounded-xl font-bold text-zinc-950 bg-zinc-100 hover:bg-white text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
+                className="w-full py-3 px-4 rounded-xl font-bold bg-[var(--c4e-app-buttons,#ffffff)] text-[var(--c4e-app-button-text,#09090b)] hover:opacity-90 text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
               >
-                <PlusCircle className="w-4 h-4 text-zinc-950" />
+                <PlusCircle className="w-4 h-4" />
                 <span>{language === 'tr' ? 'Yeni Gönderi Paylaş' : 'Create New Post'}</span>
               </button>
             </div>
 
             {/* Bottom Actions inside Drawer */}
-            <div className="pt-4 border-t border-zinc-800/60 space-y-2">
+            <div className="pt-4 border-t border-[var(--c4e-app-border,rgba(255,255,255,0.1))] space-y-2">
               {onOpenReportError && (
                 <button
                   onClick={() => {
@@ -391,7 +402,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 3. MOBILE BOTTOM NAVIGATION BAR (Screens < md)            */}
       {/* ======================================================== */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#09090b]/95 backdrop-blur-xl border-t border-zinc-800/80 px-2 py-2 flex items-center justify-around select-none">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 c4e-bottomnav backdrop-blur-xl border-t px-2 py-2 flex items-center justify-around select-none">
         {/* Home */}
         <button
           onClick={() => setActiveTab('feed')}
@@ -417,10 +428,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Center Floating Action Button (New Post) */}
         <button
           onClick={onOpenNewPost}
-          className="flex items-center justify-center w-11 h-11 -mt-3 rounded-full bg-zinc-100 hover:bg-white text-zinc-950 shadow-lg shadow-zinc-950/50 ring-4 ring-[#09090b] active:scale-95 transition-all cursor-pointer"
+          className="flex items-center justify-center w-11 h-11 -mt-3 rounded-full bg-[var(--c4e-app-buttons,#ffffff)] hover:opacity-95 text-[var(--c4e-app-button-text,#09090b)] shadow-lg shadow-zinc-950/50 ring-4 ring-[var(--c4e-app-main,#09090b)] active:scale-95 transition-all cursor-pointer"
           aria-label="New Post"
         >
-          <Plus className="w-5 h-5 text-zinc-950 stroke-[3px]" />
+          <Plus className="w-5 h-5 stroke-[3px]" />
         </button>
 
         {/* Messages */}
@@ -449,7 +460,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 4. DESKTOP PERMANENT SIDEBAR (Screens >= md)              */}
       {/* ======================================================== */}
-      <aside className="hidden md:flex w-64 flex-shrink-0 flex-col justify-between h-screen sticky top-0 p-4 border-r border-zinc-800/60 bg-[#09090b]/95 backdrop-blur-md z-30 select-none">
+      <aside className="hidden md:flex w-64 flex-shrink-0 flex-col justify-between h-screen sticky top-0 p-4 border-r c4e-sidebar backdrop-blur-md z-30 select-none">
         <div className="space-y-5">
           <div className="px-2 pt-2 pb-1">
             <div className="cursor-pointer transition-opacity hover:opacity-90" onClick={() => setActiveTab('feed')}>
@@ -479,7 +490,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   style={
                     isActive
                       ? {
-                          borderLeftColor: theme.accentColor,
+                          borderLeftColor: 'var(--c4e-app-buttons, ' + (theme.accentColor || '#3b82f6') + ')',
                           borderLeftWidth: '3px'
                         }
                       : {}
@@ -519,9 +530,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="pt-2 space-y-2">
             <button
               onClick={onOpenNewPost}
-              className="w-full py-3 px-4 rounded-xl font-bold text-zinc-950 bg-zinc-100 hover:bg-white text-xs flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.98] shadow-lg cursor-pointer"
+              className="w-full py-3 px-4 rounded-xl font-bold bg-[var(--c4e-app-buttons,#ffffff)] text-[var(--c4e-app-button-text,#09090b)] hover:opacity-95 text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg cursor-pointer"
             >
-              <PlusCircle className="w-4 h-4 text-zinc-950" />
+              <PlusCircle className="w-4 h-4" />
               <span>{language === 'tr' ? 'Yeni Gönderi' : 'New Post'}</span>
             </button>
 
@@ -540,7 +551,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="space-y-2">
           <div
             onClick={() => setActiveTab('profile')}
-            className="flex items-center justify-between p-2.5 rounded-2xl bg-[#0c0c0e] hover:bg-zinc-800/80 border border-zinc-800/80 cursor-pointer transition-all hover:border-zinc-700"
+            className="flex items-center justify-between p-2.5 rounded-2xl bg-[var(--c4e-app-profile,#0c0c0e)] hover:bg-zinc-800/80 border border-[var(--c4e-app-border,rgba(255,255,255,0.1))] cursor-pointer transition-all hover:border-zinc-700"
           >
             <div className="flex items-center gap-2.5 overflow-hidden">
               <img

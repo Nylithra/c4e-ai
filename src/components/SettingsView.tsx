@@ -146,15 +146,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleSelectPresetTheme = (preset: AppThemeConfig) => {
-    if ((preset.isSparkExclusive || preset.isGradient) && !isSpark) {
-      setSparkNotice(
-        language === 'tr'
-          ? '✨ Renk geçişli (gradyan) ve Spark özel temalar yalnızca Spark destekçilerimize özeldir. Destek Ol sekmesinden hemen Spark rolünü edinebilirsiniz!'
-          : '✨ Gradient and Spark exclusive themes are reserved for Spark supporters. You can acquire Spark in Support Us!'
-      );
-      setTimeout(() => setSparkNotice(null), 4000);
-      return;
-    }
     const updated: AppThemeConfig = {
       ...preset,
       id: `theme_${Date.now()}`
@@ -176,15 +167,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     radialShape: 'circle' | 'ellipse';
     css: string;
   }) => {
-    if (!isSpark) {
-      setSparkNotice(
-        language === 'tr'
-          ? '✨ CSS Gradyan renk geçişleri yalnızca Spark destekçilerimize özeldir.'
-          : '✨ CSS Gradients are only available to Spark supporters.'
-      );
-      setTimeout(() => setSparkNotice(null), 4000);
-      return;
-    }
     updateActiveTheme((prev) => ({
       ...prev,
       isGradient: true,
@@ -357,9 +339,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
       {/* Sticky Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
+      <div className="sticky top-[52px] md:top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {activeSection !== 'overview' && (
             <button
@@ -1000,7 +982,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <div
                       className="h-16 w-full relative overflow-hidden"
                       style={{
-                        background: profileTheme.isGradient ? profileTheme.gradientCss : (profileTheme.profile || profileTheme.main),
+                        background: profileTheme.isGradient && profileTheme.gradientCss
+                          ? profileTheme.gradientCss
+                          : `linear-gradient(135deg, ${profileTheme.buttons || '#3b82f6'} 0%, ${profileTheme.profile || profileTheme.main || '#18181b'} 100%)`,
                         borderBottom: '1px solid rgba(255,255,255,0.1)'
                       }}
                     >
@@ -1011,6 +995,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           className="w-full h-full object-cover"
                         />
                       )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
                     </div>
 
                     <div className="p-4 pt-0 -mt-6">
@@ -1151,7 +1136,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {PRESET_THEMES.map((preset) => {
                     const isSelected = activeTheme.name === preset.name;
-                    const isLocked = (preset.isSparkExclusive || preset.isGradient) && !isSpark;
                     return (
                       <button
                         key={preset.id}
@@ -1160,8 +1144,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group cursor-pointer ${
                           isSelected
                             ? 'border-purple-500 ring-2 ring-purple-500/30 bg-purple-950/20'
-                            : isLocked
-                            ? 'border-zinc-800/80 bg-zinc-950/60 opacity-80 hover:border-amber-500/40'
                             : 'border-zinc-800/80 bg-zinc-950 hover:border-zinc-700'
                         }`}
                       >
@@ -1179,11 +1161,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           >
                             Button
                           </span>
-                          {isLocked && (
-                            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] rounded-xl flex items-center justify-center">
-                              <Lock className="w-3.5 h-3.5 text-amber-300" />
-                            </div>
-                          )}
+                          {/* No lock - gradients and themes are free for all */}
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -1196,14 +1174,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             </p>
                           </div>
 
-                          {(preset.isSparkExclusive || preset.isGradient) && (
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border ${
-                              isLocked
-                                ? 'bg-zinc-900 border-amber-500/40 text-amber-300'
-                                : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                            }`}>
-                              {isLocked ? <Lock className="w-2.5 h-2.5" /> : <Sparkles className="w-2.5 h-2.5 fill-amber-400" />}
-                              <span>Spark</span>
+                          {preset.isGradient && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border bg-purple-500/20 text-purple-300 border-purple-500/30">
+                              <Sparkles className="w-2.5 h-2.5 fill-purple-400 text-purple-400" />
+                              <span>Gradient</span>
                             </span>
                           )}
                         </div>

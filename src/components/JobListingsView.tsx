@@ -74,9 +74,9 @@ export const JobListingsView: React.FC<JobListingsViewProps> = ({
   }, [jobListings, filterType, searchQuery, currentUser.username]);
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] text-white">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] text-white">
       {/* Sticky Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between gap-4">
+      <div className="sticky top-[52px] md:top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300">
             <Briefcase className="w-5 h-5" />

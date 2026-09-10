@@ -469,7 +469,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
   });
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] relative">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] relative">
       {toastMessage && (
         <div className="fixed top-4 right-4 z-50 bg-zinc-900 border border-zinc-700 text-white text-xs font-bold px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 animate-bounce">
           <Check className="w-4 h-4 text-emerald-400" />
@@ -478,7 +478,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
       )}
 
       {/* Sticky Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3 flex items-center justify-between">
+      <div className="sticky top-[52px] md:top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-4 sm:px-5 py-3 flex items-center justify-between">
         <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
           <span>{language === 'tr' ? 'Akış & Gönderiler' : 'Feed & Posts'}</span>
           <span className="w-2 h-2 rounded-full bg-zinc-400" />
@@ -713,7 +713,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
               className="w-10 h-10 rounded-full object-cover ring-2 ring-zinc-800 flex-shrink-0 cursor-pointer"
               onClick={() => onSelectUser(user.username)}
             />
-            <div className="flex-1 space-y-2.5">
+            <div className="flex-1 min-w-0 space-y-2.5">
               {/* Category & Community Target Selector Bar */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {/* Dynamic Category Selector */}
@@ -914,8 +914,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
               )}
 
               {/* Bottom Buttons Bar */}
-              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/40">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/40 flex-wrap gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                   <input
                     type="file"
                     ref={mediaInputRef}
@@ -984,7 +984,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
       </div>
 
       {/* Post List */}
-      <div className="divide-y divide-zinc-800/40">
+      <div className="divide-y divide-zinc-800/40 min-w-0 max-w-full overflow-hidden">
         {filteredPosts.length === 0 ? (
           <div className="p-12 text-center space-y-3">
             <div className={`w-12 h-12 rounded-full border flex items-center justify-center mx-auto ${
@@ -1067,7 +1067,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
                 onTouchCancel={handleTouchEnd}
-                className={`p-4 hover:bg-zinc-900/30 transition-colors space-y-3 relative select-text ${
+                className={`p-4 hover:bg-zinc-900/30 transition-colors space-y-3 relative select-text min-w-0 max-w-full overflow-hidden ${
                   isNylithra ? 'cursor-context-menu' : ''
                 } ${longPressingPostId === post.id ? 'bg-zinc-900/50 scale-[0.995] transition-transform' : ''}`}
               >
@@ -1174,7 +1174,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 </div>
 
                 {/* Content */}
-                {post.content && <p className="text-xs text-zinc-200 leading-relaxed">{post.content}</p>}
+                {post.content && <p className="text-xs text-zinc-200 leading-relaxed break-words [overflow-wrap:anywhere]">{post.content}</p>}
 
                 {/* Media */}
                 {post.media_url && (
@@ -1399,7 +1399,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                                   {formatTimeAgo(comment.created_at || 'Az önce', language)}
                                 </span>
                               </div>
-                              <p className="text-zinc-300 leading-relaxed">{comment.content}</p>
+                              <p className="text-zinc-300 leading-relaxed break-words [overflow-wrap:anywhere]">{comment.content}</p>
                             </div>
                           );
                         })}

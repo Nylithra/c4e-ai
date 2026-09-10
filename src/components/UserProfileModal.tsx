@@ -427,25 +427,26 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 }}
               >
                 {/* Banner */}
-                <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
+                <div className="h-28 w-full relative overflow-hidden" style={{ backgroundColor: profileTheme?.main || '#121215' }}>
                   {profileData.banner_url ? (
                     <img
                       src={profileData.banner_url}
                       alt="Profile Banner"
                       className="w-full h-full object-cover"
                     />
-                  ) : profileTheme?.isGradient && profileTheme.gradientCss ? (
-                    <div
-                      className="w-full h-full absolute inset-0 opacity-90"
-                      style={{ background: profileTheme.gradientCss }}
-                    />
                   ) : (
                     <div
-                      className="w-full h-full absolute inset-0 opacity-90"
-                      style={{ background: profileTheme?.profile || profileTheme?.main || '#18181b' }}
-                    />
+                      className="w-full h-full absolute inset-0 transition-all"
+                      style={{
+                        background: profileTheme?.isGradient && profileTheme.gradientCss
+                          ? profileTheme.gradientCss
+                          : `linear-gradient(135deg, ${profileTheme?.buttons || '#3b82f6'} 0%, ${profileTheme?.profile || profileTheme?.main || '#18181b'} 100%)`
+                      }}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
+                    </div>
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+                  <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-black/30" />
                 </div>
 
                 {/* Main Info */}

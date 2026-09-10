@@ -945,7 +945,7 @@ export const DirectMessagesView: React.FC<DirectMessagesViewProps> = ({
   );
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen bg-[#09090b] flex flex-col select-none">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen bg-[#09090b] flex flex-col select-none">
       {/* Hidden File Input */}
       <input
         type="file"
@@ -956,7 +956,7 @@ export const DirectMessagesView: React.FC<DirectMessagesViewProps> = ({
       />
 
       {/* Top Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
+      <div className="sticky top-[52px] md:top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
             <Lock className="w-4 h-4" />

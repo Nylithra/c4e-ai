@@ -815,9 +815,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
   };
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] text-white">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] text-white">
       {/* Header */}
-      <div className="sticky top-0 z-20 bg-[#09090b]/90 backdrop-blur-md border-b border-zinc-800/80 p-4 flex items-center justify-between">
+      <div className="sticky top-[52px] md:top-0 z-20 bg-[#09090b]/90 backdrop-blur-md border-b border-zinc-800/80 p-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
             <Shield className="w-5 h-5 text-blue-400" />
@@ -845,7 +845,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       )}
 
       {/* Sub Tabs */}
-      <div className="p-4 border-b border-zinc-800/60 flex items-center gap-2 bg-[#0c0c0e] flex-wrap">
+      <div className="p-3 sm:p-4 border-b border-zinc-800/60 flex items-center gap-2 bg-[var(--c4e-app-profile,#0c0c0e)] overflow-x-auto no-scrollbar whitespace-nowrap">
         <button
           type="button"
           onClick={() => setActiveTab('beta')}

@@ -1155,7 +1155,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="w-full flex flex-col md:flex-row relative min-h-screen min-w-0">
+      <div className="w-full max-w-full flex flex-col md:flex-row relative min-h-screen min-w-0 overflow-x-hidden">
         <Sidebar
           activeTab={activeTab}
           setActiveTab={(tab) => {
@@ -1192,7 +1192,7 @@ export default function App() {
           }}
         />
 
-        <main className="flex-1 flex min-h-screen w-full pt-[52px] md:pt-0 pb-16 md:pb-0 min-w-0">
+        <main className="flex-1 flex min-h-screen w-full max-w-full pt-[52px] md:pt-0 pb-16 md:pb-0 min-w-0 overflow-x-hidden">
           {activeTab === 'feed' && (
             <FeedView
               posts={posts}
@@ -1319,6 +1319,7 @@ export default function App() {
               communities={displayCommunities}
               onUpdateProfile={handleUpdateProfile}
               onSelectCommunity={(comm) => handleSelectCommunity(comm)}
+              onViewCommunityPosts={handleViewCommunityPosts}
               onLikePost={handleLikePost}
               onRepostPost={handleRepostPost}
               onBookmarkPost={handleBookmarkPost}

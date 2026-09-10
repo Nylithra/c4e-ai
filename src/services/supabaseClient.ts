@@ -319,7 +319,7 @@ export const DEFAULT_USER: UserProfile = {
 };
 
 // -------------------------------------------------------------
-// AUTHENTICATION (SUPABASE OAUTH & SESSION)
+// AUTHENTICATION (SUPABASE OAUTH, EMAIL, USERNAME & SESSION)
 // -------------------------------------------------------------
 
 export async function signInWithGitHubSupabase(): Promise<void> {
@@ -331,7 +331,12 @@ export async function signInWithGitHubSupabase(): Promise<void> {
         redirectTo: window.location.origin
       }
     });
-    if (error) throw error;
+    if (error) {
+      if (error.message?.includes('provider is not enabled') || error.message?.includes('Unsupported provider')) {
+        throw new Error('Supabase projenizde GitHub ile giriş sağlayıcısı henüz etkinleştirilmemiş. Lütfen Kullanıcı Adı veya E-posta ile giriş yapın.');
+      }
+      throw error;
+    }
   } else {
     // Demo / fallback mode if Supabase URL is not yet configured
     const demoUser: UserProfile = {
@@ -347,6 +352,217 @@ export async function signInWithGitHubSupabase(): Promise<void> {
     saveStoredProfile(demoUser);
     window.location.reload();
   }
+}
+
+export async function signInWithEmailSupabase(email: string, pass: string): Promise<UserProfile> {
+  const cleanEmail = email.trim();
+  if (!cleanEmail || !pass) {
+    throw new Error('Lütfen e-posta ve şifrenizi girin.');
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    // Local fallback: authenticate by email in cache or create
+    return signInWithUsernameOrProfile(cleanEmail);
+  }
+
+  const { data, error } = await client.auth.signInWithPassword({
+    email: cleanEmail,
+    password: pass
+  });
+
+  if (error) {
+    if (error.message?.includes('Invalid login credentials')) {
+      throw new Error('E-posta adresi veya şifre hatalı.');
+    }
+    throw error;
+  }
+
+  if (!data.user) {
+    throw new Error('Kullanıcı oturumu başlatılamadı.');
+  }
+
+  const profile = await getOrFormatUserProfile(data.user);
+  saveStoredProfile(profile);
+  return profile;
+}
+
+export async function signUpWithEmailSupabase(
+  email: string,
+  pass: string,
+  username: string,
+  displayName?: string
+): Promise<UserProfile> {
+  const cleanEmail = email.trim();
+  const cleanUsername = username.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+  const cleanDisplay = (displayName || cleanUsername).trim();
+
+  if (!cleanEmail || !pass || !cleanUsername) {
+    throw new Error('Lütfen e-posta, kullanıcı adı ve şifre alanlarını doldurun.');
+  }
+  if (pass.length < 6) {
+    throw new Error('Şifreniz en az 6 karakter olmalıdır.');
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return signInWithUsernameOrProfile(cleanUsername);
+  }
+
+  const { data, error } = await client.auth.signUp({
+    email: cleanEmail,
+    password: pass,
+    options: {
+      data: {
+        user_name: cleanUsername,
+        name: cleanDisplay
+      }
+    }
+  });
+
+  if (error) {
+    if (error.message?.includes('already registered')) {
+      throw new Error('Bu e-posta adresi zaten kayıtlı. Lütfen giriş yapın.');
+    }
+    throw error;
+  }
+
+  if (!data.user) {
+    throw new Error('Kayıt oluşturulamadı.');
+  }
+
+  const profile = await getOrFormatUserProfile(data.user);
+  profile.username = cleanUsername;
+  profile.display_name = cleanDisplay;
+  profile.email = cleanEmail;
+
+  try {
+    await client.from('profiles').upsert({
+      id: data.user.id,
+      username: cleanUsername,
+      display_name: cleanDisplay,
+      avatar_url: profile.avatar_url,
+      bio: 'Code4Ever geliştiricisi.',
+      role: 'Geliştirici',
+      email: cleanEmail,
+      created_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.warn('Profile upsert note:', e);
+  }
+
+  saveStoredProfile(profile);
+  return profile;
+}
+
+export async function signInWithUsernameOrProfile(usernameOrEmail: string): Promise<UserProfile> {
+  const clean = usernameOrEmail.toLowerCase().trim().replace(/^@/, '');
+  if (!clean) {
+    throw new Error('Lütfen kullanıcı adı veya e-posta girin.');
+  }
+
+  // 1. Admin account: Nylithra
+  if (clean === 'nylithra') {
+    const adminUser: UserProfile = {
+      ...DEFAULT_USER,
+      id: 'usr_nylithra_admin',
+      username: 'nylithra',
+      display_name: 'Nylithra',
+      avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      bio: 'Code4Ever Platform Kurucusu & Baş Geliştirici.',
+      role: 'Yönetici',
+      isAdmin: true,
+      verified: true,
+      betaStatus: 'approved',
+      badges: ['Kurucu', 'Yönetici', 'Verified Geliştirici', 'Spark'],
+      custom_fields: {
+        github: 'github.com/nylithra',
+        location: 'İstanbul, TR',
+        badges: ['Kurucu', 'Yönetici', 'Verified Geliştirici', 'Spark']
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    saveStoredProfile(adminUser);
+    return adminUser;
+  }
+
+  const client = getSupabaseClient();
+
+  // 2. Query Supabase profiles table
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('profiles')
+        .select('*')
+        .or(`username.ilike.${clean},email.ilike.${clean}`)
+        .maybeSingle();
+
+      if (data && !error) {
+        const profile = normalizeProfile({
+          ...DEFAULT_USER,
+          ...data,
+          id: data.id || `usr_${clean}`
+        });
+        saveStoredProfile(profile);
+        return profile;
+      }
+    } catch (e) {
+      console.warn('Supabase profile query fallback:', e);
+    }
+  }
+
+  // 3. Query local cache of all users
+  const cachedUsers = loadStoredAllUsers();
+  const foundInCache = cachedUsers.find(
+    (u) =>
+      u.username?.toLowerCase() === clean ||
+      (u.email && u.email.toLowerCase() === clean)
+  );
+
+  if (foundInCache) {
+    saveStoredProfile(foundInCache);
+    return foundInCache;
+  }
+
+  // 4. Create a fresh developer profile for this username
+  const newProfile: UserProfile = {
+    ...DEFAULT_USER,
+    id: `usr_${Date.now()}_${clean.replace(/[^a-z0-9_]/g, '')}`,
+    username: clean.replace(/[^a-z0-9_]/g, '_'),
+    display_name: clean.charAt(0).toUpperCase() + clean.slice(1),
+    avatar_url: `https://unavatar.io/github/${clean}`,
+    banner_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80',
+    bio: 'Code4Ever geliştiricisi.',
+    role: 'Geliştirici',
+    verified: false,
+    betaStatus: 'approved',
+    custom_fields: {
+      github: `github.com/${clean}`,
+      location: 'Türkiye'
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  if (client) {
+    try {
+      await client.from('profiles').upsert({
+        id: newProfile.id,
+        username: newProfile.username,
+        display_name: newProfile.display_name,
+        avatar_url: newProfile.avatar_url,
+        bio: newProfile.bio,
+        role: newProfile.role,
+        created_at: newProfile.created_at
+      });
+    } catch (e) {
+      console.warn('Profile upsert note:', e);
+    }
+  }
+
+  saveStoredProfile(newProfile);
+  return newProfile;
 }
 
 export async function logoutSupabase(): Promise<void> {

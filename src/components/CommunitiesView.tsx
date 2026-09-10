@@ -126,8 +126,8 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
   };
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
+    <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
+      <div className="sticky top-[52px] md:top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
         <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
           <Users className="w-5 h-5 text-zinc-300" />
           <span>{language === 'tr' ? 'Topluluklar' : 'Communities'}</span>

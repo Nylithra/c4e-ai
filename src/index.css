@@ -200,7 +200,40 @@
   background-image: var(--glow);
 }
 
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
+}
+
 /* Dynamic App Theme Overrides for Views, Sidebars and Panels */
+.c4e-sidebar {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 95%, transparent) !important;
+  border-color: var(--c4e-app-border, rgba(255, 255, 255, 0.1)) !important;
+}
+
+.c4e-topbar,
+.c4e-bottomnav {
+  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 95%, transparent) !important;
+  border-color: var(--c4e-app-border, rgba(255, 255, 255, 0.1)) !important;
+}
+
+.c4e-drawer {
+  background-color: var(--c4e-app-main, #09090b) !important;
+  border-color: var(--c4e-app-border, rgba(255, 255, 255, 0.1)) !important;
+}
+
+.border-c4e-app {
+  border-color: var(--c4e-app-border, rgba(255, 255, 255, 0.1)) !important;
+}
+
 .bg-\[\#09090b\] {
   background-color: var(--c4e-app-main, #09090b) !important;
 }
@@ -229,30 +262,15 @@
   background-color: color-mix(in srgb, var(--c4e-app-profile, #121215) 95%, transparent) !important;
 }
 
-/* Gradient Mode Shell Glass Support */
+/* Clean Solid Theme & App Background Support */
+.bg-app-background {
+  background: var(--c4e-app-main, #09090b) !important;
+  background-color: var(--c4e-app-main, #09090b) !important;
+  color: var(--c4e-app-text, var(--foreground));
+}
+
 html[data-theme-gradient="true"] .bg-app-background {
-  background: transparent !important;
-  background-color: transparent !important;
-}
-
-html[data-theme-gradient="true"] .bg-\[\#09090b\] {
-  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 75%, transparent) !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-}
-
-html[data-theme-gradient="true"] .bg-\[\#09090b\]\/90,
-html[data-theme-gradient="true"] .bg-\[\#09090b\]\/95 {
-  background-color: color-mix(in srgb, var(--c4e-app-main, #09090b) 80%, transparent) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-
-html[data-theme-gradient="true"] .bg-\[\#0c0c0e\],
-html[data-theme-gradient="true"] .bg-\[\#121215\] {
-  background-color: color-mix(in srgb, var(--c4e-app-profile, #121215) 80%, transparent) !important;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--c4e-app-gradient, var(--c4e-app-main, #09090b)) !important;
 }
 
 /* Light Theme Mode Enhancements */

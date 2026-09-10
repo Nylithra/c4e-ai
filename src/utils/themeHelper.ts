@@ -29,8 +29,78 @@ export interface AppThemeConfig {
 // ============================================================================
 export const PRESET_THEMES: AppThemeConfig[] = [
   {
+    id: 'theme_default_dark',
+    name: 'Code4Ever Koyu (Varsayılan - Düz)',
+    text: '#f4f4f5',
+    main: '#09090b',
+    buttons: '#2563eb',
+    profile: '#121215',
+    isGradient: false,
+    gradientType: 'linear',
+    gradientAngle: 180,
+    stops: [],
+    gradientCss: '',
+    isSparkExclusive: false
+  },
+  {
+    id: 'theme_midnight_solid',
+    name: 'Gece Mavisi (Düz)',
+    text: '#f8fafc',
+    main: '#0b0f19',
+    buttons: '#3b82f6',
+    profile: '#111827',
+    isGradient: false,
+    gradientType: 'linear',
+    gradientAngle: 180,
+    stops: [],
+    gradientCss: '',
+    isSparkExclusive: false
+  },
+  {
+    id: 'theme_emerald_solid',
+    name: 'Zümrüt Derinliği (Düz)',
+    text: '#ecfdf5',
+    main: '#021a15',
+    buttons: '#10b981',
+    profile: '#062d24',
+    isGradient: false,
+    gradientType: 'linear',
+    gradientAngle: 180,
+    stops: [],
+    gradientCss: '',
+    isSparkExclusive: false
+  },
+  {
+    id: 'theme_charcoal_solid',
+    name: 'Kömür Mat (Düz)',
+    text: '#fafafa',
+    main: '#121214',
+    buttons: '#8b5cf6',
+    profile: '#18181b',
+    isGradient: false,
+    gradientType: 'linear',
+    gradientAngle: 180,
+    stops: [],
+    gradientCss: '',
+    isSparkExclusive: false
+  },
+  {
+    id: 'theme_light',
+    name: 'Açık Tema (Light - Düz)',
+    text: '#09090b',
+    main: '#f8fafc',
+    buttons: '#2563eb',
+    profile: '#ffffff',
+    isGradient: false,
+    gradientType: 'linear',
+    gradientAngle: 180,
+    stops: [],
+    gradientCss: '',
+    isSparkExclusive: false
+  },
+  {
     id: 'theme_astra',
-    name: 'Astra Tema',
+    name: 'Astra (Gradyan)',
     text: '#f8fafc',
     main: '#09090b',
     buttons: '#6366f1',
@@ -47,42 +117,8 @@ export const PRESET_THEMES: AppThemeConfig[] = [
     isSparkExclusive: true
   },
   {
-    id: 'theme_default_dark',
-    name: 'Code4Ever Koyu (Varsayılan)',
-    text: '#f4f4f5',
-    main: '#09090b',
-    buttons: '#2563eb',
-    profile: '#121215',
-    isGradient: false,
-    gradientType: 'linear',
-    gradientAngle: 180,
-    stops: [
-      { id: 's1', color: '#09090b', position: 0 },
-      { id: 's2', color: '#121215', position: 100 }
-    ],
-    gradientCss: 'linear-gradient(180deg, #09090b 0%, #121215 100%)',
-    isSparkExclusive: false
-  },
-  {
-    id: 'theme_light',
-    name: 'Açık Tema (Light)',
-    text: '#09090b',
-    main: '#f8fafc',
-    buttons: '#2563eb',
-    profile: '#ffffff',
-    isGradient: false,
-    gradientType: 'linear',
-    gradientAngle: 180,
-    stops: [
-      { id: 's1', color: '#f8fafc', position: 0 },
-      { id: 's2', color: '#e2e8f0', position: 100 }
-    ],
-    gradientCss: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
-    isSparkExclusive: false
-  },
-  {
     id: 'theme_aurora',
-    name: 'Aurora Boreal',
+    name: 'Aurora Boreal (Gradyan)',
     text: '#f0fdf4',
     main: '#022c22',
     buttons: '#10b981',
@@ -100,7 +136,7 @@ export const PRESET_THEMES: AppThemeConfig[] = [
   },
   {
     id: 'theme_cyberpunk',
-    name: 'Cyberpunk Neon',
+    name: 'Cyberpunk Neon (Gradyan)',
     text: '#fdf4ff',
     main: '#0f051d',
     buttons: '#d946ef',
@@ -118,7 +154,7 @@ export const PRESET_THEMES: AppThemeConfig[] = [
   },
   {
     id: 'theme_sunset',
-    name: 'Sunset Flare',
+    name: 'Sunset Flare (Gradyan)',
     text: '#fff7ed',
     main: '#0c0a09',
     buttons: '#f97316',
@@ -136,8 +172,8 @@ export const PRESET_THEMES: AppThemeConfig[] = [
   }
 ];
 
-export const DEFAULT_DARK_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_default_dark') || PRESET_THEMES[1];
-export const DEFAULT_LIGHT_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_light') || PRESET_THEMES[2];
+export const DEFAULT_DARK_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_default_dark') || PRESET_THEMES[0];
+export const DEFAULT_LIGHT_THEME: AppThemeConfig = PRESET_THEMES.find((p) => p.id === 'theme_light') || PRESET_THEMES[4];
 
 export const STORAGE_KEY_APP_THEME = 'c4e_app_theme';
 export const STORAGE_KEY_PROFILE_THEME = 'c4e_profile_theme';
@@ -169,14 +205,18 @@ export function buildGradientCss(
 export function getEffectiveAppTheme(user?: Partial<UserProfile> | null): AppThemeConfig {
   if (user?.custom_fields?.app_theme) {
     const t = user.custom_fields.app_theme;
+    const isGrad = Boolean(t.isGradient);
     return {
       ...DEFAULT_DARK_THEME,
       ...t,
-      gradientCss: t.gradientCss || buildGradientCss(
-        t.gradientType || 'linear',
-        t.stops || DEFAULT_DARK_THEME.stops,
-        t.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
-      )
+      isGradient: isGrad,
+      gradientCss: isGrad
+        ? (t.gradientCss || buildGradientCss(
+            t.gradientType || 'linear',
+            t.stops || [],
+            t.gradientAngle ?? 135
+          ))
+        : ''
     };
   }
 
@@ -184,14 +224,18 @@ export function getEffectiveAppTheme(user?: Partial<UserProfile> | null): AppThe
     const local = localStorage.getItem(STORAGE_KEY_APP_THEME) || localStorage.getItem(STORAGE_KEY_CURRENT_THEME);
     if (local) {
       const parsed = JSON.parse(local);
+      const isGrad = Boolean(parsed.isGradient);
       return {
         ...DEFAULT_DARK_THEME,
         ...parsed,
-        gradientCss: parsed.gradientCss || buildGradientCss(
-          parsed.gradientType || 'linear',
-          parsed.stops || DEFAULT_DARK_THEME.stops,
-          parsed.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
-        )
+        isGradient: isGrad,
+        gradientCss: isGrad
+          ? (parsed.gradientCss || buildGradientCss(
+              parsed.gradientType || 'linear',
+              parsed.stops || [],
+              parsed.gradientAngle ?? 135
+            ))
+          : ''
       };
     }
   } catch {
@@ -201,14 +245,18 @@ export function getEffectiveAppTheme(user?: Partial<UserProfile> | null): AppThe
   // Fallback to custom_fields.theme if app_theme has not been set yet
   if (user?.custom_fields?.theme) {
     const t = user.custom_fields.theme;
+    const isGrad = Boolean(t.isGradient);
     return {
       ...DEFAULT_DARK_THEME,
       ...t,
-      gradientCss: t.gradientCss || buildGradientCss(
-        t.gradientType || 'linear',
-        t.stops || DEFAULT_DARK_THEME.stops,
-        t.gradientAngle ?? DEFAULT_DARK_THEME.gradientAngle
-      )
+      isGradient: isGrad,
+      gradientCss: isGrad
+        ? (t.gradientCss || buildGradientCss(
+            t.gradientType || 'linear',
+            t.stops || [],
+            t.gradientAngle ?? 135
+          ))
+        : ''
     };
   }
 
@@ -262,6 +310,41 @@ export function getEffectiveTheme(user?: Partial<UserProfile> | null): AppThemeC
 }
 
 /**
+ * Computes contrast-safe text color (#ffffff or #09090b) for a given hex background.
+ */
+export function getContrastTextColor(hexColor?: string): string {
+  if (!hexColor) return '#ffffff';
+  let clean = hexColor.replace('#', '').trim();
+  if (clean.length === 3) {
+    clean = clean.split('').map((c) => c + c).join('');
+  }
+  if (clean.length !== 6) return '#ffffff';
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 155 ? '#09090b' : '#ffffff';
+}
+
+/**
+ * Checks if a hex color is perceptually light.
+ */
+export function isLightHexColor(hexColor?: string): boolean {
+  if (!hexColor) return false;
+  let clean = hexColor.replace('#', '').trim().toLowerCase();
+  if (clean === 'ffffff' || clean === 'fff' || clean === 'f8fafc' || clean === 'f1f5f9') return true;
+  if (clean.length === 3) {
+    clean = clean.split('').map((c) => c + c).join('');
+  }
+  if (clean.length !== 6) return false;
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 165;
+}
+
+/**
  * Applies the Application Theme (Uygulama Teması) to the document root and body.
  * This determines the app shell appearance.
  */
@@ -269,43 +352,49 @@ export function applyAppThemeToDom(theme: AppThemeConfig): void {
   if (typeof document === 'undefined') return;
 
   const root = document.documentElement;
+  const buttonTextColor = getContrastTextColor(theme.buttons || '#2563eb');
 
   // Set App Theme CSS Variables
   root.style.setProperty('--c4e-app-text', theme.text || '#f8fafc');
   root.style.setProperty('--c4e-app-main', theme.main || '#09090b');
   root.style.setProperty('--c4e-app-buttons', theme.buttons || '#2563eb');
+  root.style.setProperty('--c4e-app-button-text', buttonTextColor);
   root.style.setProperty('--c4e-app-profile', theme.profile || '#121215');
 
   root.style.setProperty('--c4e-theme-text', theme.text || '#f8fafc');
   root.style.setProperty('--c4e-theme-main', theme.main || '#09090b');
   root.style.setProperty('--c4e-theme-buttons', theme.buttons || '#2563eb');
+  root.style.setProperty('--c4e-theme-button-text', buttonTextColor);
   root.style.setProperty('--c4e-theme-profile', theme.profile || '#121215');
 
-  const gradientCss = theme.gradientCss || buildGradientCss(
-    theme.gradientType || 'linear',
-    theme.stops || [],
-    theme.gradientAngle ?? 135
-  );
+  const isGradient = Boolean(theme.isGradient && (theme.gradientCss || (theme.stops && theme.stops.length > 1)));
+  const gradientCss = isGradient
+    ? (theme.gradientCss || buildGradientCss(
+        theme.gradientType || 'linear',
+        theme.stops || [],
+        theme.gradientAngle ?? 135
+      ))
+    : 'none';
   root.style.setProperty('--c4e-app-gradient', gradientCss);
   root.style.setProperty('--c4e-theme-gradient', gradientCss);
 
-  const isGradient = Boolean(theme.isGradient && gradientCss);
   const bgVal = isGradient ? gradientCss : (theme.main || '#09090b');
   root.style.setProperty('--c4e-app-bg', bgVal);
 
   // Sync Tailwind root variables for clean Light / Dark mode consistency
-  const isLight = theme.id === 'theme_light' || theme.main === '#f8fafc' || theme.main?.toLowerCase() === '#ffffff';
+  const isLight = theme.id === 'theme_light' || theme.main === '#f8fafc' || theme.main?.toLowerCase() === '#ffffff' || isLightHexColor(theme.main);
   if (isLight) {
     root.setAttribute('data-theme-mode', 'light');
     root.classList.add('light');
     root.classList.remove('dark');
-    root.style.setProperty('--background', '#f8fafc');
-    root.style.setProperty('--foreground', '#09090b');
-    root.style.setProperty('--card', '#ffffff');
-    root.style.setProperty('--card-foreground', '#09090b');
+    root.style.setProperty('--background', theme.main || '#f8fafc');
+    root.style.setProperty('--foreground', theme.text || '#09090b');
+    root.style.setProperty('--card', theme.profile || '#ffffff');
+    root.style.setProperty('--card-foreground', theme.text || '#09090b');
     root.style.setProperty('--border', 'rgba(0, 0, 0, 0.12)');
+    root.style.setProperty('--c4e-app-border', 'rgba(0, 0, 0, 0.12)');
     root.style.setProperty('--primary', theme.buttons || '#2563eb');
-    root.style.setProperty('--primary-foreground', '#ffffff');
+    root.style.setProperty('--primary-foreground', buttonTextColor);
     root.style.setProperty('--muted-foreground', 'oklch(0.45 0.01 260)');
   } else {
     root.setAttribute('data-theme-mode', 'dark');
@@ -316,8 +405,9 @@ export function applyAppThemeToDom(theme: AppThemeConfig): void {
     root.style.setProperty('--card', theme.profile || '#121215');
     root.style.setProperty('--card-foreground', theme.text || '#f8fafc');
     root.style.setProperty('--border', 'rgba(255, 255, 255, 0.1)');
+    root.style.setProperty('--c4e-app-border', 'rgba(255, 255, 255, 0.1)');
     root.style.setProperty('--primary', theme.buttons || '#2563eb');
-    root.style.setProperty('--primary-foreground', '#ffffff');
+    root.style.setProperty('--primary-foreground', buttonTextColor);
     root.style.setProperty('--muted-foreground', 'oklch(0.62 0.008 260)');
   }
 

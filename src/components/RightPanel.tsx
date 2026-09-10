@@ -39,8 +39,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   };
 
   return (
-    <aside className="w-80 min-w-[320px] max-w-[320px] flex-shrink-0 hidden xl:block p-4 space-y-4 border-l border-zinc-800/60 bg-[#09090b]/95 h-screen sticky top-0 overflow-y-auto z-20 select-none">
-      <div className="bg-[#0c0c0e] border border-zinc-800/60 rounded-2xl p-4 space-y-3">
+    <aside className="w-80 min-w-[320px] max-w-[320px] flex-shrink-0 hidden xl:block p-4 space-y-4 border-l c4e-sidebar h-screen sticky top-0 overflow-y-auto z-20 select-none">
+      <div className="bg-[var(--c4e-app-profile,#0c0c0e)] border border-[var(--c4e-app-border,rgba(255,255,255,0.1))] rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2 border-b border-zinc-800/40 pb-2.5">
           <TrendingUp className="w-4 h-4 text-zinc-300" />
           <h3 className="text-xs font-bold text-white tracking-wider uppercase">
@@ -75,7 +75,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         )}
       </div>
 
-      <div className="bg-[#0c0c0e] border border-zinc-800/60 rounded-2xl p-4 space-y-3">
+      <div className="bg-[var(--c4e-app-profile,#0c0c0e)] border border-[var(--c4e-app-border,rgba(255,255,255,0.1))] rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2 border-b border-zinc-800/40 pb-2.5">
           <Users className="w-4 h-4 text-zinc-300" />
           <h3 className="text-xs font-bold text-white tracking-wider uppercase">
@@ -120,11 +120,11 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   className={`p-1.5 rounded-lg text-xs font-semibold transition-all flex-shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed active:scale-95 ${
                     comm.is_joined
                       ? 'bg-zinc-800 text-emerald-400 border border-zinc-700/50'
-                      : 'bg-zinc-100 hover:bg-white text-zinc-950 shadow'
+                      : 'bg-[var(--c4e-app-buttons,#ffffff)] text-[var(--c4e-app-button-text,#09090b)] shadow hover:opacity-90'
                   }`}
                   title={comm.is_joined ? (language === 'tr' ? 'Katılındı' : 'Joined') : (language === 'tr' ? 'Katıl' : 'Join')}
                 >
-                  {comm.is_joined ? <Check className="w-3.5 h-3.5" /> : <UserPlus className="w-3.5 h-3.5 text-zinc-950" />}
+                  {comm.is_joined ? <Check className="w-3.5 h-3.5" /> : <UserPlus className="w-3.5 h-3.5" />}
                 </button>
               </div>
             ))}
@@ -132,7 +132,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         )}
       </div>
 
-      <div className="p-3 bg-zinc-950 border border-zinc-800/60 rounded-xl text-center space-y-1">
+      <div className="p-3 bg-[var(--c4e-app-profile,#0c0c0e)] border border-[var(--c4e-app-border,rgba(255,255,255,0.1))] rounded-xl text-center space-y-1">
         <span className="text-[11px] font-mono text-zinc-400 flex items-center justify-center gap-1">
           <Sparkles className="w-3 h-3 text-zinc-400" />
           <span>{brandTitle}</span>

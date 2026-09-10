@@ -30,7 +30,8 @@ import {
   Globe,
   Mail,
   Lock,
-  Palette
+  Palette,
+  Layers
 } from 'lucide-react';
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { validateUsername, sanitizeText, sanitizeUrl, checkUsernameAvailability, verifyAdminAccess } from '../utils/securityHelper';
@@ -48,6 +49,7 @@ interface ProfileViewProps {
   onUpdateProfile: (updated: UserProfile) => void;
   onUpdateTheme?: (newTheme: DynamicTheme) => void;
   onSelectCommunity?: (comm: Community) => void;
+  onViewCommunityPosts?: (communityIdOrHandle: string) => void;
   onLikePost?: (id: string) => void;
   onRepostPost?: (id: string) => void;
   onBookmarkPost?: (id: string) => void;
@@ -66,6 +68,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   communities = [],
   onUpdateProfile,
   onSelectCommunity,
+  onViewCommunityPosts,
   onLikePost,
   onRepostPost,
   onBookmarkPost,
@@ -104,9 +107,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [isShowcaseModalOpen, setIsShowcaseModalOpen] = useState(false);
   const [usernameTakenError, setUsernameTakenError] = useState<string | null>(null);
   const [postToDelete, setPostToDelete] = useState<Post | null>(null);
+  const [bannerError, setBannerError] = useState(false);
 
   useEffect(() => {
     setFormData(getInitialFormData(user));
+    setBannerError(false);
   }, [user]);
 
   const activeUser = currentUser || user;
@@ -298,32 +303,34 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
 
   return (
     <div
-      className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 transition-colors"
+      className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden border-r border-zinc-800/60 min-h-screen pb-16 transition-colors"
       style={{
         backgroundColor: profileTheme?.main || '#09090b',
         color: profileTheme?.text || undefined
       }}
     >
       <div className="relative group">
-        <div className="h-44 w-full overflow-hidden bg-zinc-900 relative">
-          {(formData.banner_url || user.banner_url) ? (
+        <div className="h-44 w-full overflow-hidden relative" style={{ backgroundColor: profileTheme?.main || '#09090b' }}>
+          {(!bannerError && (formData.banner_url || user.banner_url)) ? (
             <img
               src={formData.banner_url || user.banner_url}
               alt="Profile Banner"
               className="w-full h-full object-cover"
-            />
-          ) : profileTheme?.isGradient && profileTheme.gradientCss ? (
-            <div
-              className="w-full h-full absolute inset-0 opacity-90 transition-all"
-              style={{ background: profileTheme.gradientCss }}
+              onError={() => setBannerError(true)}
             />
           ) : (
             <div
-              className="w-full h-full absolute inset-0 opacity-90 transition-all"
-              style={{ background: profileTheme?.profile || profileTheme?.main || '#18181b' }}
-            />
+              className="w-full h-full absolute inset-0 transition-all"
+              style={{
+                background: profileTheme?.isGradient && profileTheme.gradientCss
+                  ? profileTheme.gradientCss
+                  : `linear-gradient(135deg, ${profileTheme?.buttons || '#3b82f6'} 0%, ${profileTheme?.profile || profileTheme?.main || '#18181b'} 100%)`
+              }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
+            </div>
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+          <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-black/20" />
         </div>
 
         <div className="px-6 relative -mt-14 flex items-end justify-between pb-4 border-b border-zinc-800/40">
@@ -639,20 +646,41 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
                   .map((comm) => (
                     <div
                       key={comm.id}
-                      onClick={() => onSelectCommunity && onSelectCommunity(comm)}
-                      className="p-2.5 bg-zinc-950/80 border border-zinc-800/60 hover:border-purple-500/50 rounded-xl flex items-center gap-3 transition-all cursor-pointer group"
+                      className="p-3 bg-zinc-950/80 border border-zinc-800/60 hover:border-purple-500/50 rounded-2xl flex flex-col justify-between gap-2.5 transition-all group"
                     >
-                      <img
-                        src={comm.avatar_url}
-                        alt={comm.name}
-                        className="w-8 h-8 rounded-xl object-cover ring-1 ring-zinc-800 flex-shrink-0"
-                      />
-                      <div className="truncate">
-                        <span className="text-xs font-bold text-white truncate block group-hover:text-purple-300">
-                          {comm.name}
-                        </span>
-                        <span className="text-[10px] text-zinc-500 font-mono block truncate">{comm.handle}</span>
+                      <div
+                        onClick={() => onSelectCommunity && onSelectCommunity(comm)}
+                        className="flex items-center gap-3 cursor-pointer"
+                      >
+                        <img
+                          src={comm.avatar_url}
+                          alt={comm.name}
+                          className="w-9 h-9 rounded-xl object-cover ring-1 ring-zinc-800 flex-shrink-0"
+                        />
+                        <div className="truncate flex-1">
+                          <span className="text-xs font-bold text-white truncate block group-hover:text-purple-300">
+                            {comm.name}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 font-mono block truncate">{comm.handle}</span>
+                        </div>
                       </div>
+
+                      {/* Topluluk Gönderileri Butonu */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onViewCommunityPosts) {
+                            onViewCommunityPosts(comm.id || comm.handle);
+                          } else if (onSelectCommunity) {
+                            onSelectCommunity(comm);
+                          }
+                        }}
+                        className="w-full py-1.5 px-3 rounded-xl bg-purple-950/50 hover:bg-purple-900/70 border border-purple-800/40 text-purple-300 font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-purple-400" />
+                        <span>{language === 'tr' ? 'Topluluk Gönderileri' : 'Community Posts'}</span>
+                      </button>
                     </div>
                   ))}
               </div>

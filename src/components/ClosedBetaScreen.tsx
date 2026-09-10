@@ -30,17 +30,11 @@ export const ClosedBetaScreen: React.FC<ClosedBetaScreenProps> = ({
 
   return (
     <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col items-center justify-center p-4 relative font-sans selection:bg-blue-500 selection:text-white">
-      {/* Background Glow */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px]" />
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[350px] h-[350px] bg-emerald-600/10 rounded-full blur-[100px]" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-lg bg-[#0c0c0e] border border-zinc-800/80 rounded-3xl p-8 shadow-2xl space-y-6 text-center backdrop-blur-xl">
+      <div className="relative z-10 w-full max-w-lg bg-[#0c0c0e] border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 text-center">
         {/* Logo & Header */}
         <div className="space-y-2">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600/20 to-emerald-600/20 border border-blue-500/30 flex items-center justify-center mx-auto text-blue-400 shadow-xl shadow-blue-500/10">
-            <Sparkles className="w-8 h-8 text-emerald-400 animate-pulse" />
+          <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-blue-400 shadow-md">
+            <Sparkles className="w-8 h-8 text-emerald-400" />
           </div>
           <h1 className="text-2xl font-black text-white tracking-tight pt-2">
             Code4Ever Kapalı Beta
@@ -52,9 +46,9 @@ export const ClosedBetaScreen: React.FC<ClosedBetaScreenProps> = ({
         </div>
 
         {/* Info Card */}
-        <div className="bg-zinc-900/80 border border-zinc-800 p-5 rounded-2xl text-left space-y-3">
+        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl text-left space-y-3">
           <p className="text-xs text-zinc-300 leading-relaxed font-medium">
-            Kapalı Betaya Başvurduğunuz İçin Teşekkürler Başvurunuz Onaylandığında Sizlere Ulaşabilmemiz İçin Bir Sosyal Medya Adresi Bırakınız:
+            Kapalı Betaya Başvurduğunuz İçin Teşekkürler. Başvurunuz Onaylandığında Sizlere Ulaşabilmemiz İçin Bir Sosyal Medya Adresi Bırakınız:
           </p>
           <p className="text-[11px] text-zinc-400 font-mono italic">
             ör: insta: nylithra
@@ -81,7 +75,7 @@ export const ClosedBetaScreen: React.FC<ClosedBetaScreenProps> = ({
 
           <button
             type="submit"
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-bold text-xs transition-all shadow-lg shadow-emerald-600/20 active:scale-[0.98] flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
           >
             <Send className="w-4 h-4" />
             <span>İletişim Bilgisini Kaydet / Güncelle</span>
