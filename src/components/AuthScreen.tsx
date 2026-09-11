@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { FC, FormEvent } from 'react';
 import {
   Github,
   Shield,
@@ -7,25 +8,15 @@ import {
   GitFork,
   MessageSquare,
   Zap,
-  User,
-  Mail,
-  Lock,
   KeyRound,
-  ArrowRight,
   Database,
   CheckCircle2,
   AlertCircle,
   Settings,
   X
 } from 'lucide-react';
-import { UserProfile } from '../types';
 import {
   signInWithGitHubSupabase,
-  signInWithEmailSupabase,
-  signUpWithEmailSupabase,
-  signInWithUsernameOrProfile,
-  saveStoredProfile,
-  DEFAULT_USER,
   getActiveSupabaseCredentials,
   saveCustomSupabaseCredentials,
   isValidSupabaseConfig
@@ -37,23 +28,14 @@ interface AuthScreenProps {
   isClosedBetaActive?: boolean;
 }
 
-type AuthMode = 'quick_user' | 'github' | 'email_login' | 'email_signup' | 'guest';
-
-export const AuthScreen: React.FC<AuthScreenProps> = ({
+export const AuthScreen: FC<AuthScreenProps> = ({
   language,
   onChangeLanguage,
   isClosedBetaActive = false
 }) => {
-  const [authMode, setAuthMode] = useState<AuthMode>('quick_user');
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
-
-  // Form states
-  const [usernameInput, setUsernameInput] = useState('');
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [displayNameInput, setDisplayNameInput] = useState('');
   const [betaCodeInput, setBetaCodeInput] = useState('');
 
   // Supabase Config Modal
@@ -63,134 +45,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [configKey, setConfigKey] = useState(currentConfig.anonKey);
   const [configSuccess, setConfigSuccess] = useState(false);
 
-  // 1. GitHub OAuth
+  // GitHub OAuth Action
   const handleGitHubOAuth = async () => {
-    setLoading(true);
-    setAuthError(null);
-    try {
-      await signInWithGitHubSupabase();
-    } catch (err: any) {
-      console.warn('Supabase GitHub OAuth attempt:', err);
-      setAuthError(
-        err?.message ||
-          (language === 'tr'
-            ? 'GitHub ile giriş sırasında bir hata oluştu. Kullanıcı Adı ile hızlı giriş yapabilirsiniz.'
-            : 'Error during GitHub login. You can log in using your Username.')
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 2. Direct Username Login
-  const handleUsernameLogin = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanUsername = usernameInput.trim();
-    if (!cleanUsername) {
-      setAuthError(
-        language === 'tr' ? 'Lütfen bir kullanıcı adı girin.' : 'Please enter a username.'
-      );
-      return;
-    }
-
-    setLoading(true);
-    setAuthError(null);
-    try {
-      const profile = await signInWithUsernameOrProfile(cleanUsername);
-      setAuthSuccess(
-        language === 'tr'
-          ? `Giriş başarılı! Hoş geldin @${profile.username}.`
-          : `Login successful! Welcome @${profile.username}.`
-      );
-      setTimeout(() => {
-        window.location.reload();
-      }, 300);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Giriş yapılamadı.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 3. Email & Password Login
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!emailInput.trim() || !passwordInput) {
-      setAuthError(
-        language === 'tr'
-          ? 'Lütfen e-posta ve şifrenizi girin.'
-          : 'Please enter your email and password.'
-      );
-      return;
-    }
-
-    setLoading(true);
-    setAuthError(null);
-    try {
-      const profile = await signInWithEmailSupabase(emailInput.trim(), passwordInput);
-      setAuthSuccess(
-        language === 'tr'
-          ? `Giriş yapıldı! Hoş geldin @${profile.username}.`
-          : `Logged in! Welcome @${profile.username}.`
-      );
-      setTimeout(() => {
-        window.location.reload();
-      }, 300);
-    } catch (err: any) {
-      setAuthError(err?.message || 'E-posta ile giriş başarısız oldu.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 4. Email Sign Up
-  const handleEmailSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!emailInput.trim() || !passwordInput || !usernameInput.trim()) {
-      setAuthError(
-        language === 'tr'
-          ? 'Lütfen e-posta, kullanıcı adı ve şifre alanlarını doldurun.'
-          : 'Please enter email, username, and password.'
-      );
-      return;
-    }
-
-    setLoading(true);
-    setAuthError(null);
-    try {
-      const profile = await signUpWithEmailSupabase(
-        emailInput.trim(),
-        passwordInput,
-        usernameInput.trim(),
-        displayNameInput.trim() || usernameInput.trim()
-      );
-      setAuthSuccess(
-        language === 'tr'
-          ? `Hesap oluşturuldu! Hoş geldin @${profile.username}.`
-          : `Account created! Welcome @${profile.username}.`
-      );
-      setTimeout(() => {
-        window.location.reload();
-      }, 400);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Kayıt işlemi başarısız oldu.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 5. Guest or Beta Code Login
-  const handleGuestOrBetaLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanCode = betaCodeInput.trim().toUpperCase();
-
+    // If closed beta is active, verify code first
     if (isClosedBetaActive) {
-      const validCodes = ['BETA2026', 'C4E-BETA', 'NYLITHRA', 'DEV2026', 'CODE4EVER'];
-      if (!cleanCode || (!validCodes.includes(cleanCode) && cleanCode !== 'ADMIN')) {
+      const cleanCode = betaCodeInput.trim().toUpperCase();
+      const validCodes = ['BETA2026', 'C4E-BETA', 'NYLITHRA', 'DEV2026', 'CODE4EVER', 'ADMIN'];
+      if (!cleanCode || !validCodes.includes(cleanCode)) {
         setAuthError(
           language === 'tr'
-            ? 'Kapalı beta aktif. Giriş yapmak için lütfen geçerli bir davet kodu girin (ör: BETA2026).'
-            : 'Closed beta is active. Please enter a valid invite code (e.g. BETA2026).'
+            ? 'Kapalı beta aktif. Giriş yapabilmek için lütfen geçerli bir davet kodu giriniz (ör: BETA2026).'
+            : 'Closed beta is active. Please enter a valid beta invite code (e.g. BETA2026).'
         );
         return;
       }
@@ -198,33 +63,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setLoading(true);
     setAuthError(null);
-    setTimeout(() => {
-      const demoUser: UserProfile = {
-        ...DEFAULT_USER,
-        id: `usr_${Date.now()}`,
-        username: 'c4e_developer',
-        display_name: 'C4E Developer',
-        avatar_url:
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        bio:
-          language === 'tr'
-            ? 'Code4Ever topluluk üyesi ve geliştirici.'
-            : 'Code4Ever community member and developer.',
-        role: language === 'tr' ? 'Geliştirici' : 'Developer',
-        verified: false,
-        betaStatus: 'approved',
-        custom_fields: {
-          github: 'github.com/code4ever',
-          location: 'Türkiye'
-        }
-      };
-      saveStoredProfile(demoUser);
-      window.location.reload();
-    }, 300);
+    try {
+      await signInWithGitHubSupabase();
+    } catch (err: any) {
+      console.warn('Supabase GitHub OAuth error:', err);
+      setAuthError(
+        err?.message ||
+          (language === 'tr'
+            ? 'GitHub ile yetkilendirme sırasında bir hata oluştu.'
+            : 'An error occurred during GitHub authorization.')
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Save Custom Supabase Credentials
-  const handleSaveCredentials = (e: React.FormEvent) => {
+  const handleSaveCredentials = (e: FormEvent) => {
     e.preventDefault();
     if (configUrl && configKey && !isValidSupabaseConfig(configUrl, configKey)) {
       setAuthError(
@@ -241,7 +96,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         setConfigSuccess(false);
         setShowConfigModal(false);
         window.location.reload();
-      }, 1000);
+      }, 800);
     }
   };
 
@@ -265,7 +120,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           ) : (
             <span className="inline-flex items-center gap-1 text-zinc-400 font-bold">
               <span className="w-2 h-2 rounded-full bg-zinc-500" />
-              {language === 'tr' ? 'Yerel Mod' : 'Local Mode'}
+              {language === 'tr' ? 'Demo Modu' : 'Demo Mode'}
             </span>
           )}
           <Settings className="w-3 h-3 text-zinc-500 ml-1" />
@@ -275,7 +130,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 p-1 rounded-xl">
             <button
               onClick={() => onChangeLanguage('tr')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 language === 'tr' ? 'bg-zinc-100 text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -283,7 +138,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </button>
             <button
               onClick={() => onChangeLanguage('en')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 language === 'en' ? 'bg-zinc-100 text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -293,7 +148,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         )}
       </div>
 
-      <div className="w-full max-w-lg space-y-6 relative z-10 my-auto pt-10 pb-6">
+      <div className="w-full max-w-md space-y-6 relative z-10 my-auto pt-10 pb-6">
         {/* Header Branding */}
         <div className="text-center space-y-3">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs font-semibold">
@@ -321,7 +176,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 {language === 'tr' ? 'Kod Paylaşımı' : 'Code Snippets'}
               </h4>
               <p className="text-[10px] text-zinc-500 font-mono">
-                {language === 'tr' ? 'Gist & Depo Entegrasyonu' : 'Gist & Repo Sync'}
+                {language === 'tr' ? 'Gist & Depolar' : 'Gist & Repos'}
               </p>
             </div>
           </div>
@@ -335,7 +190,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 {language === 'tr' ? 'Bağlantı' : 'Network'}
               </h4>
               <p className="text-[10px] text-zinc-500 font-mono">
-                {language === 'tr' ? 'Geliştiricilerle Tanış' : 'Connect with Devs'}
+                {language === 'tr' ? 'Geliştiriciler' : 'Dev Network'}
               </p>
             </div>
           </div>
@@ -349,7 +204,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 {language === 'tr' ? 'Topluluklar' : 'Communities'}
               </h4>
               <p className="text-[10px] text-zinc-500 font-mono">
-                {language === 'tr' ? 'Özel İlgi Kanalları' : 'Specialized Hubs'}
+                {language === 'tr' ? 'Özel Kanallar' : 'Hubs'}
               </p>
             </div>
           </div>
@@ -363,83 +218,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 {language === 'tr' ? 'Canlı Akış' : 'Live Feed'}
               </h4>
               <p className="text-[10px] text-zinc-500 font-mono">
-                {language === 'tr' ? 'Gerçek Zamanlı Paylaşım' : 'Realtime Pulse'}
+                {language === 'tr' ? 'Gerçek Zamanlı' : 'Realtime'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Main Solid Auth Card */}
+        {/* Main Card: ONLY GitHub Login */}
         <div className="bg-[#121215] border border-zinc-800 rounded-3xl p-6 sm:p-7 shadow-xl space-y-5">
-          {/* Auth Navigation Tabs */}
-          <div className="grid grid-cols-3 gap-1.5 p-1 bg-zinc-950 border border-zinc-800/80 rounded-2xl">
-            <button
-              onClick={() => {
-                setAuthMode('quick_user');
-                setAuthError(null);
-              }}
-              className={`py-2 px-1 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                authMode === 'quick_user'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span className="truncate">{language === 'tr' ? 'Kullanıcı Adı' : 'Username'}</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setAuthMode('github');
-                setAuthError(null);
-              }}
-              className={`py-2 px-1 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                authMode === 'github'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              <Github className="w-3.5 h-3.5" />
-              <span>GitHub</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setAuthMode(authMode === 'email_signup' ? 'email_signup' : 'email_login');
-                setAuthError(null);
-              }}
-              className={`py-2 px-1 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                authMode === 'email_login' || authMode === 'email_signup'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>E-posta</span>
-            </button>
-          </div>
-
-          {/* Feedback Messages */}
+          {/* Error Message */}
           {authError && (
             <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <div className="flex-1">
                 <p className="leading-relaxed font-medium">{authError}</p>
-                {authMode === 'github' && (
-                  <button
-                    onClick={() => {
-                      setAuthMode('quick_user');
-                      setAuthError(null);
-                    }}
-                    className="mt-2 text-xs font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>{language === 'tr' ? 'Kullanıcı adı ile devam et →' : 'Continue with username →'}</span>
-                  </button>
-                )}
               </div>
             </div>
           )}
 
+          {/* Success Message */}
           {authSuccess && (
             <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -447,238 +244,53 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
           )}
 
-          {/* TAB 1: QUICK USERNAME LOGIN */}
-          {authMode === 'quick_user' && (
-            <form onSubmit={handleUsernameLogin} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-zinc-300 flex items-center justify-between">
-                  <span>{language === 'tr' ? 'Kullanıcı Adı veya Takma Ad' : 'Username or Handle'}</span>
-                  <span className="text-[11px] text-zinc-500 font-normal">
-                    {language === 'tr' ? 'örn: nylithra, ahmet_dev' : 'e.g. nylithra, john_doe'}
-                  </span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500 font-mono text-xs">
-                    @
-                  </span>
-                  <input
-                    type="text"
-                    value={usernameInput}
-                    onChange={(e) => setUsernameInput(e.target.value)}
-                    placeholder="kullanici_adi"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-8 pr-4 py-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono transition-colors"
-                    required
-                    autoFocus
-                  />
-                </div>
-              </div>
-
-              {/* Quick Profile Shortcuts */}
-              <div className="flex items-center gap-2 flex-wrap text-[11px] text-zinc-400">
-                <span className="text-zinc-500">{language === 'tr' ? 'Hızlı Seçim:' : 'Quick Select:'}</span>
-                <button
-                  type="button"
-                  onClick={() => setUsernameInput('nylithra')}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-blue-400 font-mono font-bold cursor-pointer transition-colors"
-                >
-                  @nylithra (Admin)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setUsernameInput('c4e_developer')}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-mono cursor-pointer transition-colors"
-                >
-                  @c4e_developer
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-              >
-                <span>
-                  {loading
-                    ? (language === 'tr' ? 'Giriş Yapılıyor...' : 'Signing in...')
-                    : (language === 'tr' ? 'Kullanıcı Adı ile Giriş Yap' : 'Sign in with Username')}
-                </span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
-          )}
-
-          {/* TAB 2: GITHUB OAUTH */}
-          {authMode === 'github' && (
-            <div className="space-y-4">
-              <button
-                onClick={handleGitHubOAuth}
-                disabled={loading}
-                className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-zinc-200 text-black font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-              >
-                <Github className="w-4 h-4" />
-                <span>
-                  {loading
-                    ? (language === 'tr' ? 'GitHub Yönlendiriliyor...' : 'Redirecting to GitHub...')
-                    : (language === 'tr' ? 'GitHub ile Yetkilendir ve Giriş Yap' : 'Authorize with GitHub')}
-                </span>
-              </button>
-
-              <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-bold">
-                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{language === 'tr' ? 'Otomatik Profil Senkronizasyonu' : 'Automatic Profile Sync'}</span>
-                </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  {language === 'tr'
-                    ? 'Giriş yaptığınızda GitHub profil resminiz, biyografiniz ve kamuya açık depolarınız hesabınıza eklenir.'
-                    : 'Your avatar, bio, and public repositories are automatically linked upon authentication.'}
-                </p>
-              </div>
+          {/* Closed Beta Code field if active */}
+          {isClosedBetaActive && (
+            <div className="space-y-2 pb-2">
+              <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5 font-mono">
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{language === 'tr' ? 'Kapalı Beta Davet Kodu' : 'Beta Invite Code'}</span>
+              </label>
+              <input
+                type="text"
+                value={betaCodeInput}
+                onChange={(e) => setBetaCodeInput(e.target.value)}
+                placeholder="BETA2026"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-xs text-white uppercase placeholder-zinc-600 focus:outline-none focus:border-amber-500 font-mono"
+              />
+              <p className="text-[11px] text-zinc-500">
+                {language === 'tr'
+                  ? 'Giriş yapabilmek için davet kodu gereklidir (ör: BETA2026).'
+                  : 'Invite code is required to sign in (e.g. BETA2026).'}
+              </p>
             </div>
           )}
 
-          {/* TAB 3: EMAIL & PASSWORD */}
-          {(authMode === 'email_login' || authMode === 'email_signup') && (
-            <div className="space-y-4">
-              {/* Sub-mode toggle */}
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                <span className="text-xs font-bold text-zinc-300">
-                  {authMode === 'email_login'
-                    ? (language === 'tr' ? 'E-posta ile Giriş Yap' : 'Sign in with Email')
-                    : (language === 'tr' ? 'Yeni Hesap Oluştur' : 'Create New Account')}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode(authMode === 'email_login' ? 'email_signup' : 'email_login');
-                    setAuthError(null);
-                  }}
-                  className="text-xs text-blue-400 hover:text-blue-300 font-bold cursor-pointer"
-                >
-                  {authMode === 'email_login'
-                    ? (language === 'tr' ? 'Hesabın yok mu? Kayıt Ol' : "No account? Sign up")
-                    : (language === 'tr' ? 'Zaten hesabın var mı? Giriş Yap' : 'Have an account? Log in')}
-                </button>
-              </div>
+          {/* Dedicated GitHub Login Button */}
+          <button
+            onClick={handleGitHubOAuth}
+            disabled={loading}
+            className="w-full py-4 px-4 rounded-2xl bg-white hover:bg-zinc-200 text-black font-extrabold text-sm flex items-center justify-center gap-3 transition-all shadow-lg active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+          >
+            <Github className="w-5 h-5 text-black" />
+            <span>
+              {loading
+                ? (language === 'tr' ? 'GitHub Yönlendiriliyor...' : 'Redirecting to GitHub...')
+                : (language === 'tr' ? 'GitHub ile Giriş Yap' : 'Sign in with GitHub')}
+            </span>
+          </button>
 
-              <form
-                onSubmit={authMode === 'email_login' ? handleEmailLogin : handleEmailSignUp}
-                className="space-y-3"
-              >
-                {authMode === 'email_signup' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-zinc-400 font-mono">
-                        {language === 'tr' ? 'Kullanıcı Adı *' : 'Username *'}
-                      </label>
-                      <input
-                        type="text"
-                        value={usernameInput}
-                        onChange={(e) => setUsernameInput(e.target.value)}
-                        placeholder="ahmet_dev"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-zinc-400 font-mono">
-                        {language === 'tr' ? 'Görünen İsim' : 'Display Name'}
-                      </label>
-                      <input
-                        type="text"
-                        value={displayNameInput}
-                        onChange={(e) => setDisplayNameInput(e.target.value)}
-                        placeholder="Ahmet Yılmaz"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-zinc-400 font-mono">
-                    {language === 'tr' ? 'E-posta Adresi *' : 'Email Address *'}
-                  </label>
-                  <input
-                    type="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="ornek@alanadi.com"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-zinc-400 font-mono">
-                    {language === 'tr' ? 'Şifre *' : 'Password *'}
-                  </label>
-                  <input
-                    type="password"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono"
-                    required
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full mt-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>
-                    {loading
-                      ? (language === 'tr' ? 'İşleniyor...' : 'Processing...')
-                      : authMode === 'email_login'
-                      ? (language === 'tr' ? 'E-posta ile Giriş Yap' : 'Log in with Email')
-                      : (language === 'tr' ? 'Hesap Oluştur ve Giriş Yap' : 'Create Account & Log in')}
-                  </span>
-                </button>
-              </form>
+          {/* Security & Sync Info */}
+          <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-bold">
+              <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{language === 'tr' ? 'Güvenli GitHub Yetkilendirmesi' : 'Secure GitHub OAuth'}</span>
             </div>
-          )}
-
-          {/* Guest / Beta Access Footer Button */}
-          <div className="pt-3 border-t border-zinc-800/70">
-            {isClosedBetaActive ? (
-              <form onSubmit={handleGuestOrBetaLogin} className="space-y-2">
-                <div className="flex items-center justify-between text-xs text-amber-400 font-mono">
-                  <span className="flex items-center gap-1.5 font-bold">
-                    <KeyRound className="w-3.5 h-3.5" />
-                    {language === 'tr' ? 'Kapalı Beta Davet Kodu:' : 'Closed Beta Code:'}
-                  </span>
-                  <span className="text-[10px] text-zinc-500">ör: BETA2026</span>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={betaCodeInput}
-                    onChange={(e) => setBetaCodeInput(e.target.value)}
-                    placeholder="BETA2026"
-                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white uppercase placeholder-zinc-600 focus:outline-none focus:border-amber-500 font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-zinc-950 font-extrabold text-xs transition-all cursor-pointer"
-                  >
-                    {language === 'tr' ? 'Katıl' : 'Join'}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <button
-                onClick={() => handleGuestOrBetaLogin()}
-                disabled={loading}
-                className="w-full py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{language === 'tr' ? 'Misafir Hesabı ile Devam Et' : 'Continue as Guest'}</span>
-              </button>
-            )}
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              {language === 'tr'
+                ? 'GitHub hesabınız ile tek tıkla giriş yapın. Profil resminiz, kullanıcı adınız ve kamuya açık depolarınız hesabınıza aktarılır.'
+                : 'Sign in with a single click via GitHub. Your profile picture, username, and public repositories are automatically linked.'}
+            </p>
           </div>
         </div>
 
@@ -711,8 +323,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
             <p className="text-xs text-zinc-400 leading-relaxed">
               {language === 'tr'
-                ? 'Code4Ever veritabanı ve kimlik doğrulama ayarlarınızı buradan yapılandırabilir veya test edebilirsiniz.'
-                : 'Configure or test your Code4Ever database and authentication credentials here.'}
+                ? 'Code4Ever veritabanı ve Supabase kimlik doğrulama ayarlarınızı buradan yapılandırabilir veya test edebilirsiniz.'
+                : 'Configure or test your Code4Ever database and Supabase credentials here.'}
             </p>
 
             <form onSubmit={handleSaveCredentials} className="space-y-3.5">

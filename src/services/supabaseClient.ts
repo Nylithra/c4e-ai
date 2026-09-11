@@ -333,7 +333,7 @@ export async function signInWithGitHubSupabase(): Promise<void> {
     });
     if (error) {
       if (error.message?.includes('provider is not enabled') || error.message?.includes('Unsupported provider')) {
-        throw new Error('Supabase projenizde GitHub ile giriş sağlayıcısı henüz etkinleştirilmemiş. Lütfen Kullanıcı Adı veya E-posta ile giriş yapın.');
+        throw new Error('Supabase projenizde GitHub ile giriş sağlayıcısı henüz aktif edilmemiş. Lütfen Supabase konsolunda Authentication > Providers > GitHub bölümünden aktifleştirin.');
       }
       throw error;
     }
@@ -474,7 +474,12 @@ export async function signInWithUsernameOrProfile(usernameOrEmail: string): Prom
       isAdmin: true,
       verified: true,
       betaStatus: 'approved',
-      badges: ['Kurucu', 'Yönetici', 'Verified Geliştirici', 'Spark'],
+      badges: [
+        { id: 'b_founder', label: 'Kurucu', color: '#ef4444', icon: 'shield' },
+        { id: 'b_admin', label: 'Yönetici', color: '#a855f7', icon: 'star' },
+        { id: 'b_verified', label: 'Verified Geliştirici', color: '#10b981', icon: 'check' },
+        { id: 'b_spark', label: 'Spark', color: '#f59e0b', icon: 'sparkles' }
+      ],
       custom_fields: {
         github: 'github.com/nylithra',
         location: 'İstanbul, TR',
