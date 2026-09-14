@@ -294,7 +294,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleShare = (post: Post) => {
-    const url = `https://app.lanux.online/@${post.author.username}#post-${post.id}`;
+    const url = `${window.location.origin}/@${post.author.username}#post-${post.id}`;
     navigator.clipboard.writeText(url);
     setCopiedPostId(post.id);
     setTimeout(() => {
@@ -302,7 +302,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }, 2500);
   };
 
-const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
+  const profileUrl = `${window.location.host}/@${formData.username || 'user'}`;
 
   const isLikesHidden = !isOwnProfile && (user.show_liked_posts === false || formData.show_liked_posts === false);
 

@@ -396,7 +396,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
   };
 
   const handleShare = (post: Post) => {
-    const url = `https://code4ever.ai.studio/@${post.author.username}#post-${post.id}`;
+    // Built from the live origin so the copied link always points at the deployment the
+    // reader is actually on (app.lanux.online in production, localhost in development).
+    const url = `${window.location.origin}/@${post.author.username}#post-${post.id}`;
     navigator.clipboard.writeText(url);
     setCopiedPostId(post.id);
     setToastMessage(language === 'tr' ? 'Gönderi bağlantısı kopyalandı!' : 'Post link copied to clipboard!');

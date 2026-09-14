@@ -116,8 +116,43 @@ import {
   DialogTitle
 } from './components/ui/dialog';
 import { Button } from './components/ui/button';
+import { DevDocsView } from './components/public/DevDocsView';
+import { LegalView } from './components/public/LegalView';
+
+/**
+ * Routes that render without a session and without the app shell: developer docs and the
+ * legal pages. They must be resolvable before authentication, otherwise a visitor who has
+ * not signed up — or a search engine — only ever sees the login screen.
+ *
+ * Matching is case-insensitive so /ToS, /tos and /TOS all work.
+ */
+type PublicPage = 'dev-docs' | 'tos' | 'privacy';
+
+const PUBLIC_ROUTES: Record<string, PublicPage> = {
+  '/dev/docs': 'dev-docs',
+  '/dev/doc': 'dev-docs',
+  '/dev': 'dev-docs',
+  '/docs': 'dev-docs',
+  '/api/docs': 'dev-docs',
+  '/tos': 'tos',
+  '/terms': 'tos',
+  '/kullanim-sartlari': 'tos',
+  '/privacy': 'privacy',
+  '/privacy-policy': 'privacy',
+  '/gizlilik': 'privacy',
+  '/gizlilik-ilkeleri': 'privacy'
+};
+
+function resolvePublicPage(pathname: string): PublicPage | null {
+  const clean = pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  return PUBLIC_ROUTES[clean] || null;
+}
 
 export default function App() {
+  // Resolved once from the entry URL, then kept in sync with history navigation.
+  const [publicPage, setPublicPage] = useState<PublicPage | null>(() =>
+    typeof window === 'undefined' ? null : resolvePublicPage(window.location.pathname)
+  );
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('feed');
   const [language, setLanguage] = useState<'tr' | 'en'>(loadLanguage());
@@ -219,9 +254,18 @@ export default function App() {
 
   const checkUrlRoute = (currentUser?: UserProfile) => {
     const path = window.location.pathname;
+
+    // Public pages win over every app route: they render their own shell.
+    const publicMatch = resolvePublicPage(path);
+    setPublicPage(publicMatch);
+    if (publicMatch) return;
+
     if (path && path.length > 1) {
-      // 1. Check if community route: /c/@handle or /c/handle
-      const commMatch = path.match(/^\/c\/?@?([a-zA-Z0-9_\-]+)$/i);
+      // 1. Check if community route: /c/@handle or /c/handle.
+      //    The separating slash is mandatory. With it optional, "/communities" matched as
+      //    community "@ommunities" and the Communities tab deep link landed on a
+      //    "community not found" screen.
+      const commMatch = path.match(/^\/c\/@?([a-zA-Z0-9_\-]+)$/i);
       if (commMatch) {
         const commHandle = commMatch[1].toLowerCase();
         setSelectedModalUsername(null);
@@ -1131,6 +1175,14 @@ export default function App() {
       });
     }
   };
+
+  // Public pages render before every gate — no session, no ban check, no closed beta.
+  if (publicPage === 'dev-docs') {
+    return <DevDocsView language={language} />;
+  }
+  if (publicPage === 'tos' || publicPage === 'privacy') {
+    return <LegalView language={language} page={publicPage} />;
+  }
 
   if (!isAuthenticated) {
     return (

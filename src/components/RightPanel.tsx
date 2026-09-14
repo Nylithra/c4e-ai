@@ -24,7 +24,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 }) => {
   const [pendingJoinIds, setPendingJoinIds] = useState<Set<string>>(new Set());
   const brandTitle = platformSettings?.brandTitle || 'Code4Ever Platform';
-  const brandDomain = platformSettings?.brandDomain || 'code4ever.ai.studio';
+  const brandDomain = platformSettings?.brandDomain || 'lanux.online';
 
   const handleJoinClick = (commId: string) => {
     if (pendingJoinIds.has(commId)) return;
@@ -133,12 +133,27 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         )}
       </div>
 
-      <div className="p-3 bg-zinc-950 border border-zinc-800/60 rounded-xl text-center space-y-1">
+      <div className="p-3 bg-zinc-950 border border-zinc-800/60 rounded-xl text-center space-y-1.5">
         <span className="text-[11px] font-mono text-zinc-400 flex items-center justify-center gap-1">
           <Sparkles className="w-3 h-3 text-zinc-400" />
           <span>{brandTitle}</span>
         </span>
         <span className="text-[10px] text-zinc-500 font-mono block">{brandDomain}</span>
+
+        {/* Legal and developer pages render outside the app shell, so they are plain links. */}
+        <nav className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 pt-1 text-[10px] text-zinc-500">
+          <a href="/dev/docs" className="hover:text-zinc-300 transition-colors">
+            {language === 'tr' ? 'Geliştirici API' : 'Developer API'}
+          </a>
+          <span aria-hidden="true">·</span>
+          <a href="/tos" className="hover:text-zinc-300 transition-colors">
+            {language === 'tr' ? 'Kullanım Şartları' : 'Terms'}
+          </a>
+          <span aria-hidden="true">·</span>
+          <a href="/privacy" className="hover:text-zinc-300 transition-colors">
+            {language === 'tr' ? 'Gizlilik' : 'Privacy'}
+          </a>
+        </nav>
       </div>
     </aside>
   );

@@ -167,7 +167,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   // Platform Settings State
   const [platformBrandTitle, setPlatformBrandTitle] = useState(platformSettings.brandTitle || 'Code4Ever Platform');
-  const [platformBrandDomain, setPlatformBrandDomain] = useState(platformSettings.brandDomain || 'code4ever.ai.studio');
+  const [platformBrandDomain, setPlatformBrandDomain] = useState(platformSettings.brandDomain || 'lanux.online');
   const [platformBrandDescription, setPlatformBrandDescription] = useState(platformSettings.brandDescription || '');
   const [platformBrandSlogan, setPlatformBrandSlogan] = useState(platformSettings.brandSlogan || '');
 
@@ -787,7 +787,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     e.preventDefault();
     const newSettings: PlatformSettings = {
       brandTitle: sanitizeInput(platformBrandTitle) || 'Code4Ever Platform',
-      brandDomain: sanitizeInput(platformBrandDomain) || 'code4ever.ai.studio',
+      brandDomain: sanitizeInput(platformBrandDomain) || 'lanux.online',
       brandDescription: sanitizeInput(platformBrandDescription),
       brandSlogan: sanitizeInput(platformBrandSlogan),
       updatedAt: new Date().toISOString(),
@@ -2011,7 +2011,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <span>Platform Marka ve Sağ Panel Alt Yazı Ayarları</span>
               </h2>
               <p className="text-xs text-zinc-400 mt-1 font-mono">
-                Sağ alt köşedeki "Code4Ever Platform" ve "code4ever.ai.studio" alanlarını, sloganı ve açıklamayı buradan yönetin.
+                Sağ alt köşedeki "Code4Ever Platform" ve "lanux.online" alanlarını, sloganı ve açıklamayı buradan yönetin.
               </p>
             </div>
 
@@ -2058,7 +2058,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   type="text"
                   value={platformBrandDomain}
                   onChange={(e) => setPlatformBrandDomain(e.target.value)}
-                  placeholder="örn. code4ever.ai.studio"
+                  placeholder="örn. lanux.online"
                   className="w-full bg-[#09090b] border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 text-xs font-mono"
                   required
                 />
@@ -2134,7 +2134,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         {platformBrandTitle || 'Code4Ever Platform'}
                       </h4>
                       <p className="text-[10px] text-blue-400 font-mono">
-                        {platformBrandDomain || 'code4ever.ai.studio'}
+                        {platformBrandDomain || 'lanux.online'}
                       </p>
                     </div>
                   </div>

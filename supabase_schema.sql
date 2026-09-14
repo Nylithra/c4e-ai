@@ -95,6 +95,29 @@ CREATE TABLE IF NOT EXISTS public.communities (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Community HTTP publishing API keys.
+--
+-- Only the SHA-256 hash of a key is stored, so a database leak cannot be replayed against
+-- the API and the plaintext key genuinely exists only in the moment it is generated. The
+-- prefix is kept separately so the owner can recognise a key in a list without it being
+-- usable. The table carries NO client-facing RLS policy on purpose: keys are read and
+-- written exclusively by the backend with the service role key.
+CREATE TABLE IF NOT EXISTS public.community_api_keys (
+  id TEXT PRIMARY KEY,
+  community_id TEXT NOT NULL,
+  community_handle TEXT NOT NULL,
+  name VARCHAR(60) NOT NULL DEFAULT 'default',
+  key_prefix VARCHAR(24) NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT[] NOT NULL DEFAULT ARRAY['posts:write'],
+  created_by TEXT,
+  created_by_username TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  request_count BIGINT NOT NULL DEFAULT 0,
+  revoked_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS public.job_listings (
   id TEXT PRIMARY KEY,
   type VARCHAR(10) NOT NULL CHECK (type IN ('job', 'team')),
@@ -732,6 +755,9 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.group_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.system_error_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_reports ENABLE ROW LEVEL SECURITY;
+-- RLS on, and deliberately no policy: with the anon/authenticated grants withheld below,
+-- API key material is unreachable from any browser session. Only the service role reads it.
+ALTER TABLE public.community_api_keys ENABLE ROW LEVEL SECURITY;
 
 -- Remove every legacy "allow everything" policy.
 DO $$
@@ -984,6 +1010,14 @@ CREATE POLICY "post_reports_update_admin" ON public.post_reports
 CREATE POLICY "post_reports_delete_admin" ON public.post_reports
   FOR DELETE USING (public.is_platform_admin());
 
+-- 5.12 Community API keys ----------------------------------------
+-- The backend reaches this table with the service role key. Supabase's service_role is
+-- normally BYPASSRLS, but stating the policy explicitly means the API keeps working on a
+-- cluster where it is not — instead of every key silently failing to resolve. anon and
+-- authenticated hold no grant at all (section 6), so no browser can reach key material.
+CREATE POLICY "community_api_keys_service_role" ON public.community_api_keys
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 -- ================================================================
 -- 6. GRANTS
 -- ================================================================
@@ -1003,6 +1037,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.job_applications, public.notifications, public.groups, public.messages,
   public.group_invites, public.system_error_reports, public.post_reports
 TO authenticated;
+
+-- public.community_api_keys is intentionally absent from both grant lists above: browsers
+-- never touch key material, the backend reaches it with the service role key only.
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
@@ -1056,6 +1093,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON public.notifications(r
 CREATE INDEX IF NOT EXISTS idx_group_invites_target ON public.group_invites(target_username, status);
 CREATE INDEX IF NOT EXISTS idx_system_error_reports_created_at ON public.system_error_reports(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_post_reports_created_at ON public.post_reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_community_api_keys_hash ON public.community_api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_api_keys(community_id, revoked_at);
 
 -- ================================================================
 -- 9. BOOTSTRAP THE PLATFORM ADMINISTRATOR

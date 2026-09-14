@@ -133,6 +133,35 @@ yer imleri, profil). Topluluğun kendisi keşfedilebilir kalır; herkes katılab
    API anahtarları) iptal edip yeniden oluşturun.
 4. **Firestore kullanılıyorsa** `firestore.rules` dosyasını dağıtın.
 
+> Topluluk API'si `SUPABASE_SERVICE_ROLE_KEY` olmadan çalışmaz; anahtar yoksa tüm uçlar
+> dürüstçe 503 döner. `community_api_keys` tablosu şemayla birlikte gelir.
+
+---
+
+## 2.1 Topluluk HTTP Paylaşım API'si
+
+Kamuya açık dokümantasyon: `/dev/docs`. Güvenlik tasarımı:
+
+- **Anahtarlar düz metin olarak saklanmaz.** Veritabanında yalnızca SHA-256 özeti tutulur;
+  düz metin yalnızca oluşturulma yanıtında bir kez döner. Sızan bir yedek tekrar oynatılamaz.
+- **Arama özet üzerinden yapılır** (`key_hash` üzerinde benzersiz indeks). Ön ek taraması
+  yoktur, dolayısıyla hangi ön eklerin var olduğunu sızdıran bir zamanlama kanalı da yoktur.
+- **Tarayıcı anahtar materyaline erişemez.** `community_api_keys` tablosunda RLS açıktır ve
+  `anon` / `authenticated` rollerine hiçbir GRANT verilmemiştir; yalnızca servis rolü okur.
+  (Yerel PostgreSQL 16 üzerinde doğrulandı: her iki rol de `permission denied` alıyor.)
+- **Hedef topluluk anahtardan belirlenir**, adresteki handle'dan değil. Bir topluluğun
+  anahtarıyla başka bir topluluğa gönderi atılamaz (403).
+- **İptal anında geçerlidir.** İptal edilmiş anahtar, hiç var olmamış gibi 401 döner.
+- **Anahtar yönetimi oturum ister,** API anahtarı kabul edilmez: anahtarla anahtar
+  yönetilemez. Yalnızca topluluğun kurucusu veya platform yöneticisi yönetebilir.
+- **Girdi temizlenir:** kontrol karakterleri ve "Trojan Source" saldırılarında kullanılan
+  çift yönlü (bidi) yazım geçersiz kılma karakterleri silinir; uzunluk sınırları uygulanır.
+- **Hız sınırı:** yayınlama dakikada 30, okuma dakikada 60, genel API tavanı dakikada 120.
+  Topluluk başına en fazla 10 etkin anahtar.
+
+Bu davranışların tamamı gerçek Express rotaları üzerinden uçtan uca test edilmiştir
+(35 doğrulama, tamamı geçti).
+
 ---
 
 ## 3. Bilinen sınırlamalar

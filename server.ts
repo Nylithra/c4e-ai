@@ -24,6 +24,28 @@ import {
   verifySignedState,
   hmacHex
 } from './src/server/security';
+import {
+  LIMITS,
+  canManageCommunity,
+  countActiveKeys,
+  extractApiKey,
+  findCommunityById,
+  findCommunityByHandle,
+  generateApiKey,
+  insertCommunityPost,
+  insertKey,
+  listCommunityPosts,
+  listKeysForCommunity,
+  listPublicCommunities,
+  resolveApiKey,
+  revokeKey,
+  sanitizeText,
+  serviceRoleConfigured,
+  toPublicKey,
+  touchApiKey,
+  validatePostPayload,
+  type CommunityRow
+} from './src/server/communityApi';
 
 const app = express();
 const PORT = Number(env('PORT', '3000'));
@@ -346,91 +368,122 @@ app.post(
 );
 
 // -------------------------------------------------------------
-// COMMUNITY CODE SHARING HTTP API (REST & WEBHOOKS)
+// COMMUNITY CODE SHARING HTTP API (REST)
 // -------------------------------------------------------------
-interface CommunityStore {
-  id: string;
-  name: string;
-  handle: string;
-  avatar_url?: string;
-  description?: string;
+//
+// Public, documented at /dev/docs. Two halves:
+//
+//   * Read endpoints — open, unauthenticated, public communities and their posts only.
+//   * Write endpoint — needs a community API key (`X-API-Key`). Keys are minted by the
+//     community founder through the key-management endpoints below, which in turn need a
+//     signed-in session. Keys are stored as SHA-256 hashes, so this file never holds and
+//     never logs a usable credential.
+
+/** Shape returned for a community in public listings. */
+function publicCommunityShape(c: CommunityRow) {
+  return {
+    id: c.id,
+    name: c.name,
+    handle: c.handle,
+    description: c.description,
+    members_count: c.members_count ?? 0,
+    posts_url: `/api/v1/communities/${encodeURIComponent(c.handle)}/posts`
+  };
 }
 
-// NOTE: API keys are never stored or served from here. They used to be hard-coded live
-// credentials committed to a public repository.
-const inMemoryCommunities: CommunityStore[] = [
-  { id: 'comm_react', name: 'React Türkiye', handle: '@react_tr', description: 'React, Vite, Next.js ekosistemi' },
-  { id: 'comm_backend', name: 'Backend & System Arch', handle: '@backend_devs', description: 'Node.js, Go, Rust, microservices' },
-  { id: 'comm_ai', name: 'AI & Machine Learning', handle: '@ai_agents', description: 'LLMs, AI agents, PyTorch' },
-  { id: 'comm_cyber', name: 'Cyber Security & E2EE', handle: '@cyber_sec', description: 'Security, cryptography and E2EE' }
-];
+function apiKeysUnavailable(res: Response): boolean {
+  if (serviceRoleConfigured()) return false;
+  res.status(503).json({
+    success: false,
+    error:
+      'Topluluk API sunucu tarafında yapılandırılmamış (SUPABASE_SERVICE_ROLE_KEY eksik). / Community API is not configured on this deployment.'
+  });
+  return true;
+}
 
-// 1. List Communities & API Documentation
-app.get(['/api/v1/communities', '/api/communities'], (_req: Request, res: Response) => {
+// 1. API index + list of public communities.
+app.get(['/api/v1/communities', '/api/communities'], async (_req: Request, res: Response) => {
+  const communities = serviceRoleConfigured() ? await listPublicCommunities(50) : [];
+
   res.json({
     success: true,
     api_version: 'v1',
-    description: 'Code4Ever Community Code Sharing & Publishing HTTP API',
+    documentation: '/dev/docs',
     endpoints: {
       list_communities: 'GET /api/v1/communities',
-      get_community_posts: 'GET /api/v1/communities/:handle/posts',
-      publish_code_post: 'POST /api/v1/communities/:handle/posts (or /api/v1/community/post)'
+      get_community: 'GET /api/v1/communities/:handle',
+      list_posts: 'GET /api/v1/communities/:handle/posts?limit=50',
+      publish_post: 'POST /api/v1/communities/:handle/posts  (X-API-Key required)',
+      list_keys: 'GET /api/v1/communities/:handle/keys  (session required, founder only)',
+      create_key: 'POST /api/v1/communities/:handle/keys  (session required, founder only)',
+      revoke_key: 'DELETE /api/v1/communities/:handle/keys/:keyId  (session required, founder only)'
+    },
+    limits: {
+      content_max_chars: LIMITS.content,
+      code_snippet_max_chars: LIMITS.codeSnippet,
+      publish_requests_per_minute: 30,
+      active_keys_per_community: LIMITS.maxActiveKeysPerCommunity
     },
     payload_example: {
-      content: 'Burada paylaşılan kod hakkında açıklama',
-      code_snippet: 'console.log("Hello from HTTP Request API!");',
-      code_language: 'javascript',
+      content: 'Performanslı debounce hook örneği',
+      code_snippet: 'export const sum = (a: number, b: number) => a + b;',
+      code_language: 'typescript',
       category: 'frontend',
-      author_name: 'API Developer',
-      author_username: 'api_dev'
+      author_name: 'CI Bot'
     },
-    communities: inMemoryCommunities.map((c) => ({
-      id: c.id,
-      name: c.name,
-      handle: c.handle,
-      description: c.description,
-      post_url: `/api/v1/communities/${encodeURIComponent(c.handle)}/posts`
-    }))
+    count: communities.length,
+    communities: communities.map(publicCommunityShape)
   });
 });
 
-// 2. Fetch Posts for a Community
+// 2. A single public community.
+app.get(
+  ['/api/v1/communities/:handle', '/api/communities/:handle'],
+  rateLimit({ scope: 'community-read', windowMs: 60000, max: 60 }),
+  async (req: Request, res: Response) => {
+    if (apiKeysUnavailable(res)) return;
+
+    const community = await findCommunityByHandle(String(req.params.handle || ''));
+    if (!community) {
+      res.status(404).json({ success: false, error: 'Topluluk bulunamadı. / Community not found.' });
+      return;
+    }
+    if (community.is_private) {
+      // A private community must not even confirm its own existence to an anonymous caller.
+      res.status(404).json({ success: false, error: 'Topluluk bulunamadı. / Community not found.' });
+      return;
+    }
+    res.json({ success: true, community: publicCommunityShape(community) });
+  }
+);
+
+// 3. Posts of a public community.
 app.get(
   ['/api/v1/communities/:handle/posts', '/api/communities/:handle/posts'],
   rateLimit({ scope: 'community-posts', windowMs: 60000, max: 60 }),
   async (req: Request, res: Response) => {
-    const rawHandle = normalizeUsername(req.params.handle);
-    if (!rawHandle) {
-      res.status(400).json({ success: false, error: 'Geçersiz topluluk adresi.' });
+    if (apiKeysUnavailable(res)) return;
+
+    const community = await findCommunityByHandle(String(req.params.handle || ''));
+    if (!community || community.is_private) {
+      res.status(404).json({ success: false, error: 'Topluluk bulunamadı. / Community not found.' });
       return;
     }
-    const cleanHandle = `@${rawHandle}`;
 
-    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-      try {
-        const fetchRes = await safeFetch(
-          `${SUPABASE_URL}/rest/v1/posts?community_handle=eq.${encodeURIComponent(cleanHandle)}&is_deleted=eq.false&order=created_at.desc&limit=50`,
-          {
-            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-            timeoutMs: 10000,
-            maxResponseBytes: 1024 * 1024
-          }
-        );
-        if (fetchRes.ok) {
-          const posts = JSON.parse(fetchRes.text || '[]');
-          res.json({ success: true, community_handle: cleanHandle, count: posts.length, posts });
-          return;
-        }
-      } catch (e: any) {
-        console.warn('Supabase fetch community posts error:', e?.message);
-      }
-    }
+    const requested = Number(req.query.limit);
+    const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 100) : 50;
+    const posts = await listCommunityPosts(community.handle, limit);
 
-    res.json({ success: true, community_handle: cleanHandle, count: 0, posts: [] });
+    res.json({
+      success: true,
+      community: publicCommunityShape(community),
+      count: posts.length,
+      posts
+    });
   }
 );
 
-// 3. Publish Code / Post to Community via HTTP Request
+// 4. Publish a post with an API key.
 app.post(
   [
     '/api/v1/communities/:handle/posts',
@@ -439,16 +492,236 @@ app.post(
     '/api/v1/community/publish',
     '/api/community/post'
   ],
-  rateLimit({ scope: 'community-publish', windowMs: 60000, max: 20 }),
-  async (_req: Request, res: Response) => {
-    // Community API is in Closed Beta
-    res.status(503).json({
-      success: false,
-      status: 'beta_locked',
-      error:
-        'Topluluk HTTP API şu anda Kapalı Beta aşamasındadır ve harici paylaşımlara geçici olarak kapalıdır. / Community HTTP API is currently in Closed Beta and temporarily disabled.',
-      documentation: '/api/v1/communities'
+  rateLimit({ scope: 'community-publish', windowMs: 60000, max: 30 }),
+  async (req: Request, res: Response) => {
+    if (apiKeysUnavailable(res)) return;
+
+    const body = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
+
+    const presentedKey = extractApiKey({ headers: req.headers as Record<string, unknown>, body });
+    if (!presentedKey) {
+      res.status(401).json({
+        success: false,
+        error:
+          'API anahtarı eksik. `X-API-Key` başlığını gönderin. / Missing API key: send the `X-API-Key` header.',
+        documentation: '/dev/docs'
+      });
+      return;
+    }
+
+    const keyRow = await resolveApiKey(presentedKey);
+    if (!keyRow) {
+      res.status(401).json({
+        success: false,
+        error: 'API anahtarı geçersiz veya iptal edilmiş. / API key is invalid or revoked.'
+      });
+      return;
+    }
+
+    if (!keyRow.scopes?.includes('posts:write')) {
+      res.status(403).json({
+        success: false,
+        error: 'Bu anahtar `posts:write` yetkisine sahip değil. / This key lacks the `posts:write` scope.'
+      });
+      return;
+    }
+
+    // The key decides the target community, never the URL. A key for @a cannot be aimed at
+    // @b by changing the path.
+    const community = await findCommunityById(keyRow.community_id);
+    if (!community) {
+      res.status(404).json({ success: false, error: 'Topluluk bulunamadı. / Community not found.' });
+      return;
+    }
+
+    const routeHandle = String(req.params.handle || body.community_handle || '')
+      .replace(/^@/, '')
+      .toLowerCase();
+    const keyHandle = community.handle.replace(/^@/, '').toLowerCase();
+    if (routeHandle && routeHandle !== keyHandle) {
+      res.status(403).json({
+        success: false,
+        error: `Bu anahtar yalnızca @${keyHandle} topluluğunda geçerli. / This key is only valid for @${keyHandle}.`
+      });
+      return;
+    }
+
+    const validation = validatePostPayload(body);
+    if (!validation.ok || !validation.value) {
+      res.status(422).json({ success: false, field: validation.field, error: validation.error });
+      return;
+    }
+
+    const payload = validation.value;
+    const authorUsername =
+      normalizeUsername(asString(body.author_username ?? body.authorUsername)) ||
+      keyRow.created_by_username ||
+      'api';
+
+    const post = await insertCommunityPost({
+      id: `post_api_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`,
+      author: {
+        username: authorUsername,
+        display_name: payload.authorName,
+        avatar_url: '',
+        // Marks the post as machine-published so the UI can label it honestly.
+        via_api: true,
+        api_key_name: keyRow.name
+      },
+      author_id: keyRow.created_by,
+      content: payload.content,
+      category: payload.category,
+      category_name: payload.category,
+      code_snippet: payload.codeSnippet,
+      code_language: payload.codeLanguage,
+      community_id: community.id,
+      community_name: community.name,
+      community_handle: community.handle
     });
+
+    if (!post) {
+      res.status(502).json({
+        success: false,
+        error: 'Gönderi veritabanına yazılamadı. / Could not write the post to the database.'
+      });
+      return;
+    }
+
+    void touchApiKey(keyRow);
+
+    res.status(201).json({
+      success: true,
+      message: `Gönderi ${community.handle} topluluğuna iletildi. / Post published to ${community.handle}.`,
+      post: {
+        id: post.id,
+        content: post.content,
+        code_language: post.code_language,
+        community_handle: post.community_handle,
+        created_at: post.created_at,
+        url: `${appOrigin()}/c/${community.handle}#post-${post.id}`
+      }
+    });
+  }
+);
+
+// -------------------------------------------------------------
+// COMMUNITY API KEY MANAGEMENT (session authenticated, founder only)
+// -------------------------------------------------------------
+
+/** Resolves the community in the path and checks the caller may manage it. */
+async function requireCommunityOwner(
+  req: Request,
+  res: Response
+): Promise<CommunityRow | null> {
+  if (apiKeysUnavailable(res)) return null;
+
+  const community = await findCommunityByHandle(String(req.params.handle || ''));
+  if (!community) {
+    res.status(404).json({ success: false, error: 'Topluluk bulunamadı. / Community not found.' });
+    return null;
+  }
+  if (!canManageCommunity(community, req.auth)) {
+    res.status(403).json({
+      success: false,
+      error:
+        'Yalnızca topluluğun kurucusu API anahtarı yönetebilir. / Only the community founder can manage API keys.'
+    });
+    return null;
+  }
+  return community;
+}
+
+app.get(
+  '/api/v1/communities/:handle/keys',
+  requireAuth,
+  rateLimit({ scope: 'community-keys-read', windowMs: 60000, max: 60, perUser: true }),
+  async (req: Request, res: Response) => {
+    const community = await requireCommunityOwner(req, res);
+    if (!community) return;
+
+    const keys = await listKeysForCommunity(community.id);
+    res.json({
+      success: true,
+      community: { id: community.id, handle: community.handle, name: community.name },
+      count: keys.length,
+      keys: keys.map(toPublicKey)
+    });
+  }
+);
+
+app.post(
+  '/api/v1/communities/:handle/keys',
+  requireAuth,
+  rateLimit({ scope: 'community-keys-create', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const community = await requireCommunityOwner(req, res);
+    if (!community) return;
+
+    const active = await countActiveKeys(community.id);
+    if (active >= LIMITS.maxActiveKeysPerCommunity) {
+      res.status(409).json({
+        success: false,
+        error: `Bir toplulukta en fazla ${LIMITS.maxActiveKeysPerCommunity} etkin anahtar olabilir. Önce birini iptal edin. / At most ${LIMITS.maxActiveKeysPerCommunity} active keys per community; revoke one first.`
+      });
+      return;
+    }
+
+    const body = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
+    const name = sanitizeText(body.name, LIMITS.keyName) || 'default';
+    const generated = generateApiKey();
+
+    const row = await insertKey({
+      id: `cak_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`,
+      community_id: community.id,
+      community_handle: community.handle,
+      name,
+      key_prefix: generated.prefix,
+      key_hash: generated.hash,
+      scopes: ['posts:write'],
+      created_by: req.auth?.userId || null,
+      created_by_username: req.auth?.username || null
+    });
+
+    if (!row) {
+      res.status(502).json({
+        success: false,
+        error: 'Anahtar oluşturulamadı. / Could not create the key.'
+      });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      // The ONLY time the plaintext is ever transmitted.
+      api_key: generated.plaintext,
+      warning:
+        'Bu anahtar bir daha gösterilmeyecek. Şimdi kaydedin. / This key will not be shown again. Store it now.',
+      key: toPublicKey(row)
+    });
+  }
+);
+
+app.delete(
+  '/api/v1/communities/:handle/keys/:keyId',
+  requireAuth,
+  rateLimit({ scope: 'community-keys-revoke', windowMs: 60000, max: 20, perUser: true }),
+  async (req: Request, res: Response) => {
+    const community = await requireCommunityOwner(req, res);
+    if (!community) return;
+
+    const keyId = asString(req.params.keyId);
+    if (!/^cak_[A-Za-z0-9_]+$/.test(keyId)) {
+      res.status(400).json({ success: false, error: 'Geçersiz anahtar kimliği. / Invalid key id.' });
+      return;
+    }
+
+    const revoked = await revokeKey(keyId, community.id);
+    if (!revoked) {
+      res.status(404).json({ success: false, error: 'Anahtar bulunamadı. / Key not found.' });
+      return;
+    }
+
+    res.json({ success: true, message: 'Anahtar iptal edildi. / Key revoked.' });
   }
 );
 

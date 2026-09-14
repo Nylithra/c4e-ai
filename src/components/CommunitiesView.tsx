@@ -239,14 +239,11 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setApiCommunity(comm)}
-                        className="px-2.5 py-1.5 rounded-xl bg-amber-950/30 text-amber-400 hover:text-amber-300 hover:bg-amber-900/40 border border-amber-800/40 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-mono"
-                        title={language === 'tr' ? 'Topluluk HTTP API (Beta - Yakında)' : 'Community HTTP API (Beta - Coming Soon)'}
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-950/30 text-amber-400 hover:text-amber-300 hover:bg-amber-900/40 border border-amber-800/40 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title={language === 'tr' ? 'Topluluk HTTP Paylaşım API' : 'Community HTTP publishing API'}
                       >
                         <Terminal className="w-3.5 h-3.5" />
                         <span className="font-bold">API</span>
-                        <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-bold uppercase tracking-wider">
-                          BETA
-                        </span>
                       </button>
 
                       {hasManagePerm && (
@@ -298,6 +295,7 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
           community={apiCommunity}
           currentUser={user}
           language={language}
+          canManage={canManageCommunity(apiCommunity)}
           onClose={() => setApiCommunity(null)}
         />
       )}

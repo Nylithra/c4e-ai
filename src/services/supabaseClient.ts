@@ -3107,7 +3107,7 @@ export function saveBadgeDefinitions(badges: BadgeDefinition[]): void {
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   brandTitle: 'Code4Ever Platform',
-  brandDomain: 'code4ever.ai.studio',
+  brandDomain: 'lanux.online',
   brandDescription: 'Açık Kaynak Geliştirici Topluluğu & Kod Paylaşım Ağı',
   brandSlogan: 'Kodla, Paylaş, Büyü'
 };

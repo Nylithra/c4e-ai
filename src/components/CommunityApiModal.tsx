@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Code2,
@@ -8,22 +8,53 @@ import {
   Terminal,
   Key,
   Globe,
-  Sparkles,
   ExternalLink,
   CheckCircle2,
   AlertCircle,
-  RefreshCw
+  Loader2,
+  Plus,
+  Trash2,
+  ShieldAlert
 } from 'lucide-react';
 import { Community, UserProfile } from '../types';
-import { CodeSnippetBlock } from './CodeSnippetBlock';
+import { apiFetchJson } from '../services/apiClient';
 
 interface CommunityApiModalProps {
   isOpen: boolean;
   community: Community | null;
   currentUser?: UserProfile;
   language: 'tr' | 'en';
+  canManage?: boolean;
   onClose: () => void;
   onPostPublished?: () => void;
+}
+
+interface ApiKeySummary {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  created_at: string;
+  created_by_username: string | null;
+  last_used_at: string | null;
+  request_count: number;
+  revoked_at: string | null;
+}
+
+const CODE_LANGUAGES = [
+  'typescript', 'javascript', 'python', 'rust', 'go', 'sql',
+  'html', 'css', 'csharp', 'cpp', 'java', 'bash', 'yaml', 'json'
+];
+
+/**
+ * The API answers auth failures with a machine code in `error` and the readable sentence in
+ * `message`, and its own errors with the sentence in `error`. Show a sentence either way,
+ * never a bare code like "auth_unavailable".
+ */
+function errorText(data: { error?: string; message?: string } | null, fallback: string): string {
+  if (data?.message) return data.message;
+  if (data?.error && /\s/.test(data.error)) return data.error;
+  return fallback;
 }
 
 export const CommunityApiModal: React.FC<CommunityApiModalProps> = ({
@@ -31,165 +62,264 @@ export const CommunityApiModal: React.FC<CommunityApiModalProps> = ({
   community,
   currentUser,
   language,
+  canManage = false,
   onClose,
   onPostPublished
 }) => {
+  const [activeTab, setActiveTab] = useState<'docs' | 'playground' | 'keys'>('docs');
+  const [copied, setCopied] = useState<string | null>(null);
+
+  // Key management
+  const [keys, setKeys] = useState<ApiKeySummary[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [keysError, setKeysError] = useState<string | null>(null);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+  /** Shown exactly once, right after creation — the server never returns it again. */
+  const [freshKey, setFreshKey] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  // Playground
+  const [testKey, setTestKey] = useState('');
+  const [testContent, setTestContent] = useState('Topluluk API testi: bu gönderi HTTP isteğiyle yayınlandı.');
+  const [testCode, setTestCode] = useState(
+    `export async function handleRequest(req, res) {\n  const data = await fetchCommunityData();\n  res.json({ success: true, count: data.length });\n}`
+  );
+  const [testLanguage, setTestLanguage] = useState('typescript');
+  const [testAuthorName, setTestAuthorName] = useState(currentUser?.display_name || 'API Bot');
+  const [isSending, setIsSending] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; url?: string } | null>(null);
+
+  const tr = language === 'tr';
+  const commHandle = (community?.handle || '').replace(/^@/, '');
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://app.lanux.online';
+  const endpointUrl = `${baseUrl}/api/v1/communities/@${commHandle}/posts`;
+  const keysUrl = `/api/v1/communities/@${commHandle}/keys`;
+
+  const loadKeys = useCallback(async () => {
+    if (!commHandle || !canManage) return;
+    setKeysLoading(true);
+    setKeysError(null);
+    const { ok, data } = await apiFetchJson<{ keys: ApiKeySummary[]; error?: string; message?: string }>(keysUrl);
+    if (ok && data?.keys) {
+      setKeys(data.keys);
+    } else {
+      setKeysError(errorText(data, tr ? 'Anahtarlar yüklenemedi.' : 'Could not load keys.'));
+    }
+    setKeysLoading(false);
+  }, [commHandle, canManage, keysUrl, tr]);
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'keys') void loadKeys();
+  }, [isOpen, activeTab, loadKeys]);
+
+  // Reset per-community state so a key from one community never leaks into another's view.
+  useEffect(() => {
+    setFreshKey(null);
+    setKeys([]);
+    setTestResult(null);
+    setKeysError(null);
+  }, [community?.id]);
+
   if (!isOpen || !community) return null;
 
-  const [activeTab, setActiveTab] = useState<'docs' | 'playground' | 'keys'>('docs');
-  const [copiedKey, setCopiedKey] = useState(false);
-  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const handleCopy = (text: string, token: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(token);
+        setTimeout(() => setCopied(null), 2000);
+      },
+      () => undefined
+    );
+  };
 
-  // Playground state
-  const [testContent, setTestContent] = useState('Topluluk HTTP API testi: Bu kod parçacığı otomatik gönderilmiştir.');
-  const [testCode, setTestCode] = useState(`// Express & Vite API handler
-export async function handleRequest(req, res) {
-  const data = await fetchCommunityData();
-  res.json({ success: true, count: data.length });
-}`);
-  const [testLanguage, setTestLanguage] = useState('typescript');
-  const [testAuthorName, setTestAuthorName] = useState(currentUser?.display_name || 'API Developer');
-  const [isSending, setIsSending] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; post?: any } | null>(null);
+  const handleCreateKey = async () => {
+    setIsCreatingKey(true);
+    setKeysError(null);
+    setFreshKey(null);
 
-  const baseUrl = window.location.origin;
-  const commHandle = community.handle.replace(/^@/, '');
-  const endpointUrl = `${baseUrl}/api/v1/communities/@${commHandle}/posts`;
-  const apiKey = community.api_key || `c4e_comm_${commHandle}_live`;
+    const { ok, data } = await apiFetchJson<{ api_key?: string; error?: string; message?: string }>(keysUrl, {
+      method: 'POST',
+      json: { name: newKeyName.trim() || 'default' }
+    });
 
-  const curlExample = `curl -X POST "${endpointUrl}" \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: ${apiKey}" \\
-  -d '{
-    "content": "Performanslı debounce hook örneği",
-    "code_snippet": "function useDebounce(value, delay) {\\n  const [debounced, setDebounced] = useState(value);\\n  useEffect(() => {\\n    const handler = setTimeout(() => setDebounced(value), delay);\\n    return () => clearTimeout(handler);\\n  }, [value, delay]);\\n  return debounced;\\n}",
-    "code_language": "typescript",
-    "author_name": "${currentUser?.display_name || 'API Bot'}"
-  }'`;
-
-  const jsFetchExample = `// JavaScript / TypeScript (Node.js or Browser)
-const response = await fetch('${endpointUrl}', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': '${apiKey}'
-  },
-  body: JSON.stringify({
-    content: 'Yeni Python veri analizi algoritması',
-    code_snippet: 'import pandas as pd\\ndf = pd.read_csv("dataset.csv")\\nprint(df.describe())',
-    code_language: 'python',
-    author_name: '${currentUser?.display_name || 'Python Dev'}'
-  })
-});
-
-const result = await response.json();
-console.log('Paylaşım durumu:', result);`;
-
-  const pythonExample = `# Python 3 (requests)
-import requests
-
-url = "${endpointUrl}"
-headers = {
-    "Content-Type": "application/json",
-    "X-API-Key": "${apiKey}"
-}
-payload = {
-    "content": "FastAPI Mikroservis Örneği",
-    "code_snippet": """from fastapi import FastAPI
-app = FastAPI()
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "community": "${community.name}"}""",
-    "code_language": "python",
-    "author_name": "${currentUser?.display_name || 'Python Bot'}"
-}
-
-res = requests.post(url, json=payload, headers=headers)
-print(res.status_code, res.json())`;
-
-  const handleCopy = (text: string, type: string) => {
-    navigator.clipboard.writeText(text);
-    if (type === 'key') {
-      setCopiedKey(true);
-      setTimeout(() => setCopiedKey(false), 2000);
+    if (ok && data?.api_key) {
+      setFreshKey(data.api_key);
+      setTestKey(data.api_key);
+      setNewKeyName('');
+      await loadKeys();
     } else {
-      setCopiedSnippet(type);
-      setTimeout(() => setCopiedSnippet(null), 2000);
+      setKeysError(errorText(data, tr ? 'Anahtar oluşturulamadı.' : 'Could not create the key.'));
     }
+    setIsCreatingKey(false);
+  };
+
+  const handleRevokeKey = async (keyId: string) => {
+    setRevokingId(keyId);
+    setKeysError(null);
+    const { ok, data } = await apiFetchJson<{ error?: string; message?: string }>(`${keysUrl}/${keyId}`, {
+      method: 'DELETE'
+    });
+    if (ok) {
+      await loadKeys();
+    } else {
+      setKeysError(errorText(data, tr ? 'Anahtar iptal edilemedi.' : 'Could not revoke the key.'));
+    }
+    setRevokingId(null);
   };
 
   const handleSendTestRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!testKey.trim()) {
+      setTestResult({
+        success: false,
+        message: tr ? 'Önce bir API anahtarı girin veya oluşturun.' : 'Enter or create an API key first.'
+      });
+      return;
+    }
+
     setIsSending(true);
     setTestResult(null);
 
     try {
+      // Sent without a session token on purpose: this is the exact request an external
+      // client makes, so the playground exercises the real API key path.
       const res = await fetch(endpointUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey
-        },
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': testKey.trim() },
         body: JSON.stringify({
           content: testContent,
           code_snippet: testCode,
           code_language: testLanguage,
           author_name: testAuthorName,
-          author_username: currentUser?.username || 'api_tester',
-          community_handle: community.handle
+          author_username: currentUser?.username
         })
       });
+      const data = await res.json().catch(() => ({}));
 
-      const data = await res.json();
-
-      if (res.ok && data.success) {
+      if (res.ok && data?.success) {
         setTestResult({
           success: true,
-          message: data.message || 'Kod gönderisi HTTP isteği ile başarıyla topluluğa iletildi!',
-          post: data.post
+          message: data.message || (tr ? 'Gönderi yayınlandı.' : 'Post published.'),
+          url: data.post?.url
         });
-        if (onPostPublished) {
-          onPostPublished();
-        }
+        onPostPublished?.();
       } else {
         setTestResult({
           success: false,
-          message: data.error || 'İstek başarısız oldu.'
+          message: errorText(data, `HTTP ${res.status}`)
         });
       }
     } catch (err: any) {
-      setTestResult({
-        success: false,
-        message: err.message || 'Ağ bağlantı hatası oluştu.'
-      });
+      setTestResult({ success: false, message: err?.message || (tr ? 'Ağ hatası.' : 'Network error.') });
     } finally {
       setIsSending(false);
     }
   };
 
+  const sampleKey = testKey.trim() || 'lnx_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+
+  const curlExample = `curl -X POST "${endpointUrl}" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: ${sampleKey}" \\
+  -d '{
+    "content": "Performansli debounce hook",
+    "code_snippet": "export const useDebounce = (v, ms) => { /* ... */ };",
+    "code_language": "typescript",
+    "author_name": "${testAuthorName || 'API Bot'}"
+  }'`;
+
+  const jsExample = `const res = await fetch('${endpointUrl}', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.LANUX_API_KEY
+  },
+  body: JSON.stringify({
+    content: 'Yeni surum yayinlandi',
+    code_snippet: 'npm i @lanux/sdk@latest',
+    code_language: 'bash',
+    author_name: 'Release Bot'
+  })
+});
+
+const data = await res.json();
+if (!res.ok) throw new Error(data.error);
+console.log(data.post.url);`;
+
+  const pythonExample = `import os, requests
+
+res = requests.post(
+    "${endpointUrl}",
+    headers={"X-API-Key": os.environ["LANUX_API_KEY"]},
+    json={
+        "content": "Gunluk test raporu",
+        "code_snippet": "pytest -q --maxfail=1",
+        "code_language": "bash",
+        "author_name": "CI",
+    },
+    timeout=15,
+)
+res.raise_for_status()
+print(res.json()["post"]["url"])`;
+
+  const CopyButton: React.FC<{ text: string; token: string }> = ({ text, token }) => (
+    <button
+      type="button"
+      onClick={() => handleCopy(text, token)}
+      className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {copied === token ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+      <span>{copied === token ? (tr ? 'Kopyalandı' : 'Copied') : (tr ? 'Kopyala' : 'Copy')}</span>
+    </button>
+  );
+
+  const Snippet: React.FC<{ title: string; icon: React.ReactNode; code: string; token: string }> = ({
+    title,
+    icon,
+    code,
+    token
+  }) => (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-300">
+          {icon}
+          <span>{title}</span>
+        </span>
+        <CopyButton text={code} token={token} />
+      </div>
+      <pre className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-[11px] leading-relaxed text-zinc-300">
+        {code}
+      </pre>
+    </div>
+  );
+
+  const tabs: Array<{ id: typeof activeTab; label: string; icon: React.ReactNode }> = [
+    { id: 'docs', label: tr ? 'Dokümantasyon' : 'Docs', icon: <Terminal className="h-3.5 w-3.5" /> },
+    { id: 'playground', label: tr ? 'Canlı test' : 'Playground', icon: <Send className="h-3.5 w-3.5" /> },
+    { id: 'keys', label: tr ? 'Anahtarlar' : 'Keys', icon: <Key className="h-3.5 w-3.5" /> }
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-150"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-2xl bg-[#0e0e11] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-[#0e0e11] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-950/40 border border-amber-800/40 flex items-center justify-center">
-              <Code2 className="w-5 h-5 text-amber-400" />
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/60 p-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-amber-800/40 bg-amber-950/40">
+              <Code2 className="h-5 w-5 text-amber-400" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white">
-                  {language === 'tr' ? 'Topluluk HTTP Paylaşım API' : 'Community HTTP Publishing API'}
-                </h3>
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-[10px] text-amber-300 font-mono font-bold uppercase tracking-wider">
-                  BETA (KAPALI)
-                </span>
-              </div>
-              <p className="text-xs text-zinc-400 font-mono mt-0.5">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-bold text-white">
+                {tr ? 'Topluluk Paylaşım API' : 'Community Publishing API'}
+              </h3>
+              <p className="truncate font-mono text-xs text-zinc-400">
                 {community.name} ({community.handle})
               </p>
             </div>
@@ -197,282 +327,358 @@ print(res.status_code, res.json())`;
 
           <button
             onClick={onClose}
-            className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800/60 transition-colors cursor-pointer"
+            aria-label={tr ? 'Kapat' : 'Close'}
+            className="flex-shrink-0 rounded-xl p-2 text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Closed Beta Warning Alert */}
-        <div className="mx-5 mt-4 p-3 rounded-xl bg-amber-950/30 border border-amber-700/40 text-amber-300 flex items-start gap-2.5 text-xs">
-          <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <span className="font-bold">
-              {language === 'tr' ? 'Topluluk API Kapalı Beta Aşamasındadır' : 'Community API is in Closed Beta'}
-            </span>
-            <p className="text-amber-300/80 leading-relaxed">
-              {language === 'tr'
-                ? 'Bu bölüm şu an geliştirici dokümantasyonu ve mimari önizleme amacıyla sunulmaktadır. Canlı HTTP istekleri ve harici paylaşımlar şu anda geçici olarak kapalıdır.'
-                : 'This section is currently available as a developer preview and documentation. Live HTTP publishing is temporarily disabled in Closed Beta.'}
-            </p>
-          </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 border-b border-zinc-800/60 px-4 pt-3">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 rounded-t-xl border-b-2 px-3 py-2 text-xs font-semibold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                activeTab === tab.id
+                  ? 'border-blue-500 bg-zinc-900/50 text-white'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex items-center gap-2 px-5 pt-3 border-b border-zinc-800/60 bg-[#0e0e11]">
-          <button
-            onClick={() => setActiveTab('docs')}
-            className={`px-3 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 cursor-pointer ${
-              activeTab === 'docs'
-                ? 'text-white border-blue-500 bg-zinc-900/50'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Terminal className="w-3.5 h-3.5 inline mr-1.5" />
-            {language === 'tr' ? 'API Dokümantasyonu & Kodlar' : 'API Docs & Snippets'}
-          </button>
-          <button
-            onClick={() => setActiveTab('playground')}
-            className={`px-3 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 cursor-pointer ${
-              activeTab === 'playground'
-                ? 'text-white border-blue-500 bg-zinc-900/50'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Send className="w-3.5 h-3.5 inline mr-1.5" />
-            {language === 'tr' ? 'Canlı HTTP İstek Testi' : 'Live Request Tester'}
-          </button>
-          <button
-            onClick={() => setActiveTab('keys')}
-            className={`px-3 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 cursor-pointer ${
-              activeTab === 'keys'
-                ? 'text-white border-blue-500 bg-zinc-900/50'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Key className="w-3.5 h-3.5 inline mr-1.5" />
-            {language === 'tr' ? 'API Anahtarı & Yetki' : 'API Key & Auth'}
-          </button>
-        </div>
-
-        {/* Content Body */}
-        <div className="p-5 overflow-y-auto space-y-4 flex-1">
-          {/* TAB 1: DOCS */}
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          {/* ---------------- DOCS ---------------- */}
           {activeTab === 'docs' && (
             <div className="space-y-4">
-              {/* Endpoint Banner */}
-              <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
+              <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                    {language === 'tr' ? 'HTTP POST Endpoint URL' : 'HTTP POST Endpoint URL'}
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                    Endpoint
                   </span>
-                  <button
-                    onClick={() => handleCopy(endpointUrl, 'url')}
-                    className="text-xs text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedSnippet === 'url' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedSnippet === 'url' ? 'Kopyalandı' : 'Kopyala'}</span>
-                  </button>
+                  <CopyButton text={endpointUrl} token="url" />
                 </div>
-                <div className="p-2.5 rounded-lg bg-black font-mono text-xs text-emerald-400 flex items-center gap-2 select-all overflow-x-auto">
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                <div className="flex select-all items-center gap-2 overflow-x-auto rounded-lg bg-black p-2.5 font-mono text-xs text-emerald-400">
+                  <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
                     POST
                   </span>
                   <span>{endpointUrl}</span>
                 </div>
               </div>
 
-              {/* cURL Example */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                    <Terminal className="w-3.5 h-3.5 text-amber-400" />
-                    <span>cURL (Terminal)</span>
-                  </span>
-                  <button
-                    onClick={() => handleCopy(curlExample, 'curl')}
-                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedSnippet === 'curl' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedSnippet === 'curl' ? 'Kopyalandı' : 'Kopyala'}</span>
-                  </button>
-                </div>
-                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-300 overflow-x-auto leading-relaxed">
-                  {curlExample}
-                </pre>
-              </div>
+              <Snippet
+                title="cURL"
+                icon={<Terminal className="h-3.5 w-3.5 text-amber-400" />}
+                code={curlExample}
+                token="curl"
+              />
+              <Snippet
+                title="JavaScript / TypeScript"
+                icon={<Globe className="h-3.5 w-3.5 text-blue-400" />}
+                code={jsExample}
+                token="js"
+              />
+              <Snippet
+                title="Python 3"
+                icon={<Code2 className="h-3.5 w-3.5 text-emerald-400" />}
+                code={pythonExample}
+                token="py"
+              />
 
-              {/* JavaScript / TypeScript Fetch */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                    <Globe className="w-3.5 h-3.5 text-blue-400" />
-                    <span>JavaScript / TypeScript (Fetch)</span>
-                  </span>
-                  <button
-                    onClick={() => handleCopy(jsFetchExample, 'js')}
-                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedSnippet === 'js' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedSnippet === 'js' ? 'Kopyalandı' : 'Kopyala'}</span>
-                  </button>
-                </div>
-                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-300 overflow-x-auto leading-relaxed">
-                  {jsFetchExample}
-                </pre>
-              </div>
-
-              {/* Python Example */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                    <Code2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Python 3 (Requests)</span>
-                  </span>
-                  <button
-                    onClick={() => handleCopy(pythonExample, 'py')}
-                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedSnippet === 'py' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedSnippet === 'py' ? 'Kopyalandı' : 'Kopyala'}</span>
-                  </button>
-                </div>
-                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-300 overflow-x-auto leading-relaxed">
-                  {pythonExample}
-                </pre>
-              </div>
+              <a
+                href="/dev/docs"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900/60 py-2.5 text-xs font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white"
+              >
+                <span>{tr ? 'Tam dokümantasyon' : 'Full documentation'}</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
             </div>
           )}
 
-          {/* TAB 2: PLAYGROUND (LIVE HTTP TESTER) */}
+          {/* ---------------- PLAYGROUND ---------------- */}
           {activeTab === 'playground' && (
             <form onSubmit={handleSendTestRequest} className="space-y-4">
-              <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-800/40 text-xs text-amber-300 leading-relaxed flex items-start gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                <span>
-                  {language === 'tr'
-                    ? 'Topluluk HTTP API şu anda Kapalı Beta modundadır. Canlı paylaşım ve webhook tetikleyicileri yakında genel kullanıma açılacaktır.'
-                    : 'Community HTTP API is currently in Closed Beta. Live publishing and webhook triggers will be enabled soon.'}
-                </span>
-              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                {tr
+                  ? 'Bu form gerçek bir HTTP isteği gönderir ve başarılı olursa topluluk akışına gerçek bir gönderi düşer.'
+                  : 'This form sends a real HTTP request; on success a real post lands in the community feed.'}
+              </p>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-zinc-300">
-                  {language === 'tr' ? 'Gönderi / Kod Başlığı veya Açıklaması' : 'Post / Snippet Description'}
+                <label htmlFor="api-test-key" className="text-xs font-bold text-zinc-300">
+                  {tr ? 'API Anahtarı' : 'API Key'}
                 </label>
                 <input
-                  type="text"
-                  value={testContent}
-                  onChange={(e) => setTestContent(e.target.value)}
-                  disabled
-                  className="w-full bg-zinc-950/60 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-400 placeholder-zinc-600 cursor-not-allowed"
+                  id="api-test-key"
+                  type="password"
+                  autoComplete="off"
+                  value={testKey}
+                  onChange={(e) => setTestKey(e.target.value)}
+                  placeholder="lnx_live_..."
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="api-test-content" className="text-xs font-bold text-zinc-300">
+                  {tr ? 'Gönderi açıklaması' : 'Post description'}
+                </label>
+                <input
+                  id="api-test-content"
+                  type="text"
+                  value={testContent}
+                  onChange={(e) => setTestContent(e.target.value)}
+                  maxLength={2000}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-zinc-300">
-                    {language === 'tr' ? 'Kodlama Dili' : 'Code Language'}
+                  <label htmlFor="api-test-lang" className="text-xs font-bold text-zinc-300">
+                    {tr ? 'Kodlama dili' : 'Code language'}
                   </label>
                   <select
+                    id="api-test-lang"
                     value={testLanguage}
                     onChange={(e) => setTestLanguage(e.target.value)}
-                    disabled
-                    className="w-full bg-zinc-950/60 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-400 cursor-not-allowed"
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <option value="typescript">TypeScript</option>
-                    <option value="javascript">JavaScript</option>
-                    <option value="python">Python</option>
-                    <option value="rust">Rust</option>
-                    <option value="go">Go</option>
-                    <option value="sql">SQL / PostgreSQL</option>
-                    <option value="html">HTML / CSS</option>
-                    <option value="csharp">C#</option>
-                    <option value="cpp">C++</option>
-                    <option value="bash">Bash / Shell</option>
+                    {CODE_LANGUAGES.map((lang) => (
+                      <option key={lang} value={lang}>
+                        {lang}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-zinc-300">
-                    {language === 'tr' ? 'Görünen Geliştirici İsmi' : 'Author Name'}
+                  <label htmlFor="api-test-author" className="text-xs font-bold text-zinc-300">
+                    {tr ? 'Görünen isim' : 'Author name'}
                   </label>
                   <input
+                    id="api-test-author"
                     type="text"
                     value={testAuthorName}
                     onChange={(e) => setTestAuthorName(e.target.value)}
-                    disabled
-                    className="w-full bg-zinc-950/60 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-400 cursor-not-allowed"
+                    maxLength={60}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-zinc-300">
-                  {language === 'tr' ? 'Paylaşılacak Kod Parçacığı' : 'Code Snippet'}
+                <label htmlFor="api-test-code" className="text-xs font-bold text-zinc-300">
+                  {tr ? 'Kod parçacığı' : 'Code snippet'}
                 </label>
                 <textarea
+                  id="api-test-code"
                   value={testCode}
                   onChange={(e) => setTestCode(e.target.value)}
                   rows={6}
-                  disabled
-                  placeholder="// Kodunuzu buraya yapıştırın..."
-                  className="w-full bg-zinc-950/60 border border-zinc-800 rounded-xl p-3 text-xs font-mono text-zinc-400 cursor-not-allowed resize-none leading-relaxed"
+                  maxLength={10000}
+                  className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
 
               <button
-                type="button"
-                disabled={true}
-                className="w-full py-2.5 rounded-xl bg-zinc-800/80 border border-zinc-700/50 text-zinc-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-not-allowed opacity-75"
+                type="submit"
+                disabled={isSending}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-100 py-2.5 text-xs font-bold text-zinc-950 transition-all hover:bg-white active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <AlertCircle className="w-4 h-4 text-amber-400" />
-                <span>
-                  {language === 'tr'
-                    ? 'Beta Aşamasında - Canlı İstekler Geçici Olarak Kapalı'
-                    : 'Closed Beta - Live Requests Temporarily Disabled'}
-                </span>
+                {isSending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>{tr ? 'Gönderiliyor...' : 'Sending...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    <span>{tr ? 'İsteği Gönder' : 'Send Request'}</span>
+                  </>
+                )}
               </button>
+
+              {testResult && (
+                <div
+                  className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs leading-relaxed ${
+                    testResult.success
+                      ? 'border-emerald-700/40 bg-emerald-950/30 text-emerald-300'
+                      : 'border-red-700/40 bg-red-950/30 text-red-300'
+                  }`}
+                >
+                  {testResult.success ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" />
+                  ) : (
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-400" />
+                  )}
+                  <div className="min-w-0 space-y-1">
+                    <p className="user-text">{testResult.message}</p>
+                    {testResult.url && (
+                      <a
+                        href={testResult.url}
+                        className="user-text inline-flex items-center gap-1 font-mono text-[11px] underline"
+                      >
+                        {testResult.url}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
             </form>
           )}
 
-          {/* TAB 3: KEYS */}
+          {/* ---------------- KEYS ---------------- */}
           {activeTab === 'keys' && (
             <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white flex items-center gap-2">
-                    <Key className="w-4 h-4 text-amber-400" />
-                    <span>{language === 'tr' ? 'Topluluk API Anahtarı' : 'Community API Key'}</span>
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono font-bold">
-                    Aktif
+              {!canManage ? (
+                <div className="flex items-start gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3.5 text-xs leading-relaxed text-zinc-400">
+                  <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-zinc-500" />
+                  <span>
+                    {tr
+                      ? 'API anahtarlarını yalnızca topluluğun kurucusu yönetebilir. Anahtar almak için topluluk kurucusuyla iletişime geçin.'
+                      : 'Only the community founder can manage API keys. Contact the founder to obtain one.'}
                   </span>
                 </div>
+              ) : (
+                <>
+                  {freshKey && (
+                    <div className="space-y-2 rounded-xl border border-emerald-700/40 bg-emerald-950/25 p-3.5">
+                      <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        <span>{tr ? 'Anahtar oluşturuldu' : 'Key created'}</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-emerald-200/80">
+                        {tr
+                          ? 'Bu anahtar bir daha gösterilmeyecek. Şimdi kopyalayın ve sunucu tarafında bir ortam değişkeninde saklayın.'
+                          : 'This key will not be shown again. Copy it now and store it in a server-side environment variable.'}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          readOnly
+                          value={freshKey}
+                          aria-label={tr ? 'Yeni API anahtarı' : 'New API key'}
+                          className="min-w-0 flex-1 select-all rounded-xl border border-emerald-800/50 bg-black px-3 py-2 font-mono text-[11px] text-emerald-300"
+                        />
+                        <CopyButton text={freshKey} token="fresh" />
+                      </div>
+                    </div>
+                  )}
 
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={apiKey}
-                    className="flex-1 bg-black border border-zinc-800 rounded-xl px-3.5 py-2 text-xs font-mono text-zinc-300 select-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(apiKey, 'key')}
-                    className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    {copiedKey ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    <span>{copiedKey ? 'Kopyalandı' : 'Kopyala'}</span>
-                  </button>
-                </div>
+                  <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5">
+                    <label htmlFor="new-key-name" className="text-xs font-bold text-white">
+                      {tr ? 'Yeni anahtar' : 'New key'}
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        id="new-key-name"
+                        type="text"
+                        value={newKeyName}
+                        onChange={(e) => setNewKeyName(e.target.value)}
+                        maxLength={60}
+                        placeholder={tr ? 'Etiket (ör. ci-bot)' : 'Label (e.g. ci-bot)'}
+                        className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreateKey}
+                        disabled={isCreatingKey}
+                        className="flex items-center gap-1.5 rounded-xl bg-zinc-100 px-3.5 py-2 text-xs font-bold text-zinc-950 transition-colors hover:bg-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {isCreatingKey ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Plus className="h-3.5 w-3.5" />
+                        )}
+                        <span>{tr ? 'Oluştur' : 'Create'}</span>
+                      </button>
+                    </div>
+                  </div>
 
-                <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  {language === 'tr'
-                    ? 'Bu anahtarı HTTP isteklerinizde "X-API-Key" başlığı veya JSON gövdesinde "api_key" olarak ileterek toplulukta güvenli şekilde kod paylaşabilirsiniz.'
-                    : 'Pass this key as the "X-API-Key" header or "api_key" in JSON body to securely publish code to this community.'}
-                </p>
-              </div>
+                  {keysError && (
+                    <div className="flex items-start gap-2 rounded-xl border border-red-700/40 bg-red-950/30 p-3 text-xs text-red-300">
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-400" />
+                      <span className="user-text">{keysError}</span>
+                    </div>
+                  )}
+
+                  {keysLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-8 text-xs text-zinc-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>{tr ? 'Yükleniyor...' : 'Loading...'}</span>
+                    </div>
+                  ) : keys.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-zinc-500">
+                      {tr ? 'Henüz anahtar yok.' : 'No keys yet.'}
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {keys.map((key) => (
+                        <li
+                          key={key.id}
+                          className={`flex flex-wrap items-center gap-3 rounded-xl border p-3 ${
+                            key.revoked_at
+                              ? 'border-zinc-800/60 bg-zinc-950/60 opacity-60'
+                              : 'border-zinc-800 bg-zinc-950'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-bold text-white">{key.name}</span>
+                              {key.revoked_at ? (
+                                <span className="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+                                  {tr ? 'iptal' : 'revoked'}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] text-emerald-400">
+                                  {tr ? 'etkin' : 'active'}
+                                </span>
+                              )}
+                            </div>
+                            <p className="user-text mt-0.5 font-mono text-[11px] text-zinc-500">
+                              {key.key_prefix}… · {key.request_count} {tr ? 'istek' : 'requests'}
+                              {key.last_used_at
+                                ? ` · ${tr ? 'son' : 'last'} ${new Date(key.last_used_at).toLocaleDateString(tr ? 'tr-TR' : 'en-US')}`
+                                : ''}
+                            </p>
+                          </div>
+
+                          {!key.revoked_at && (
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeKey(key.id)}
+                              disabled={revokingId === key.id}
+                              aria-label={tr ? 'Anahtarı iptal et' : 'Revoke key'}
+                              className="flex h-9 items-center gap-1.5 rounded-xl border border-zinc-800 px-3 text-[11px] font-semibold text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {revokingId === key.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                              <span>{tr ? 'İptal et' : 'Revoke'}</span>
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <p className="text-[11px] leading-relaxed text-zinc-500">
+                    {tr
+                      ? 'Anahtarlar veritabanında yalnızca SHA-256 özeti olarak tutulur; düz metni yalnızca oluşturulduğu anda görebilirsiniz. Sızdığından şüphelendiğiniz anahtarı iptal edin.'
+                      : 'Keys are stored only as SHA-256 hashes; the plaintext is visible only at creation. Revoke any key you suspect has leaked.'}
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>
