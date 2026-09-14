@@ -4,6 +4,7 @@ import { UserBadges } from './UserBadges';
 import { CodeSnippetBlock } from './CodeSnippetBlock';
 import { ReportPostModal } from './ReportPostModal';
 import { CategorySelector } from './CategorySelector';
+import { CommunityFeedHeader } from './CommunityFeedHeader';
 import { getStoredCategories, DynamicCategory } from '../utils/categoryHelper';
 import {
   MessageSquare,
@@ -31,7 +32,9 @@ import {
   Tag,
   Filter,
   Flag,
-  MoreHorizontal
+  MoreHorizontal,
+  Globe,
+  Lock
 } from 'lucide-react';
 import { getGitHubToken } from '../services/supabaseClient';
 import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength } from '../utils/fileUploadHelper';
@@ -66,6 +69,14 @@ interface FeedViewProps {
   onAddComment: (postId: string, commentText: string) => void;
   onSelectUser: (username: string) => void;
   onSelectCommunity?: (community: Community | string) => void;
+  /**
+   * When set, the timeline becomes that community's own feed: only its posts are listed and
+   * every new post is published into it. Leave undefined for the global feed.
+   */
+  communityScope?: Community | null;
+  onExitCommunityScope?: () => void;
+  onToggleJoinCommunity?: (communityId: string) => void;
+  onOpenCommunitySettings?: (community: Community) => void;
 }
 
 export const FeedView: React.FC<FeedViewProps> = ({
@@ -84,12 +95,18 @@ export const FeedView: React.FC<FeedViewProps> = ({
   onCreatePost,
   onAddComment,
   onSelectUser,
-  onSelectCommunity
+  onSelectCommunity,
+  communityScope = null,
+  onExitCommunityScope,
+  onToggleJoinCommunity,
+  onOpenCommunitySettings
 }) => {
   const [content, setContent] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('genel');
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('Genel & Sohbet');
   const [feedCategoryFilter, setFeedCategoryFilter] = useState<string>('all');
+  // Global feed only: 'all' shows everything, 'general' hides posts that belong to a community.
+  const [feedSourceFilter, setFeedSourceFilter] = useState<'all' | 'general'>('all');
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [dynamicCategories, setDynamicCategories] = useState<DynamicCategory[]>([]);
 
@@ -303,7 +320,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
       };
     }
 
-    const selectedComm = communities.find((c) => c.id === selectedCommunityId);
+    // Inside a community feed every post belongs to that community, no matter what the
+    // (hidden) picker holds.
+    const selectedComm = communityScope || communities.find((c) => c.id === selectedCommunityId);
 
     try {
       const res = await onCreatePost(
@@ -374,8 +393,33 @@ export const FeedView: React.FC<FeedViewProps> = ({
     return Array.from(map.values());
   })();
 
-  // Filter posts by category and hashtag
-  const filteredPosts = posts.filter((post) => {
+  const scopeHandle = (communityScope?.handle || '').replace(/^@/, '').toLowerCase();
+
+  /** True when a post belongs to the community currently being viewed. */
+  const belongsToScope = (post: Post): boolean => {
+    if (!communityScope) return true;
+    if (post.community_id && communityScope.id && post.community_id === communityScope.id) return true;
+    const postHandle = (post.community_handle || '').replace(/^@/, '').toLowerCase();
+    if (postHandle && scopeHandle && postHandle === scopeHandle) return true;
+    // Legacy rows that only carried the display name.
+    return Boolean(
+      post.community_name &&
+        communityScope.name &&
+        post.community_name.toLowerCase() === communityScope.name.toLowerCase()
+    );
+  };
+
+  const scopedPosts = communityScope ? posts.filter(belongsToScope) : posts;
+
+  const isScopeMember = Boolean(
+    communityScope &&
+      (communityScope.is_joined || (user.joined_communities || []).includes(communityScope.id))
+  );
+
+  // Filter posts by community scope, source, category and hashtag
+  const filteredPosts = scopedPosts.filter((post) => {
+    if (!communityScope && feedSourceFilter === 'general' && post.community_id) return false;
+
     if (selectedHashtag) {
       const tag = selectedHashtag.toLowerCase();
       const contentHas = (post.content || '').toLowerCase().includes(tag);
@@ -400,22 +444,87 @@ export const FeedView: React.FC<FeedViewProps> = ({
         </div>
       )}
 
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-          <span>{language === 'tr' ? 'Akış & Gönderiler' : 'Feed & Posts'}</span>
-          <span className="w-2 h-2 rounded-full bg-zinc-400" />
-        </h2>
+      {/* Community feed hero (only inside a community) */}
+      {communityScope ? (
+        <CommunityFeedHeader
+          community={communityScope}
+          user={user}
+          language={language}
+          postCount={scopedPosts.length}
+          isJoined={isScopeMember}
+          onBack={onExitCommunityScope}
+          onToggleJoin={onToggleJoinCommunity}
+          onOpenSettings={onOpenCommunitySettings}
+          onSelectUser={onSelectUser}
+        />
+      ) : (
+        <>
+          {/* Sticky Header */}
+          <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+              <span>{language === 'tr' ? 'Akış & Gönderiler' : 'Feed & Posts'}</span>
+              <span className="w-2 h-2 rounded-full bg-zinc-400" />
+            </h2>
 
-        {selectedHashtag && (
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-mono">
-            <span>{selectedHashtag}</span>
-            <button onClick={onClearHashtag} className="hover:text-white font-bold ml-1 cursor-pointer">
-              ✕
-            </button>
+            {selectedHashtag && (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-mono">
+                <span>{selectedHashtag}</span>
+                <button onClick={onClearHashtag} className="hover:text-white font-bold ml-1 cursor-pointer">
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+
+          {/* Feed source switcher: everything / general only / jump into a community feed */}
+          <div className="px-4 py-2.5 bg-[#09090b] border-b border-zinc-800/40 overflow-x-auto no-scrollbar flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFeedSourceFilter('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                feedSourceFilter === 'all'
+                  ? 'bg-zinc-100 text-zinc-950 shadow-md font-extrabold'
+                  : 'bg-zinc-900/80 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800/80'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {language === 'tr' ? 'Her Şey' : 'Everything'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFeedSourceFilter('general')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                feedSourceFilter === 'general'
+                  ? 'bg-zinc-100 text-zinc-950 shadow-md font-extrabold'
+                  : 'bg-zinc-900/80 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800/80'
+              }`}
+              title={language === 'tr' ? 'Topluluk gönderilerini gizle' : 'Hide community posts'}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              {language === 'tr' ? 'Sadece Genel' : 'General only'}
+            </button>
+
+            {communities.length > 0 && <span className="w-px h-5 bg-zinc-800 mx-1 flex-shrink-0" />}
+
+            {[...communities]
+              .sort((a, b) => Number(Boolean(b.is_joined)) - Number(Boolean(a.is_joined)))
+              .slice(0, 12)
+              .map((comm) => (
+                <button
+                  key={comm.id}
+                  type="button"
+                  onClick={() => onSelectCommunity?.(comm)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-800/80"
+                  title={language === 'tr' ? `${comm.name} akışını aç` : `Open the ${comm.name} feed`}
+                >
+                  <Users className={`w-3.5 h-3.5 ${comm.is_joined ? 'text-purple-400' : 'text-zinc-500'}`} />
+                  <span>{comm.name}</span>
+                </button>
+              ))}
+          </div>
+        </>
+      )}
 
       {/* Category Pills Filter Bar */}
       <div className="px-4 py-2.5 bg-[#0a0a0c] border-b border-zinc-800/60 overflow-x-auto no-scrollbar flex items-center gap-1.5">
@@ -452,8 +561,43 @@ export const FeedView: React.FC<FeedViewProps> = ({
         })}
       </div>
 
+      {/* Non-members see a join prompt instead of the composer */}
+      {communityScope && !isScopeMember && (
+        <div className="p-5 border-b border-zinc-800/60 bg-[#0c0c0e] flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div className="flex items-start gap-3 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/25 text-purple-300 flex items-center justify-center flex-shrink-0">
+              <Users className="w-4 h-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-bold text-white">
+                {language === 'tr' ? 'Bu toplulukta paylaşım yapmak için katıl' : 'Join to post in this community'}
+              </span>
+              <span className="block text-[11px] text-zinc-400 leading-relaxed">
+                {language === 'tr'
+                  ? 'Akışı herkes okuyabilir; gönderi paylaşmak için üye olman yeterli.'
+                  : 'Anyone can read the feed — membership is only needed to post.'}
+              </span>
+            </span>
+          </div>
+          {onToggleJoinCommunity && (
+            <button
+              type="button"
+              onClick={() => onToggleJoinCommunity(communityScope.id)}
+              className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/20 transition-all active:scale-95 cursor-pointer flex-shrink-0"
+            >
+              <Users className="w-3.5 h-3.5" />
+              {language === 'tr' ? 'Topluluğa Katıl' : 'Join community'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Post Composer */}
-      <div className="p-4 border-b border-zinc-800/60 bg-[#0c0c0e]">
+      <div
+        className={`p-4 border-b border-zinc-800/60 bg-[#0c0c0e] ${
+          communityScope && !isScopeMember ? 'hidden' : ''
+        }`}
+      >
         <form onSubmit={handlePostSubmit} className="space-y-3">
           <div className="flex gap-3">
             <img
@@ -478,29 +622,42 @@ export const FeedView: React.FC<FeedViewProps> = ({
                   language={language}
                 />
 
-                {/* Community Picker (If joined) */}
-                <div className="flex items-center justify-between bg-zinc-950/80 border border-zinc-800 rounded-xl px-3 py-2 text-xs min-h-[38px]">
-                  <span className="text-zinc-400 font-mono text-[11px] flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-purple-400" />
-                    <span>{language === 'tr' ? 'Topluluk:' : 'Scope:'}</span>
-                  </span>
-                  <select
-                    value={selectedCommunityId || ''}
-                    onChange={(e) => setSelectedCommunityId(e.target.value || null)}
-                    className="bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none font-mono cursor-pointer max-w-[130px]"
-                  >
-                    <option value="" className="bg-zinc-900 text-zinc-400">
-                      {language === 'tr' ? '🌐 Genel Feed' : '🌐 General Feed'}
-                    </option>
-                    {communities
-                      .filter((c) => c.is_joined)
-                      .map((comm) => (
-                        <option key={comm.id} value={comm.id} className="bg-zinc-900 text-white">
-                          👥 {comm.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+                {/* Community target: locked inside a community feed, selectable otherwise */}
+                {communityScope ? (
+                  <div className="flex items-center justify-between bg-purple-500/10 border border-purple-500/25 rounded-xl px-3 py-2 text-xs min-h-[38px]">
+                    <span className="text-purple-300 font-mono text-[11px] flex items-center gap-1.5 min-w-0">
+                      <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">{communityScope.name}</span>
+                    </span>
+                    <span className="text-[10px] text-purple-300/70 font-mono flex items-center gap-1 flex-shrink-0">
+                      <Lock className="w-3 h-3" />
+                      {language === 'tr' ? 'topluluk akışı' : 'community feed'}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between bg-zinc-950/80 border border-zinc-800 rounded-xl px-3 py-2 text-xs min-h-[38px]">
+                    <span className="text-zinc-400 font-mono text-[11px] flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{language === 'tr' ? 'Topluluk:' : 'Scope:'}</span>
+                    </span>
+                    <select
+                      value={selectedCommunityId || ''}
+                      onChange={(e) => setSelectedCommunityId(e.target.value || null)}
+                      className="bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none font-mono cursor-pointer max-w-[130px]"
+                    >
+                      <option value="" className="bg-zinc-900 text-zinc-400">
+                        {language === 'tr' ? '🌐 Genel Feed' : '🌐 General Feed'}
+                      </option>
+                      {communities
+                        .filter((c) => c.is_joined)
+                        .map((comm) => (
+                          <option key={comm.id} value={comm.id} className="bg-zinc-900 text-white">
+                            👥 {comm.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Textarea Input */}
@@ -740,12 +897,22 @@ export const FeedView: React.FC<FeedViewProps> = ({
               <Sparkles className="w-6 h-6 text-white" />
             </div>
             <h3 className="text-sm font-bold text-white">
-              {language === 'tr' ? 'Henüz Gönderi Yok' : 'No Posts Yet'}
+              {communityScope
+                ? (language === 'tr' ? 'Bu Toplulukta Henüz Gönderi Yok' : 'No Posts In This Community Yet')
+                : (language === 'tr' ? 'Henüz Gönderi Yok' : 'No Posts Yet')}
             </h3>
             <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              {language === 'tr'
-                ? 'Bu kategoride veya akışta henüz bir gönderi bulunmuyor.'
-                : 'No posts found in this category or feed.'}
+              {communityScope
+                ? isScopeMember
+                  ? (language === 'tr'
+                      ? `İlk gönderiyi sen paylaş — buradan paylaştığın her şey otomatik olarak ${communityScope.name} akışına düşer.`
+                      : `Be the first to post — everything you share here lands in the ${communityScope.name} feed.`)
+                  : (language === 'tr'
+                      ? 'Topluluğa katılarak ilk gönderiyi paylaşabilirsin.'
+                      : 'Join the community to share the first post.')
+                : (language === 'tr'
+                    ? 'Bu kategoride veya akışta henüz bir gönderi bulunmuyor.'
+                    : 'No posts found in this category or feed.')}
             </p>
           </div>
         ) : (

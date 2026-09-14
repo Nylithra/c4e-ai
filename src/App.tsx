@@ -128,6 +128,8 @@ export default function App() {
   const [lastPostTimestamp, setLastPostTimestamp] = useState<number>(0);
   const [rateLimitToast, setRateLimitToast] = useState<string | null>(null);
   const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
+  // Handle of the community whose own feed is open (route: /c/@handle).
+  const [activeCommunityHandle, setActiveCommunityHandle] = useState<string | null>(null);
 
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => loadStoredNotifications());
   const [directChatTargetUser, setDirectChatTargetUser] = useState<UserProfile | null>(null);
@@ -208,7 +210,9 @@ export default function App() {
       const commMatch = path.match(/^\/c\/?@?([a-zA-Z0-9_\-]+)$/i);
       if (commMatch) {
         const commHandle = commMatch[1].toLowerCase();
-        setSelectedModalUsername(`/c/@${commHandle}`);
+        setSelectedModalUsername(null);
+        setActiveCommunityHandle(commHandle);
+        setActiveTab('community');
         return;
       }
 
@@ -542,6 +546,7 @@ export default function App() {
     setSelectedModalUsername(clean);
   };
 
+  /** Opens a community's own feed page (/c/@handle). */
   const handleSelectCommunity = (commOrHandle: Community | string) => {
     const handle = typeof commOrHandle === 'string' ? commOrHandle : commOrHandle.handle;
     const clean = (handle || '').replace(/^\/?c\/?@?/, '').replace(/^@/, '').trim().toLowerCase();
@@ -549,12 +554,24 @@ export default function App() {
     if (window.location.pathname !== `/c/@${clean}`) {
       window.history.pushState(null, '', `/c/@${clean}`);
     }
-    setSelectedModalUsername(`/c/@${clean}`);
+    setSelectedModalUsername(null);
+    setActiveCommunityHandle(clean);
+    setActiveTab('community');
+  };
+
+  const handleExitCommunityFeed = () => {
+    setActiveCommunityHandle(null);
+    setActiveTab('communities');
+    if (window.location.pathname !== '/communities') {
+      window.history.pushState(null, '', '/communities');
+    }
   };
 
   const handleCloseProfileModal = () => {
     setSelectedModalUsername(null);
-    const tabPath = activeTab === 'feed' ? '/' : `/${activeTab}`;
+    const communityPath =
+      activeTab === 'community' && activeCommunityHandle ? `/c/@${activeCommunityHandle}` : null;
+    const tabPath = communityPath || (activeTab === 'feed' ? '/' : `/${activeTab}`);
     if (window.location.pathname !== tabPath) {
       window.history.pushState(null, '', tabPath);
     }
@@ -1034,6 +1051,18 @@ export default function App() {
     await deleteCommunityFromSupabase(commId);
   };
 
+  /** The community whose dedicated feed is currently open, resolved from the URL handle. */
+  const activeCommunity = useMemo(() => {
+    if (!activeCommunityHandle) return null;
+    const clean = activeCommunityHandle.replace(/^@/, '').toLowerCase();
+    return (
+      displayCommunities.find((c) => (c.handle || '').replace(/^@/, '').toLowerCase() === clean) ||
+      displayCommunities.find((c) => (c.name || '').toLowerCase() === clean) ||
+      displayCommunities.find((c) => c.id === activeCommunityHandle) ||
+      null
+    );
+  }, [activeCommunityHandle, displayCommunities]);
+
   const unreadNotificationsCount = notifications.filter((n) => !n.is_read).length;
 
   const handleToggleClosedBeta = (isActive: boolean) => {
@@ -1148,9 +1177,12 @@ export default function App() {
 
       <div className="w-full flex flex-col md:flex-row relative min-h-screen min-w-0">
         <Sidebar
-          activeTab={activeTab}
+          // The community feed lives under the Communities section as far as navigation goes.
+          activeTab={activeTab === 'community' ? 'communities' : activeTab}
           setActiveTab={(tab) => {
             if (tab === 'profile') setViewingUser(null);
+            // Leaving the community feed page also drops the /c/@handle scope.
+            if (tab !== 'community') setActiveCommunityHandle(null);
             setActiveTab(tab);
           }}
           user={user}
@@ -1203,6 +1235,54 @@ export default function App() {
               onSelectUser={handleSelectUser}
               onSelectCommunity={handleSelectCommunity}
             />
+          )}
+
+          {activeTab === 'community' && (
+            activeCommunity ? (
+              <FeedView
+                posts={posts}
+                user={user}
+                allUsers={allUsers}
+                communities={displayCommunities}
+                language={language}
+                communityScope={activeCommunity}
+                onExitCommunityScope={handleExitCommunityFeed}
+                onToggleJoinCommunity={handleToggleJoinCommunity}
+                selectedHashtag={selectedHashtag}
+                onClearHashtag={() => setSelectedHashtag(null)}
+                onSelectHashtag={handleSelectHashtag}
+                onLikePost={handleLikePost}
+                onRepostPost={handleRepostPost}
+                onBookmarkPost={handleBookmarkPost}
+                onDeletePost={handleDeletePost}
+                onCreatePost={handleCreatePost}
+                onAddComment={handleAddComment}
+                onSelectUser={handleSelectUser}
+                onSelectCommunity={handleSelectCommunity}
+              />
+            ) : (
+              <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen bg-[#09090b] flex items-center justify-center p-6">
+                <div className="text-center space-y-3 max-w-sm">
+                  <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-400">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white">
+                    {language === 'tr' ? 'Topluluk Bulunamadı' : 'Community Not Found'}
+                  </h3>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    {language === 'tr'
+                      ? `'@${activeCommunityHandle}' adında bir topluluk bulunamadı. Silinmiş olabilir.`
+                      : `No community named '@${activeCommunityHandle}' was found. It may have been deleted.`}
+                  </p>
+                  <button
+                    onClick={handleExitCommunityFeed}
+                    className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-white text-xs font-bold cursor-pointer"
+                  >
+                    {language === 'tr' ? 'Topluluklara Dön' : 'Back to communities'}
+                  </button>
+                </div>
+              </div>
+            )
           )}
 
           {activeTab === 'explore' && (
