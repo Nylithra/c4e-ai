@@ -26,6 +26,9 @@ import { UserBadges } from './UserBadges';
 import { sanitizeUrl } from '../utils/securityHelper';
 import { getSupabaseClient, loadStoredAllUsers, normalizeProfile } from '../services/supabaseClient';
 import { ensureThemeStylesheet, getVisibleProfileTheme, themeToStyle } from '../utils/themeHelper';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
+import { UserAvatar } from './ui/avatar';
+import { Button } from './ui/button';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -251,17 +254,26 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div
-        className={`bg-[#121215] border border-zinc-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl relative text-white ${
-          cardTheme ? 'c4e-theme-surface' : ''
-        }`}
+    /* Accessible modal: focus trap, Escape to close, aria-modal semantics. */
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        hideClose
+        className={`max-w-md overflow-hidden p-0 ${cardTheme ? 'c4e-theme-surface' : ''}`}
         style={cardTheme ? themeToStyle(cardTheme) : undefined}
       >
+        <DialogTitle className="sr-only">
+          {currentComm
+            ? currentComm.name
+            : profileData
+            ? `${profileData.display_name} (@${profileData.username})`
+            : language === 'tr' ? 'Profil' : 'Profile'}
+        </DialogTitle>
+
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-3.5 right-3.5 z-20 p-2 rounded-full bg-black/60 hover:bg-black text-zinc-300 hover:text-white backdrop-blur-md border border-white/10 transition-all"
+          aria-label={language === 'tr' ? 'Kapat' : 'Close'}
+          className="absolute top-3.5 right-3.5 z-20 p-2 rounded-full bg-black/60 hover:bg-black text-zinc-300 hover:text-white backdrop-blur-md border border-white/10 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <X className="w-4 h-4" />
         </button>
@@ -442,13 +454,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               {/* Avatar & Follow Button */}
               <div className="flex justify-between items-end -mt-12 mb-3">
                 <div className="relative">
-                  <img
-                    src={
-                      profileData.avatar_url ||
-                      `https://unavatar.io/github/${profileData.username}`
-                    }
-                    alt={profileData.display_name}
-                    className="w-20 h-20 rounded-2xl object-cover ring-4 ring-[#121215] shadow-xl bg-zinc-900"
+                  <UserAvatar
+                    src={profileData.avatar_url || `https://unavatar.io/github/${profileData.username}`}
+                    name={profileData.display_name || profileData.username}
+                    className="w-20 h-20 rounded-2xl ring-4 ring-[#121215] shadow-xl text-lg"
                   />
                 </div>
 
@@ -648,8 +657,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             </div>
           </div>
         ) : null}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

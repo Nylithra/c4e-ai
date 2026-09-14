@@ -76,6 +76,16 @@ npm start
 
 ---
 
+## 🧩 UI Stack
+
+The interface is built with **Tailwind CSS v4** and a local **shadcn/ui** layer
+(`src/components/ui`, Radix primitives + `cva`). Components read the same CSS variables the
+Spark Theme Studio writes, so a member's custom gradient theme repaints every primitive
+automatically. Add more primitives the usual way — the project ships a `components.json`
+and the `cn()` helper in `src/lib/utils.ts`.
+
+---
+
 ## 🛡️ Security & Setup
 
 Before deploying, run the whole of [`supabase_schema.sql`](supabase_schema.sql) in the Supabase

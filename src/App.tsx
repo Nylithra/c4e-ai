@@ -106,6 +106,16 @@ import { PWAInstallBanner } from './components/PWAInstallBanner';
 import { sendNativeNotification } from './utils/notificationSound';
 import { ReportErrorModal } from './components/ReportErrorModal';
 import { Sparkles, X, AlertTriangle, Lock } from 'lucide-react';
+import { TooltipProvider } from './components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from './components/ui/dialog';
+import { Button } from './components/ui/button';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -129,6 +139,9 @@ export default function App() {
   const [lastPostTimestamp, setLastPostTimestamp] = useState<number>(0);
   const [rateLimitToast, setRateLimitToast] = useState<string | null>(null);
   const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
+  // False until the first post sync lands, so the feed can show skeletons instead of
+  // claiming "no posts yet" while it is still loading.
+  const [postsLoaded, setPostsLoaded] = useState<boolean>(() => loadStoredPosts().length > 0);
   // Handle of the community whose own feed is open (route: /c/@handle).
   const [activeCommunityHandle, setActiveCommunityHandle] = useState<string | null>(null);
 
@@ -301,7 +314,10 @@ export default function App() {
 
     const unsubscribePosts = subscribeToPosts((realtimePosts) => {
       setPosts(realtimePosts);
+      setPostsLoaded(true);
     });
+    // Never leave the skeletons up forever if the backend is unreachable.
+    const postsLoadTimeout = setTimeout(() => setPostsLoaded(true), 6000);
 
     const unsubscribeCommunities = subscribeToCommunities((realtimeCommunities) => {
       setCommunities(realtimeCommunities);
@@ -360,6 +376,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
       if (authSubscription) authSubscription.unsubscribe();
+      clearTimeout(postsLoadTimeout);
       unsubscribePosts();
       unsubscribeCommunities();
       unsubscribeUsers();
@@ -1151,12 +1168,9 @@ export default function App() {
               : `Hesabınız ${new Date(user.suspendedUntil!).toLocaleDateString('tr-TR')} tarihine kadar geçici olarak askıya alınmıştır.`}
           </p>
 
-          <button
-            onClick={handleLogout}
-            className="w-full py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs border border-zinc-700 transition-colors shadow-lg"
-          >
-            Çıkış Yap
-          </button>
+          <Button variant="secondary" size="lg" className="w-full" onClick={handleLogout}>
+            {language === 'tr' ? 'Çıkış Yap' : 'Log out'}
+          </Button>
         </div>
       </div>
     );
@@ -1179,6 +1193,7 @@ export default function App() {
   }
 
   return (
+    <TooltipProvider delayDuration={250} skipDelayDuration={400}>
     <div className="min-h-screen w-full bg-app-background text-app-foreground flex justify-center font-display selection:bg-blue-500 selection:text-white relative">
       {rateLimitToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-black font-bold text-xs px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 border border-amber-300 animate-pulse">
@@ -1235,6 +1250,7 @@ export default function App() {
               allUsers={allUsers}
               communities={displayCommunities}
               language={language}
+              isLoading={!postsLoaded}
               selectedHashtag={selectedHashtag}
               onClearHashtag={() => setSelectedHashtag(null)}
               onSelectHashtag={handleSelectHashtag}
@@ -1257,6 +1273,7 @@ export default function App() {
                 allUsers={allUsers}
                 communities={displayCommunities}
                 language={language}
+                isLoading={!postsLoaded}
                 communityScope={activeCommunity}
                 onExitCommunityScope={handleExitCommunityFeed}
                 onToggleJoinCommunity={handleToggleJoinCommunity}
@@ -1516,38 +1533,34 @@ export default function App() {
         language={language}
       />
 
-      {betaModalInfo && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-[#121215] border border-zinc-800 rounded-3xl p-6 w-full max-w-sm text-center space-y-4 shadow-2xl relative text-white">
-            <button
-              onClick={() => setBetaModalInfo(null)}
-              className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {/* Beta notice — accessible dialog (focus trap + Escape) instead of a bare overlay. */}
+      <Dialog open={!!betaModalInfo} onOpenChange={(open) => !open && setBetaModalInfo(null)}>
+        <DialogContent className="max-w-sm text-center">
+          <DialogHeader className="items-center text-center sm:text-center">
             <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
-              {betaModalInfo.iconType === 'lock' ? (
+              {betaModalInfo?.iconType === 'lock' ? (
                 <Lock className="w-6 h-6 text-amber-400" />
               ) : (
                 <Sparkles className="w-6 h-6 text-blue-400" />
               )}
             </div>
-            <h3 className="text-base font-bold text-white tracking-tight">
-              {betaModalInfo.title}
-            </h3>
-            <p className="text-xs text-zinc-300 leading-relaxed font-sans bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800/80">
-              {betaModalInfo.desc}
-            </p>
-            <button
-              onClick={() => setBetaModalInfo(null)}
-              className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20"
-            >
+            <DialogTitle className="pt-2">{betaModalInfo?.title}</DialogTitle>
+          </DialogHeader>
+
+          <DialogDescription className="bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800/80 text-zinc-300">
+            {betaModalInfo?.desc}
+          </DialogDescription>
+
+          <DialogFooter>
+            <Button variant="primary" className="w-full" onClick={() => setBetaModalInfo(null)}>
               {language === 'tr' ? 'Anladım' : 'Got it'}
-            </button>
-          </div>
-        </div>
-      )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
+    </TooltipProvider>
   );
 }
 

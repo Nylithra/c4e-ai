@@ -6,6 +6,30 @@ import { ReportPostModal } from './ReportPostModal';
 import { CategorySelector } from './CategorySelector';
 import { CommunityFeedHeader } from './CommunityFeedHeader';
 import { filterVisiblePosts } from '../utils/communityVisibility';
+import { Button } from './ui/button';
+import { UserAvatar } from './ui/avatar';
+import { Badge } from './ui/badge';
+import { Textarea } from './ui/textarea';
+import { Skeleton } from './ui/skeleton';
+import { HintTooltip } from './ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from './ui/dropdown-menu';
+import { cn } from '../lib/utils';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from './ui/alert-dialog';
 import { getStoredCategories, DynamicCategory } from '../utils/categoryHelper';
 import {
   MessageSquare,
@@ -35,7 +59,8 @@ import {
   Flag,
   MoreHorizontal,
   Globe,
-  Lock
+  Lock,
+  Link2
 } from 'lucide-react';
 import { getGitHubToken } from '../services/supabaseClient';
 import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength } from '../utils/fileUploadHelper';
@@ -74,6 +99,8 @@ interface FeedViewProps {
    * When set, the timeline becomes that community's own feed: only its posts are listed and
    * every new post is published into it. Leave undefined for the global feed.
    */
+  /** True until the first post sync completes; renders skeletons instead of "no posts yet". */
+  isLoading?: boolean;
   communityScope?: Community | null;
   onExitCommunityScope?: () => void;
   onToggleJoinCommunity?: (communityId: string) => void;
@@ -97,6 +124,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
   onAddComment,
   onSelectUser,
   onSelectCommunity,
+  isLoading = false,
   communityScope = null,
   onExitCommunityScope,
   onToggleJoinCommunity,
@@ -638,10 +666,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
       >
         <form onSubmit={handlePostSubmit} className="space-y-3">
           <div className="flex gap-3">
-            <img
-              src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-              alt={user.display_name}
-              className="w-10 h-10 rounded-full object-cover ring-2 ring-zinc-800 flex-shrink-0 cursor-pointer"
+            <UserAvatar
+              src={user.avatar_url}
+              name={user.display_name || user.username}
+              className="ring-2 ring-zinc-800 flex-shrink-0"
               onClick={() => onSelectUser(user.username)}
             />
             <div className="flex-1 space-y-2.5">
@@ -700,16 +728,24 @@ export const FeedView: React.FC<FeedViewProps> = ({
 
               {/* Textarea Input */}
               <div className="relative">
-                <textarea
+                <Textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Ctrl/⌘ + Enter publishes, the way every other social composer works.
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
+                    }
+                  }}
                   placeholder={
                     language === 'tr'
                       ? 'Ne düşünüyorsun? Proje, soru veya kod parçacığı paylaş...'
                       : 'What are you working on? Share a project, question or snippet...'
                   }
                   rows={3}
-                  className="w-full bg-transparent text-sm text-white placeholder-zinc-500 focus:outline-none resize-none pb-7"
+                  aria-label={language === 'tr' ? 'Gönderi içeriği' : 'Post content'}
+                  className="border-transparent bg-transparent px-0 text-sm placeholder:text-zinc-500 focus-visible:border-transparent focus-visible:ring-0 pb-7"
                 />
 
                 {/* Character Counter */}
@@ -904,23 +940,21 @@ export const FeedView: React.FC<FeedViewProps> = ({
                   </button>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitDisabled}
-                  className="px-4 py-1.5 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-xs transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-950" />
-                      <span>{language === 'tr' ? 'Paylaşılıyor...' : 'Posting...'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5 text-zinc-950" />
-                      <span>{language === 'tr' ? 'Paylaş' : 'Post'}</span>
-                    </>
-                  )}
-                </button>
+                <HintTooltip label={language === 'tr' ? 'Ctrl + Enter ile de paylaşabilirsin' : 'You can also press Ctrl + Enter'}>
+                  <Button type="submit" size="sm" disabled={isSubmitDisabled}>
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        <span>{language === 'tr' ? 'Paylaşılıyor...' : 'Posting...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send />
+                        <span>{language === 'tr' ? 'Paylaş' : 'Post'}</span>
+                      </>
+                    )}
+                  </Button>
+                </HintTooltip>
               </div>
             </div>
           </div>
@@ -929,7 +963,29 @@ export const FeedView: React.FC<FeedViewProps> = ({
 
       {/* Post List (hidden entirely while a private community is locked) */}
       <div className={`divide-y divide-zinc-800/40 ${isPrivateLocked ? 'hidden' : ''}`}>
-        {filteredPosts.length === 0 ? (
+        {isLoading && filteredPosts.length === 0 ? (
+          /* First sync: show the shape of the content instead of a "nothing here" message. */
+          <div className="divide-y divide-zinc-800/40" aria-busy="true" aria-live="polite">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <div className="space-y-1.5">
+                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-2.5 w-20" />
+                  </div>
+                </div>
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+                <div className="flex items-center gap-4 pt-1">
+                  <Skeleton className="h-6 w-14 rounded-xl" />
+                  <Skeleton className="h-6 w-14 rounded-xl" />
+                  <Skeleton className="h-6 w-14 rounded-xl" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredPosts.length === 0 ? (
           <div className="p-12 text-center space-y-3">
             <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-300">
               <Sparkles className="w-6 h-6 text-white" />
@@ -1012,11 +1068,12 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 {/* Header */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <img
-                      src={authorProfile.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                      alt={authorProfile.display_name}
-                      className="w-10 h-10 rounded-full object-cover ring-1 ring-zinc-800 cursor-pointer"
+                    <UserAvatar
+                      src={authorProfile.avatar_url}
+                      name={authorProfile.display_name || authorProfile.username}
+                      className="ring-1 ring-zinc-800"
                       onClick={() => onSelectUser(authorProfile.username)}
+                      title={`@${authorProfile.username}`}
                     />
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1045,15 +1102,11 @@ export const FeedView: React.FC<FeedViewProps> = ({
                         {post.category && (
                           <>
                             <span className="text-xs text-zinc-600">·</span>
-                            <button
-                              type="button"
-                              onClick={() => setFeedCategoryFilter(post.category!)}
-                              className="px-2 py-0.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-mono flex items-center gap-1 cursor-pointer hover:bg-blue-500/20 transition-colors"
-                            >
-                              <span>{postCategoryObj?.icon || '🏷️'}</span>
-                              <span>
-                                {postCategoryObj?.name || post.category_name || post.category}
-                              </span>
+                            <button type="button" onClick={() => setFeedCategoryFilter(post.category!)} className="cursor-pointer">
+                              <Badge variant="category" className="hover:bg-blue-500/20 transition-colors">
+                                <span>{postCategoryObj?.icon || '🏷️'}</span>
+                                <span>{postCategoryObj?.name || post.category_name || post.category}</span>
+                              </Badge>
                             </button>
                           </>
                         )}
@@ -1061,7 +1114,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
                         {post.community_name && (
                           <>
                             <span className="text-xs text-zinc-600">·</span>
-                            <span
+                            <button
+                              type="button"
                               onClick={() => {
                                 if (onSelectCommunity) {
                                   onSelectCommunity(post.community_handle || post.community_name!);
@@ -1069,46 +1123,62 @@ export const FeedView: React.FC<FeedViewProps> = ({
                                   onSelectUser(post.community_handle || post.community_name!);
                                 }
                               }}
-                              className="px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[10px] font-mono flex items-center gap-1 cursor-pointer hover:bg-purple-500/20 transition-colors"
+                              className="cursor-pointer"
                             >
-                              <Users className="w-3 h-3" />
-                              <span>{post.community_name}</span>
-                            </span>
+                              <Badge variant="community" className="hover:bg-purple-500/20 transition-colors">
+                                <Users className="w-3 h-3" />
+                                <span>{post.community_name}</span>
+                              </Badge>
+                            </button>
                           </>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setPostToReport(post)}
-                      title={language === 'tr' ? 'Gönderiyi Bildir' : 'Report Post'}
-                      className="text-zinc-600 hover:text-amber-400 p-1.5 rounded-lg hover:bg-amber-500/10 transition-colors cursor-pointer"
-                    >
-                      <Flag className="w-3.5 h-3.5" />
-                    </button>
-
-                    {canDelete && (
-                      <button
-                        type="button"
-                        onClick={() => setPostToDelete(post)}
-                        title={
-                          isNylithra && !isPostAuthor
-                            ? language === 'tr'
-                              ? 'Yönetici Olarak Sil'
-                              : 'Delete as Admin'
-                            : language === 'tr'
-                            ? 'Sil'
-                            : 'Delete'
-                        }
-                        className="text-zinc-600 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                  {/* Post menu — one affordance instead of a row of naked icons, and it is
+                      keyboard reachable (Radix handles focus, Escape and arrow keys). */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="iconSm"
+                        className="text-zinc-600 hover:text-white"
+                        aria-label={language === 'tr' ? 'Gönderi menüsü' : 'Post menu'}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+                        <MoreHorizontal />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => handleShare(post)}>
+                        <Link2 />
+                        {language === 'tr' ? 'Bağlantıyı kopyala' : 'Copy link'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onBookmarkPost(post.id)}>
+                        <Bookmark />
+                        {isBookmarked
+                          ? language === 'tr' ? 'Kayıtlardan çıkar' : 'Remove bookmark'
+                          : language === 'tr' ? 'Kaydet' : 'Bookmark'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onSelectUser(authorProfile.username)}>
+                        <User />
+                        {language === 'tr' ? 'Profili görüntüle' : 'View profile'}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => setPostToReport(post)}>
+                        <Flag />
+                        {language === 'tr' ? 'Gönderiyi bildir' : 'Report post'}
+                      </DropdownMenuItem>
+                      {canDelete && (
+                        <DropdownMenuItem destructive onSelect={() => setPostToDelete(post)}>
+                          <Trash2 />
+                          {isNylithra && !isPostAuthor
+                            ? language === 'tr' ? 'Yönetici olarak sil' : 'Delete as admin'
+                            : language === 'tr' ? 'Sil' : 'Delete'}
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* Content */}
@@ -1188,18 +1258,21 @@ export const FeedView: React.FC<FeedViewProps> = ({
                           activeCommentPostId === post.id ? null : post.id
                         )
                       }
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                         activeCommentPostId === post.id
                           ? 'text-blue-400 bg-blue-500/10 font-semibold'
                           : 'text-zinc-400 hover:text-blue-400 hover:bg-zinc-800/40'
-                      }`}
-                      title={language === 'tr' ? 'Yorumlar' : 'Comments'}
+                      )}
+                      aria-label={language === 'tr' ? 'Yorumlar' : 'Comments'}
+                      aria-expanded={activeCommentPostId === post.id}
                     >
                       <MessageSquare className="w-4 h-4" />
                       <span className="font-mono text-xs">{commentsCount}</span>
                     </button>
 
                     {/* Repost */}
+                    <HintTooltip label={language === 'tr' ? 'Yeniden paylaş' : 'Repost'}>
                     <button
                       type="button"
                       onClick={() => onRepostPost(post.id)}
@@ -1208,13 +1281,16 @@ export const FeedView: React.FC<FeedViewProps> = ({
                           ? 'text-emerald-400 bg-emerald-500/10 font-bold'
                           : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/40'
                       }`}
-                      title={language === 'tr' ? 'Yeniden Paylaş' : 'Repost'}
+                      aria-label={language === 'tr' ? 'Yeniden paylaş' : 'Repost'}
+                      aria-pressed={isReposted}
                     >
                       <Repeat className="w-4 h-4" />
                       <span className="font-mono text-xs">{repostsCount}</span>
                     </button>
+                    </HintTooltip>
 
                     {/* Like */}
+                    <HintTooltip label={isLiked ? (language === 'tr' ? 'Beğeniyi geri al' : 'Unlike') : (language === 'tr' ? 'Beğen' : 'Like')}>
                     <button
                       type="button"
                       onClick={() => onLikePost(post.id)}
@@ -1223,15 +1299,18 @@ export const FeedView: React.FC<FeedViewProps> = ({
                           ? 'text-red-500 bg-red-500/10 font-bold'
                           : 'text-zinc-400 hover:text-red-400 hover:bg-zinc-800/40'
                       }`}
-                      title={language === 'tr' ? 'Beğen' : 'Like'}
+                      aria-label={language === 'tr' ? 'Beğen' : 'Like'}
+                      aria-pressed={isLiked}
                     >
-                      <Heart className={`w-4 h-4 ${isLiked ? 'fill-red-500 stroke-red-500' : ''}`} />
+                      <Heart className={`w-4 h-4 transition-transform ${isLiked ? 'fill-red-500 stroke-red-500 scale-110' : ''}`} />
                       <span className="font-mono text-xs">{likesCount}</span>
                     </button>
+                    </HintTooltip>
                   </div>
 
                   <div className="flex items-center gap-1">
                     {/* Bookmark */}
+                    <HintTooltip label={isBookmarked ? (language === 'tr' ? 'Kayıtlardan çıkar' : 'Remove bookmark') : (language === 'tr' ? 'Kaydet' : 'Bookmark')}>
                     <button
                       type="button"
                       onClick={() => onBookmarkPost(post.id)}
@@ -1252,8 +1331,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
                     >
                       <Bookmark className={`w-4 h-4 ${isBookmarked ? 'fill-amber-400' : ''}`} />
                     </button>
+                    </HintTooltip>
 
                     {/* Share */}
+                    <HintTooltip label={copiedPostId === post.id ? (language === 'tr' ? 'Kopyalandı!' : 'Copied!') : (language === 'tr' ? 'Bağlantıyı kopyala' : 'Copy link')}>
                     <button
                       type="button"
                       onClick={() => handleShare(post)}
@@ -1278,6 +1359,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                         <Share2 className="w-4 h-4" />
                       )}
                     </button>
+                    </HintTooltip>
                   </div>
                 </div>
 
@@ -1299,13 +1381,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
                         }
                         className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
                       />
-                      <button
-                        type="submit"
-                        className="px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer"
-                      >
-                        <Send className="w-3.5 h-3.5" />
+                      <Button type="submit" size="sm" disabled={!commentText.trim()}>
+                        <Send />
                         <span>{language === 'tr' ? 'Yanıtla' : 'Reply'}</span>
-                      </button>
+                      </Button>
                     </form>
 
                     {post.comments && post.comments.length > 0 && (
@@ -1505,65 +1584,50 @@ export const FeedView: React.FC<FeedViewProps> = ({
       )}
 
       {/* Delete Confirmation Modal */}
-      {postToDelete && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setPostToDelete(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl bg-[#121215] border border-zinc-800 shadow-2xl p-5 space-y-4 animate-in zoom-in-95"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Destructive confirmation — Radix AlertDialog traps focus, closes on Escape and
+          announces itself to screen readers, none of which the old overlay did. */}
+      <AlertDialog open={!!postToDelete} onOpenChange={(open) => !open && setPostToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 flex-shrink-0">
+              <span className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 flex-shrink-0">
                 <Trash2 className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-white">
-                  {language === 'tr' ? 'Gönderiyi Sil' : 'Delete Post'}
-                </h3>
-                <p className="text-xs text-zinc-400 font-mono">@{postToDelete.author?.username}</p>
-              </div>
+              </span>
+              <span className="min-w-0 text-left">
+                <AlertDialogTitle>{language === 'tr' ? 'Gönderiyi Sil' : 'Delete Post'}</AlertDialogTitle>
+                <p className="text-xs text-zinc-400 font-mono">@{postToDelete?.author?.username}</p>
+              </span>
             </div>
-
-            <p className="text-xs text-zinc-300 leading-relaxed">
+            <AlertDialogDescription className="pt-1">
               {language === 'tr'
                 ? 'Bu gönderiyi kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.'
                 : 'Are you sure you want to permanently delete this post? This action cannot be undone.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {postToDelete?.content && (
+            <p className="p-2.5 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-[11px] text-zinc-400 line-clamp-2 italic font-mono">
+              &quot;{postToDelete.content}&quot;
             </p>
+          )}
 
-            {postToDelete.content && (
-              <div className="p-2.5 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-[11px] text-zinc-400 line-clamp-2 italic font-mono">
-                "{postToDelete.content}"
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800/80">
-              <button
-                type="button"
-                onClick={() => setPostToDelete(null)}
-                className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs transition-colors cursor-pointer border border-zinc-800"
-              >
-                {language === 'tr' ? 'Vazgeç' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const id = postToDelete.id;
-                  onDeletePost(id);
-                  setPostToDelete(null);
-                  setToastMessage(language === 'tr' ? 'Gönderi silindi.' : 'Post deleted.');
-                  setTimeout(() => setToastMessage(null), 2500);
-                }}
-                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs transition-all shadow-lg shadow-red-600/20 cursor-pointer flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>{language === 'tr' ? 'Kalıcı Olarak Sil' : 'Delete Permanently'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          <AlertDialogFooter className="border-t border-zinc-800/80 pt-4">
+            <AlertDialogCancel>{language === 'tr' ? 'Vazgeç' : 'Cancel'}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!postToDelete) return;
+                onDeletePost(postToDelete.id);
+                setPostToDelete(null);
+                setToastMessage(language === 'tr' ? 'Gönderi silindi.' : 'Post deleted.');
+                setTimeout(() => setToastMessage(null), 2500);
+              }}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{language === 'tr' ? 'Kalıcı Olarak Sil' : 'Delete Permanently'}</span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

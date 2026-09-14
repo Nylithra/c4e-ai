@@ -1,4 +1,43 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * shadcn/ui token bridge (Tailwind v4).
+ * `@theme inline` turns the design tokens below into real Tailwind utilities, so
+ * `bg-background`, `text-muted-foreground`, `border-border`, `rounded-lg` ... all resolve to
+ * the same CSS variables the Spark Theme Studio writes at runtime. That means every shadcn
+ * primitive automatically follows a member's custom gradient theme — no extra wiring.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-code: var(--code);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+}
 
 :root {
   /* Renkler (oklch) */
@@ -18,6 +57,9 @@
   --input: oklch(0.28 0.007 260);
   --ring: oklch(0.55 0.01 260);
   --destructive: oklch(0.6 0.21 25);
+  --destructive-foreground: oklch(0.98 0.002 260);
+  --accent-foreground: oklch(0.97 0.002 260);
+  --popover-foreground: oklch(0.97 0.002 260);
   --code: oklch(0.72 0.16 150);
 
   /* Efektler / Aksanlar */
@@ -72,6 +114,15 @@
   input::placeholder, textarea::placeholder {
     color: var(--muted-foreground) !important;
     opacity: 1;
+  }
+}
+
+@layer base {
+  /* Visible keyboard focus everywhere. The app previously relied on the browser default,
+     which is invisible on this dark palette. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
 

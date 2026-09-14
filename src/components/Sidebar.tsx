@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { UserProfile, DynamicTheme } from '../types';
 import { verifyAdminAccess } from '../utils/securityHelper';
+import { Button } from './ui/button';
+import { UserAvatar } from './ui/avatar';
 import { isPWARunningStandalone } from '../utils/pwaHelper';
 
 interface SidebarProps {
@@ -314,16 +316,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </nav>
 
               {/* Mobile New Post Action */}
-              <button
+              <Button
                 onClick={() => {
                   onOpenNewPost();
                   setIsMobileDrawerOpen(false);
                 }}
-                className="w-full py-3 px-4 rounded-xl font-bold text-zinc-950 bg-zinc-100 hover:bg-white text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
+                size="lg"
+                className="w-full"
               >
-                <PlusCircle className="w-4 h-4 text-zinc-950" />
+                <PlusCircle />
                 <span>{language === 'tr' ? 'Yeni Gönderi Paylaş' : 'Create New Post'}</span>
-              </button>
+              </Button>
             </div>
 
             {/* Bottom Actions inside Drawer */}
@@ -517,22 +520,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
 
           <div className="pt-2 space-y-2">
-            <button
-              onClick={onOpenNewPost}
-              className="w-full py-3 px-4 rounded-xl font-bold text-zinc-950 bg-zinc-100 hover:bg-white text-xs flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.98] shadow-lg cursor-pointer"
-            >
-              <PlusCircle className="w-4 h-4 text-zinc-950" />
+            <Button onClick={onOpenNewPost} size="lg" className="w-full shadow-lg">
+              <PlusCircle />
               <span>{language === 'tr' ? 'Yeni Gönderi' : 'New Post'}</span>
-            </button>
+            </Button>
 
             {onOpenReportError && (
-              <button
+              <Button
                 onClick={onOpenReportError}
-                className="w-full py-2.5 px-3 rounded-xl font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+                variant="ghost"
+                className="w-full border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300"
               >
-                <Bug className="w-3.5 h-3.5 text-red-400" />
+                <Bug />
                 <span>{language === 'tr' ? 'Bir Hata Bildir' : 'Report an Issue'}</span>
-              </button>
+              </Button>
             )}
           </div>
         </div>

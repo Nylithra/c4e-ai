@@ -35,6 +35,10 @@ import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHel
 import { validateUsername, sanitizeText, sanitizeUrl, checkUsernameAvailability, verifyAdminAccess } from '../utils/securityHelper';
 import { ShowcaseReposModal } from './ShowcaseReposModal';
 import { ensureThemeStylesheet, getVisibleProfileTheme, themeToStyle } from '../utils/themeHelper';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { UserAvatar } from './ui/avatar';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -336,10 +340,10 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
 
         <div className="px-6 relative -mt-14 flex items-end justify-between pb-4 border-b border-zinc-800/40">
           <div className="relative">
-            <img
-              src={formData.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80'}
-              alt={formData.display_name}
-              className="w-24 h-24 rounded-full object-cover ring-4 ring-[#09090b] shadow-2xl bg-zinc-900"
+            <UserAvatar
+              src={formData.avatar_url}
+              name={formData.display_name || formData.username}
+              className="w-24 h-24 ring-4 ring-[#09090b] shadow-2xl text-xl"
             />
           </div>
 
@@ -517,93 +521,52 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
         })()}
         </div>
 
-        {/* Profile Tabs */}
-        <div className="flex items-center gap-1 border-b border-zinc-800/80 pt-2 overflow-x-auto select-none">
-          <button
-            type="button"
-            onClick={() => setProfileTab('posts')}
-            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              profileTab === 'posts'
-                ? 'text-white border-zinc-100 bg-white/5'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <span>{language === 'tr' ? 'Gönderiler' : 'Posts'}</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 font-mono text-zinc-400">
-              {userAuthoredPosts.length}
-            </span>
-          </button>
+        {/* Profile Tabs — Radix Tabs: arrow-key navigation, roving focus and proper
+            tablist/tab/tabpanel semantics for screen readers. */}
+        <Tabs
+          value={profileTab}
+          onValueChange={(value) => setProfileTab(value as typeof profileTab)}
+          className="w-full"
+        >
+          <TabsList className="border-b border-zinc-800/80 pt-2 w-full justify-start">
+            <TabsTrigger value="posts">
+              <span>{language === 'tr' ? 'Gönderiler' : 'Posts'}</span>
+              <Badge variant="default" className="rounded-full">{userAuthoredPosts.length}</Badge>
+            </TabsTrigger>
 
-          <button
-            type="button"
-            onClick={() => setProfileTab('reposts')}
-            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              profileTab === 'reposts'
-                ? 'text-zinc-100 border-zinc-300 bg-zinc-800/40'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Repeat className="w-3.5 h-3.5 text-zinc-400" />
-            <span>{language === 'tr' ? 'Repostlar' : 'Reposts'}</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 font-mono text-zinc-400">
-              {userRepostedPosts.length}
-            </span>
-          </button>
+            <TabsTrigger value="reposts">
+              <Repeat className="w-3.5 h-3.5" />
+              <span>{language === 'tr' ? 'Repostlar' : 'Reposts'}</span>
+              <Badge variant="default" className="rounded-full">{userRepostedPosts.length}</Badge>
+            </TabsTrigger>
 
-          <button
-            type="button"
-            onClick={() => setProfileTab('likes')}
-            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              profileTab === 'likes'
-                ? 'text-zinc-100 border-zinc-300 bg-zinc-800/40'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            {isLikesHidden ? (
-              <Lock className="w-3.5 h-3.5 text-zinc-400" />
-            ) : (
-              <Heart className="w-3.5 h-3.5 text-zinc-400" />
-            )}
-            <span>{language === 'tr' ? (isLikesHidden ? 'Beğeniler (Gizli)' : 'Beğeniler') : (isLikesHidden ? 'Likes (Private)' : 'Likes')}</span>
-            {!isLikesHidden && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 font-mono text-zinc-400">
-                {userLikedPosts.length}
+            <TabsTrigger value="likes">
+              {isLikesHidden ? <Lock className="w-3.5 h-3.5" /> : <Heart className="w-3.5 h-3.5" />}
+              <span>
+                {language === 'tr'
+                  ? (isLikesHidden ? 'Beğeniler (Gizli)' : 'Beğeniler')
+                  : (isLikesHidden ? 'Likes (Private)' : 'Likes')}
               </span>
-            )}
-          </button>
+              {!isLikesHidden && (
+                <Badge variant="default" className="rounded-full">{userLikedPosts.length}</Badge>
+              )}
+            </TabsTrigger>
 
-          <button
-            type="button"
-            onClick={() => setProfileTab('media')}
-            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              profileTab === 'media'
-                ? 'text-zinc-100 border-zinc-300 bg-zinc-800/40'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Code className="w-3.5 h-3.5 text-zinc-400" />
-            <span>{language === 'tr' ? 'Projeler & Medya' : 'Projects & Media'}</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 font-mono text-zinc-400">
-              {userMediaPosts.length}
-            </span>
-          </button>
+            <TabsTrigger value="media">
+              <Code className="w-3.5 h-3.5" />
+              <span>{language === 'tr' ? 'Projeler & Medya' : 'Projects & Media'}</span>
+              <Badge variant="default" className="rounded-full">{userMediaPosts.length}</Badge>
+            </TabsTrigger>
 
-          <button
-            type="button"
-            onClick={() => setProfileTab('communities')}
-            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              profileTab === 'communities'
-                ? 'text-zinc-100 border-zinc-300 bg-zinc-800/40'
-                : 'text-zinc-400 border-transparent hover:text-zinc-200'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5 text-zinc-400" />
-            <span>{language === 'tr' ? 'Topluluklar' : 'Communities'}</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 font-mono text-zinc-400">
-              {communities.filter((c) => c.is_joined).length}
-            </span>
-          </button>
-        </div>
+            <TabsTrigger value="communities">
+              <Users className="w-3.5 h-3.5" />
+              <span>{language === 'tr' ? 'Topluluklar' : 'Communities'}</span>
+              <Badge variant="default" className="rounded-full">
+                {communities.filter((c) => c.is_joined).length}
+              </Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* Tab Contents */}
         {profileTab === 'likes' && isLikesHidden ? (
