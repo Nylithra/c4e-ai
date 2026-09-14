@@ -231,7 +231,26 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS show_liked_posts BOOLEAN DE
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS joined_communities JSONB DEFAULT '[]'::jsonb;
+
 ALTER TABLE public.communities ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false;
+ALTER TABLE public.communities ADD COLUMN IF NOT EXISTS members_count INTEGER DEFAULT 0;
+ALTER TABLE public.communities ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS likes_count INTEGER DEFAULT 0;
+ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS liked_by JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS comments JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS comments_count INTEGER DEFAULT 0;
+
+ALTER TABLE public.job_listings ADD COLUMN IF NOT EXISTS applications JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.job_listings ADD COLUMN IF NOT EXISTS applied_by JSONB DEFAULT '[]'::jsonb;
+
+ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS admins JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS last_message JSONB;
+ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS author_id TEXT;
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS bookmarked_by JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS reposted_by JSONB DEFAULT '[]'::jsonb;
@@ -251,7 +270,7 @@ ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Backfill the post author id from the JSON author blob where possible.
 UPDATE public.posts p
-SET author_id = pr.id
+SET author_id = pr.id::text
 FROM public.profiles pr
 WHERE p.author_id IS NULL
   AND lower(pr.username) = lower(p.author->>'username');
@@ -308,7 +327,7 @@ RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT auth.uid() IS NOT NULL AND profile_id = auth.uid()::text;
+  SELECT auth.uid() IS NOT NULL AND profile_id::text = auth.uid()::text;
 $$;
 
 -- Membership in a community is stored on the member's own profile
@@ -327,7 +346,7 @@ AS $$
         OR EXISTS (
           SELECT 1 FROM public.communities c
           WHERE c.id = community_id
-            AND (c.created_by = p.id OR lower(coalesce(c.creator_username, '')) = lower(p.username))
+            AND (c.created_by::text = p.id::text OR lower(coalesce(c.creator_username, '')) = lower(p.username))
         )
       FROM public.profiles p
       WHERE p.id::text = auth.uid()::text
@@ -507,37 +526,31 @@ SET search_path = public
 AS $$
 DECLARE
   me TEXT := public.current_username();
+  merged public.posts;
 BEGIN
   IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
     RETURN NEW;
   END IF;
 
-  IF (OLD.author_id IS NOT NULL AND OLD.author_id = auth.uid()::text)
+  IF (OLD.author_id IS NOT NULL AND OLD.author_id::text = auth.uid()::text)
      OR (me IS NOT NULL AND lower(OLD.author->>'username') = me) THEN
     NEW.author_id := OLD.author_id;
     NEW.created_at := OLD.created_at;
     RETURN NEW;
   END IF;
 
-  -- Engagement-only update: restore every content column.
-  NEW.id := OLD.id;
-  NEW.author := OLD.author;
-  NEW.author_id := OLD.author_id;
-  NEW.content := OLD.content;
-  NEW.code_snippet := OLD.code_snippet;
-  NEW.code_language := OLD.code_language;
-  NEW.media_url := OLD.media_url;
-  NEW.media_type := OLD.media_type;
-  NEW.project_card := OLD.project_card;
-  NEW.community_id := OLD.community_id;
-  NEW.community_name := OLD.community_name;
-  NEW.community_handle := OLD.community_handle;
-  NEW.category := OLD.category;
-  NEW.category_name := OLD.category_name;
-  NEW.is_pinned := OLD.is_pinned;
-  NEW.is_deleted := OLD.is_deleted;
-  NEW.created_at := OLD.created_at;
-  RETURN NEW;
+  -- Engagement-only update. Start from the stored row and copy ONLY the interaction
+  -- columns across, so any column that is not explicitly listed here (today's content
+  -- columns and any added later) simply cannot be changed by a non-author.
+  merged := OLD;
+  merged.likes_count := NEW.likes_count;
+  merged.liked_by := NEW.liked_by;
+  merged.comments := NEW.comments;
+  merged.comments_count := NEW.comments_count;
+  merged.reposts_count := NEW.reposts_count;
+  merged.reposted_by := NEW.reposted_by;
+  merged.bookmarked_by := NEW.bookmarked_by;
+  RETURN merged;
 END;
 $$;
 
@@ -575,27 +588,22 @@ SET search_path = public
 AS $$
 DECLARE
   me TEXT := public.current_username();
+  merged public.communities;
 BEGIN
   IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
     RETURN NEW;
   END IF;
 
-  IF (OLD.created_by IS NOT NULL AND OLD.created_by = auth.uid()::text)
+  IF (OLD.created_by IS NOT NULL AND OLD.created_by::text = auth.uid()::text)
      OR (me IS NOT NULL AND lower(coalesce(OLD.creator_username, '')) = me) THEN
     RETURN NEW;
   END IF;
 
-  NEW.id := OLD.id;
-  NEW.name := OLD.name;
-  NEW.handle := OLD.handle;
-  NEW.avatar_url := OLD.avatar_url;
-  NEW.banner_url := OLD.banner_url;
-  NEW.description := OLD.description;
-  NEW.created_by := OLD.created_by;
-  NEW.creator_username := OLD.creator_username;
-  NEW.is_private := OLD.is_private;
-  NEW.created_at := OLD.created_at;
-  RETURN NEW;
+  -- Non-owners may only move the member counter (join / leave).
+  merged := OLD;
+  merged.members_count := NEW.members_count;
+  merged.updated_at := NOW();
+  RETURN merged;
 END;
 $$;
 
@@ -613,26 +621,23 @@ SET search_path = public
 AS $$
 DECLARE
   me TEXT := public.current_username();
+  merged public.job_listings;
 BEGIN
   IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
     RETURN NEW;
   END IF;
 
-  IF (OLD.author_id IS NOT NULL AND OLD.author_id = auth.uid()::text)
+  IF (OLD.author_id IS NOT NULL AND OLD.author_id::text = auth.uid()::text)
      OR (me IS NOT NULL AND lower(OLD.author->>'username') = me) THEN
     RETURN NEW;
   END IF;
 
-  NEW.id := OLD.id;
-  NEW.type := OLD.type;
-  NEW.title := OLD.title;
-  NEW.description := OLD.description;
-  NEW.quota := OLD.quota;
-  NEW.author := OLD.author;
-  NEW.author_id := OLD.author_id;
-  NEW.status := OLD.status;
-  NEW.created_at := OLD.created_at;
-  RETURN NEW;
+  -- Applicants may only append to the application arrays.
+  merged := OLD;
+  merged.applications := NEW.applications;
+  merged.applied_by := NEW.applied_by;
+  merged.applications_count := NEW.applications_count;
+  RETURN merged;
 END;
 $$;
 
@@ -670,6 +675,7 @@ SET search_path = public
 AS $$
 DECLARE
   me TEXT := public.current_username();
+  merged public.groups;
 BEGIN
   IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
     RETURN NEW;
@@ -679,15 +685,13 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  NEW.id := OLD.id;
-  NEW.name := OLD.name;
-  NEW.avatar_url := OLD.avatar_url;
-  NEW.description := OLD.description;
-  NEW.creator_id := OLD.creator_id;
-  NEW.creator_username := OLD.creator_username;
-  NEW.admins := OLD.admins;
-  NEW.created_at := OLD.created_at;
-  RETURN NEW;
+  -- Members may join / leave and refresh the last-message preview; renaming, re-avataring
+  -- and changing the admin list stays with the group owner and its admins.
+  merged := OLD;
+  merged.members := NEW.members;
+  merged.last_message := NEW.last_message;
+  merged.updated_at := NOW();
+  RETURN merged;
 END;
 $$;
 
@@ -762,7 +766,7 @@ CREATE POLICY "posts_update_authenticated" ON public.posts
 CREATE POLICY "posts_delete_own" ON public.posts
   FOR DELETE USING (
     public.is_platform_admin()
-    OR (author_id IS NOT NULL AND author_id = auth.uid()::text)
+    OR (author_id IS NOT NULL AND author_id::text = auth.uid()::text)
     OR lower(author->>'username') = public.current_username()
   );
 
@@ -772,14 +776,14 @@ CREATE POLICY "communities_select_public" ON public.communities
 CREATE POLICY "communities_insert_own" ON public.communities
   FOR INSERT WITH CHECK (
     auth.uid() IS NOT NULL
-    AND (created_by IS NULL OR created_by = auth.uid()::text)
+    AND (created_by IS NULL OR created_by::text = auth.uid()::text)
   );
 CREATE POLICY "communities_update_authenticated" ON public.communities
   FOR UPDATE USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
 CREATE POLICY "communities_delete_owner" ON public.communities
   FOR DELETE USING (
     public.is_platform_admin()
-    OR created_by = auth.uid()::text
+    OR created_by::text = auth.uid()::text
     OR lower(coalesce(creator_username, '')) = public.current_username()
   );
 
@@ -796,7 +800,7 @@ CREATE POLICY "job_listings_update_authenticated" ON public.job_listings
 CREATE POLICY "job_listings_delete_own" ON public.job_listings
   FOR DELETE USING (
     public.is_platform_admin()
-    OR (author_id IS NOT NULL AND author_id = auth.uid()::text)
+    OR (author_id IS NOT NULL AND author_id::text = auth.uid()::text)
     OR lower(author->>'username') = public.current_username()
   );
 
@@ -810,7 +814,7 @@ CREATE POLICY "job_applications_select_involved" ON public.job_applications
     OR EXISTS (
       SELECT 1 FROM public.job_listings j
       WHERE j.id = job_id
-        AND (j.author_id = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
+        AND (j.author_id::text = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
     )
   );
 CREATE POLICY "job_applications_insert_own" ON public.job_applications
@@ -824,7 +828,7 @@ CREATE POLICY "job_applications_update_involved" ON public.job_applications
     OR EXISTS (
       SELECT 1 FROM public.job_listings j
       WHERE j.id = job_id
-        AND (j.author_id = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
+        AND (j.author_id::text = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
     )
   );
 CREATE POLICY "job_applications_delete_involved" ON public.job_applications
@@ -834,7 +838,7 @@ CREATE POLICY "job_applications_delete_involved" ON public.job_applications
     OR EXISTS (
       SELECT 1 FROM public.job_listings j
       WHERE j.id = job_id
-        AND (j.author_id = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
+        AND (j.author_id::text = auth.uid()::text OR lower(j.author->>'username') = public.current_username())
     )
   );
 
@@ -843,7 +847,7 @@ CREATE POLICY "notifications_select_own" ON public.notifications
   FOR SELECT USING (
     public.is_platform_admin()
     OR lower(recipient_id) = public.current_username()
-    OR recipient_id = auth.uid()::text
+    OR recipient_id::text = auth.uid()::text
   );
 CREATE POLICY "notifications_insert_as_self" ON public.notifications
   FOR INSERT WITH CHECK (
@@ -857,13 +861,13 @@ CREATE POLICY "notifications_update_own" ON public.notifications
   FOR UPDATE USING (
     public.is_platform_admin()
     OR lower(recipient_id) = public.current_username()
-    OR recipient_id = auth.uid()::text
+    OR recipient_id::text = auth.uid()::text
   );
 CREATE POLICY "notifications_delete_own" ON public.notifications
   FOR DELETE USING (
     public.is_platform_admin()
     OR lower(recipient_id) = public.current_username()
-    OR recipient_id = auth.uid()::text
+    OR recipient_id::text = auth.uid()::text
   );
 
 -- 5.7 Groups -----------------------------------------------------
