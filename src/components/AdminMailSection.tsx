@@ -20,7 +20,9 @@ import { UserAvatar } from './ui/avatar';
 
 interface MailStatus {
   smtp: { configured: boolean; host?: string; port?: number; secure?: boolean; from?: string };
-  imap: { configured: boolean; host?: string; port?: number; secure?: boolean; user?: string };
+  imap: { configured: boolean; host?: string; port?: number; secure?: boolean; user?: string; reason?: string | null };
+  /** True on Vercel/Lambda, where IMAP cannot work at all. */
+  serverless?: boolean;
 }
 
 interface InboxMessage {
@@ -113,7 +115,7 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
 
   const loadStatus = useCallback(async () => {
     const { ok, data } = await apiFetchJson<MailStatus & { error?: string }>('/api/admin/mail/status');
-    if (ok && data) setStatus({ smtp: data.smtp, imap: data.imap });
+    if (ok && data) setStatus({ smtp: data.smtp, imap: data.imap, serverless: data.serverless });
   }, []);
 
   const loadInbox = useCallback(async () => {
@@ -133,6 +135,12 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  // When the inbox cannot work on this host (serverless), open on Compose — the pane that
+  // actually does something here — rather than an empty list that looks broken.
+  useEffect(() => {
+    if (status && !status.imap.configured && status.smtp.configured) setPane('compose');
+  }, [status]);
 
   useEffect(() => {
     if (pane === 'inbox' && status?.imap.configured && messages.length === 0 && !inboxError) {
@@ -327,9 +335,14 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
                   {cfg?.configured
                     ? `${cfg.host}:${cfg.port}${cfg.secure ? ' · TLS' : ''}`
                     : tr
-                    ? 'Ortam değişkenleri tanımlanmamış'
-                    : 'Environment variables not set'}
+                    ? 'Kullanılamıyor'
+                    : 'Unavailable'}
                 </p>
+                {!cfg?.configured && (cfg as { reason?: string | null })?.reason && (
+                  <p className="user-text mt-1.5 text-[11px] leading-relaxed text-amber-300/90">
+                    {(cfg as { reason?: string | null }).reason}
+                  </p>
+                )}
                 {verified && (
                   <p
                     className={`user-text mt-1.5 text-[11px] ${

@@ -22,6 +22,24 @@ export function env(name: string, fallback = ''): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+/**
+ * True when the process is a short-lived serverless invocation (Vercel, AWS Lambda) rather
+ * than a long-running server.
+ *
+ * This is not a cosmetic distinction: such a process is frozen between requests and has a
+ * read-only filesystem outside /tmp, so anything that needs a persistent connection (IMAP
+ * idling on a socket) or durable local state cannot work there and must say so plainly
+ * instead of failing with a timeout.
+ */
+export function isServerless(): boolean {
+  return Boolean(
+    process.env.VERCEL ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.LAMBDA_TASK_ROOT ||
+      process.env.FUNCTION_TARGET
+  );
+}
+
 export const SUPABASE_URL = env('SUPABASE_URL', env('VITE_SUPABASE_URL')).replace(/\/+$/, '');
 export const SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY', env('VITE_SUPABASE_ANON_KEY'));
 export const SUPABASE_SERVICE_ROLE_KEY = env('SUPABASE_SERVICE_ROLE_KEY');

@@ -1,8 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'node:os';
 import crypto from 'node:crypto';
-import { createServer as createViteServer } from 'vite';
 import {
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
@@ -11,6 +11,7 @@ import {
   attachOptionalAuth,
   createSignedState,
   env,
+  isServerless,
   escapeHtml,
   isPlainObject,
   jsonForScript,
@@ -51,6 +52,7 @@ import {
   fetchInbox,
   fetchMessage,
   getImapConfig,
+  imapUnavailableReason,
   getSmtpConfig,
   resolveRecipientByUsername,
   sendMail,
@@ -1113,7 +1115,12 @@ app.post('/api/license/validate', rateLimit({ scope: 'license', windowMs: 60000,
 const BYNOGAME_STREAM_ID = env('BYNOGAME_STREAM_ID', '5595ad22-dd5a-47c2-93ba-d7bf9a3f85ed');
 const BYNOGAME_DONATE_URL = env('BYNOGAME_DONATE_URL', 'https://donate.bynogame.com/nylithra');
 const BYNOGAME_WEBHOOK_SECRET = env('BYNOGAME_WEBHOOK_SECRET');
-const DATA_DIR = env('DATA_DIR', path.join(process.cwd(), 'data'));
+const DATA_DIR = env(
+  'DATA_DIR',
+  // Serverless: everything outside /tmp is read-only and /tmp is wiped between invocations,
+  // so the ledger degrades to a per-invocation cache rather than crashing on every write.
+  isServerless() ? path.join(os.tmpdir(), 'c4e-data') : path.join(process.cwd(), 'data')
+);
 const BYNOGAME_DONATIONS_FILE = path.join(DATA_DIR, 'bynogame_donations.json');
 const MAX_DONATION_RECORDS = 5000;
 
@@ -1519,7 +1526,8 @@ app.get(
     if (!getImapConfig()) {
       res.status(503).json({
         success: false,
-        error: 'IMAP yapılandırılmamış. MAIL_IMAP_HOST / MAIL_IMAP_USER / MAIL_IMAP_PASS tanımlayın.'
+        error: imapUnavailableReason() || 'IMAP kullanılamıyor.',
+        serverless: isServerless()
       });
       return;
     }
@@ -1542,7 +1550,11 @@ app.get(
   rateLimit({ scope: 'mail-message', windowMs: 60000, max: 60, perUser: true }),
   async (req: Request, res: Response) => {
     if (!getImapConfig()) {
-      res.status(503).json({ success: false, error: 'IMAP yapılandırılmamış.' });
+      res.status(503).json({
+        success: false,
+        error: imapUnavailableReason() || 'IMAP kullanılamıyor.',
+        serverless: isServerless()
+      });
       return;
     }
 
@@ -1730,8 +1742,22 @@ app.use('/api', (err: any, _req: Request, res: Response, _next: NextFunction) =>
   res.status(500).json({ success: false, error: 'internal_error' });
 });
 
+/**
+ * The configured Express application, without any listener attached.
+ *
+ * `api/index.ts` hands this straight to Vercel as a serverless handler, so everything above
+ * this line must stay free of side effects that assume a long-running process.
+ */
+export default app;
+export { app };
+
 async function startServer() {
   if (!IS_PRODUCTION) {
+    // Imported lazily AND through a variable specifier: vite is a dev dependency, and a
+    // literal `import('vite')` would make bundlers (Vercel's included) try to trace and
+    // bundle it into a function that never executes this branch.
+    const viteSpecifier = 'vite';
+    const { createServer: createViteServer } = await import(/* @vite-ignore */ viteSpecifier);
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
@@ -1763,4 +1789,8 @@ async function startServer() {
   });
 }
 
-startServer();
+// On Vercel the platform owns the request lifecycle and imports `app` through
+// api/index.ts; binding a port there would be meaningless and would keep the function alive.
+if (!isServerless()) {
+  startServer();
+}

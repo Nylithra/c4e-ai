@@ -164,6 +164,37 @@ Bu davranışların tamamı gerçek Express rotaları üzerinden uçtan uca test
 
 ---
 
+## 2.1 Dağıtım biçimi: Vercel mi, kalıcı sunucu mu?
+
+Proje iki şekilde çalışabilir ve **yetenekleri farklıdır**:
+
+| | Vercel (sunucusuz) | Kalıcı Node süreci (Railway / Render / Fly.io / VPS) |
+|---|---|---|
+| Frontend | ✅ | ✅ |
+| Topluluk API, OAuth, admin uçları | ✅ | ✅ |
+| E-posta **gönderme** (SMTP) | ✅ | ✅ |
+| E-posta **okuma** (IMAP) | ❌ | ✅ |
+| Kalıcı yerel dosya (bağış defteri) | ❌ geçici | ✅ |
+
+**Vercel'de IMAP neden çalışmaz?** Gelen kutusu okumak, açık tutulan bir TCP oturumu
+gerektirir. Sunucusuz fonksiyonlar istekler arasında dondurulur ve birkaç saniyelik süre
+sınırı vardır; bağlantı ayakta kalamaz. Bu yüzden `getImapConfig()` sunucusuz ortamda
+bilinçli olarak `null` döner ve arayüz sebebini açıkça yazar — zaman aşımına kadar bekleyip
+belirsiz bir hata vermek yerine.
+
+**Vercel kurulumu.** `vercel.json` içinde `/api/*` istekleri `api/index.ts` fonksiyonuna,
+diğer her şey `index.html`'e yönlenir. `api/index.ts` yalnızca `server.ts`'in dışa aktardığı
+Express uygulamasını Vercel'e handler olarak verir; `server.ts` sunucusuz ortamı algılayınca
+kendi `app.listen()` çağrısını atlar (`isServerless`).
+
+> `vercel.json` daha önce **her** isteği `index.html`'e yönlendiriyordu; bu yüzden `/api/*`
+> dahil hiçbir arka uç ucu Vercel'de çalışmıyordu. Yalnızca posta değil, Topluluk API'si,
+> OAuth geri dönüşü ve bağış webhook'u da etkileniyordu.
+
+Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && npm start`.
+
+---
+
 ## 2.2 E-posta konsolu (IMAP / SMTP)
 
 Admin panelindeki **E-postalar** sekmesi; gelen kutusunu IMAP ile okur, kullanıcı adından

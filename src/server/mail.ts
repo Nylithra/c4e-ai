@@ -17,7 +17,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { env, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, safeFetch } from './security';
+import { env, isServerless, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, safeFetch } from './security';
 import { renderMailHtml, renderMailText, type MailTemplateInput } from './mailTemplate';
 
 // -------------------------------------------------------------
@@ -83,7 +83,24 @@ export function getSmtpConfig(): SmtpConfig | null {
   };
 }
 
+/**
+ * Why IMAP may be unavailable even when the variables are set. `null` means "it works".
+ */
+export function imapUnavailableReason(): string | null {
+  if (isServerless()) {
+    return 'IMAP, sunucusuz (serverless) ortamda kullanılamaz: gelen kutusu okumak açık ve sürekli bir TCP bağlantısı gerektirir, sunucusuz fonksiyonlar ise istekler arasında donar. Gönderme (SMTP) çalışır. Gelen kutusu için arka ucu kalıcı bir Node sürecinde çalıştırın (Railway, Render, Fly.io veya bir VPS).';
+  }
+  if (!env('MAIL_IMAP_HOST') || !env('MAIL_IMAP_USER', env('MAIL_SMTP_USER')) || !env('MAIL_IMAP_PASS', env('MAIL_SMTP_PASS'))) {
+    return 'IMAP yapılandırılmamış (MAIL_IMAP_HOST / MAIL_IMAP_USER / MAIL_IMAP_PASS eksik).';
+  }
+  return null;
+}
+
 export function getImapConfig(): ImapConfig | null {
+  // Returning null on serverless keeps every caller on the same honest path: the feature
+  // reports itself unavailable immediately instead of opening a socket that will be frozen.
+  if (isServerless()) return null;
+
   const host = env('MAIL_IMAP_HOST');
   const user = env('MAIL_IMAP_USER', env('MAIL_SMTP_USER'));
   const pass = env('MAIL_IMAP_PASS', env('MAIL_SMTP_PASS'));
@@ -101,7 +118,11 @@ export function describeMailConfig() {
     smtp: smtp
       ? { configured: true, host: smtp.host, port: smtp.port, secure: smtp.secure, from: smtp.fromAddress }
       : { configured: false },
-    imap: imap ? { configured: true, host: imap.host, port: imap.port, secure: imap.secure, user: imap.user } : { configured: false }
+    imap: imap
+      ? { configured: true, host: imap.host, port: imap.port, secure: imap.secure, user: imap.user }
+      : { configured: false, reason: imapUnavailableReason() },
+    // Lets the admin UI tell "not set up yet" apart from "cannot work on this host".
+    serverless: isServerless()
   };
 }
 
