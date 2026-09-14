@@ -47,9 +47,21 @@ function toPort(value: string, fallback: number): number {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
 }
 
-function toBool(value: string, fallback: boolean): boolean {
-  if (!value) return fallback;
-  return /^(1|true|yes|on)$/i.test(value.trim());
+/**
+ * Parses a "is this connection implicitly TLS?" flag.
+ *
+ * Accepts the words operators actually write in mail configuration — `tls`, `ssl`, `implicit`
+ * — as well as plain booleans, because MAIL_SMTP_SECURE="tls" on port 465 is an entirely
+ * natural thing to type. An UNRECOGNISED value falls back to the port-based default rather
+ * than to `false`: guessing "false" here silently disables implicit TLS on port 465, which
+ * both breaks the connection and fails in the insecure direction.
+ */
+function toSecureFlag(value: string, fallback: boolean): boolean {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (/^(1|true|yes|on|tls|ssl|ssl\/tls|implicit|secure)$/.test(raw)) return true;
+  if (/^(0|false|no|off|none|plain|starttls|insecure)$/.test(raw)) return false;
+  return fallback;
 }
 
 export function getSmtpConfig(): SmtpConfig | null {
@@ -63,7 +75,7 @@ export function getSmtpConfig(): SmtpConfig | null {
     host,
     port,
     // Implicit TLS on 465; STARTTLS upgrade on 587 and friends.
-    secure: toBool(env('MAIL_SMTP_SECURE'), port === 465),
+    secure: toSecureFlag(env('MAIL_SMTP_SECURE'), port === 465),
     user,
     pass,
     fromAddress: env('MAIL_FROM_ADDRESS', user),
@@ -78,7 +90,7 @@ export function getImapConfig(): ImapConfig | null {
   if (!host || !user || !pass) return null;
 
   const port = toPort(env('MAIL_IMAP_PORT'), 993);
-  return { host, port, secure: toBool(env('MAIL_IMAP_SECURE'), port === 993), user, pass };
+  return { host, port, secure: toSecureFlag(env('MAIL_IMAP_SECURE'), port === 993), user, pass };
 }
 
 /** Safe to hand to the admin UI: describes the setup without revealing any secret. */
