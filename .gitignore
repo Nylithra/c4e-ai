@@ -4,4 +4,15 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Secrets: never commit real environment files. Only the template is tracked.
+.env
+.env.*
 !.env.example
+
+# Runtime data written by the server (donation ledger)
+data/
+
+# The canonical lockfile for this project is bun.lock; npm's lockfile is local-only
+# so the two can never drift apart in the repository.
+package-lock.json
