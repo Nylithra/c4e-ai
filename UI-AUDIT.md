@@ -123,18 +123,22 @@ olarak yükseltildi (masaüstünde değişiklik yok).
 
 Aynı otomatik denetim, aynı sayfalar ve aynı dört ekran boyutu:
 
-| Bulgu | Önce | Sonra |
-|---|---:|---:|
-| Konsol hatası | 108 | **0** |
-| Sayfa yatay taşması | 3 sayfa | **0** |
-| 24px altı dokunma hedefi | 52 | **2** |
-| Erişilebilir adı olmayan buton | 20 | **0** |
-| Etiketsiz form alanı | 4 | **0** |
-| iOS'ta yakınlaştırmaya yol açan alan | 4 | **0** |
-| Kırılamayan uzun metin | 24 | **12*** |
-| 11px altı metin | 80 | **40**\*\* |
+| Bulgu | Önce | 1. tur | 2. tur |
+|---|---:|---:|---:|
+| Konsol hatası | 108 | 0 | **0** |
+| Sayfa yatay taşması | 3 sayfa | 0 | **0** |
+| 24px altı dokunma hedefi | 52 | 2 | **0** |
+| Erişilebilir adı olmayan buton | 20 | 0 | **0** |
+| Etiketsiz form alanı | 4 | 0 | **0** |
+| iOS'ta yakınlaştırmaya yol açan alan | 4 | 0 | **0** |
+| Kırılamayan uzun metin | 24 | 12\* | **12**\* |
+| 11px altı metin | 80 | 40\*\* | **40**\*\* |
 
-\* Kalanların tamamı kendi yatay kaydırıcısı olan kod blokları — beklenen davranış.
+Son ölçüm: 44 sayfa yüklemesi (4 ekran boyutu × 11 sayfa), toplam 52 bulgu — hepsi
+aşağıdaki iki bilinçli istisna.
+
+\* Kalanların tamamı kendi yatay kaydırıcısı olan kod blokları ve `truncate` uygulanmış
+tek bir uzun bağlantı — beklenen davranış.
 \*\* Kalanların tamamı tablet/masaüstünde 10px rozet metinleri; telefonda sayfa başına 1 öğe.
 
 ---

@@ -671,7 +671,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
         }`}
       >
         <form onSubmit={handlePostSubmit} className="space-y-3">
-          <div className="flex gap-3">
+          {/* items-start keeps the avatar next to the first line of the message instead of
+              drifting to the vertical middle as the composer grows. */}
+          <div className="flex items-start gap-3">
             <UserAvatar
               src={user.avatar_url}
               name={user.display_name || user.username}
