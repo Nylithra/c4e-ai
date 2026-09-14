@@ -77,41 +77,54 @@ export function sanitizeUrl(url?: string | null): string {
   if (!url || typeof url !== 'string') return '';
   const trimmed = url.trim();
   if (!trimmed || trimmed === '#' || trimmed === 'about:blank') return '';
-  
-  // Check for dangerous schemes & encoding tricks
-  const lower = trimmed.toLowerCase();
+
+  // Normalize the value before inspecting the scheme. Browsers ignore control characters,
+  // tabs and newlines inside a scheme, so "java\nscript:alert(1)" is executable while a
+  // naive startsWith('javascript:') check would let it through.
+  const schemeNormalized = trimmed
+    .replace(/[\u0000-\u0020\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u3000\ufeff]/g, '')
+    .toLowerCase();
+
   if (
-    lower.startsWith('javascript:') ||
-    lower.startsWith('vbscript:') ||
-    lower.startsWith('data:text/html') ||
-    lower.startsWith('data:application') ||
-    lower.includes('&#') ||
-    lower.includes('%3c') ||
-    lower.includes('%3e')
+    /^(javascript|vbscript|file|about|blob|ftp|jar|view-source|intent|chrome|chrome-extension):/i.test(schemeNormalized) ||
+    schemeNormalized.includes('%3c') ||
+    schemeNormalized.includes('%3e')
   ) {
     return '';
   }
-  
-  // Allow data:image and data:video URIs for local media uploads
-  if (lower.startsWith('data:image/') || lower.startsWith('data:video/')) {
+
+  // Allow raster data: images and data: videos for local media uploads.
+  // SVG is intentionally excluded: an inline SVG can carry <script> and becomes an XSS
+  // vector as soon as it is opened directly or embedded through <object>/<iframe>.
+  if (/^data:(image\/(png|jpe?g|gif|webp|avif|bmp)|video\/(mp4|webm|quicktime))[;,]/.test(schemeNormalized)) {
     return trimmed;
+  }
+  if (schemeNormalized.startsWith('data:')) {
+    return '';
   }
 
   // Ensure valid web protocol or prepend https if needed
-  if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:')) {
+  if (schemeNormalized.startsWith('http://') || schemeNormalized.startsWith('https://') || schemeNormalized.startsWith('mailto:')) {
     return trimmed;
   }
-  
+
+  // Reject any other explicit scheme (e.g. "customscheme:payload") before the
+  // domain-like heuristic below can turn it into an https URL.
+  if (/^[a-z][a-z0-9+.-]*:/.test(schemeNormalized)) {
+    return '';
+  }
+
   // If it's a domain-like string (e.g. github.com/user, mydomain.com), prepend https://
   if (trimmed.includes('.') && !trimmed.startsWith('/')) {
     return `https://${trimmed}`;
   }
-  
-  // Relative path is allowed
-  if (trimmed.startsWith('/')) {
+
+  // Relative path is allowed, but protocol-relative URLs ("//evil.tld") are not:
+  // they inherit the current scheme and silently point off-site.
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
     return trimmed;
   }
-  
+
   return '';
 }
 
@@ -211,51 +224,35 @@ export function auditSecurityPayload(payload: string): {
 }
 
 /**
+ * System accounts that may hold administrative privileges.
+ * Every entry here MUST also exist in RESERVED_USERNAMES, otherwise anyone could simply
+ * register the username and inherit the privileges.
+ */
+export const SYSTEM_ADMIN_USERNAMES = new Set(['nylithra', 'c4e_admin', 'admin', 'administrator']);
+
+/**
  * Strict check for admin authorization.
- * Verifies verified admin permissions (isAdmin === true or verified system administrator account).
- * Prevents privilege escalation by arbitrary role text inputs from unauthorized users.
+ *
+ * SECURITY: authorization is derived ONLY from the `is_admin` database flag (which is
+ * protected by a Postgres trigger + RLS, see supabase_schema.sql) and from a fixed list of
+ * reserved system accounts. Free-text fields the user controls (`role`, `email`) are NEVER
+ * used, because a user can set them on their own profile and would otherwise be able to
+ * escalate to administrator simply by typing "admin" into their role field.
+ *
+ * This check is a UI convenience only. The database policies are the real authority.
  */
 export function verifyAdminAccess(user?: { username?: string; role?: string; id?: string; isAdmin?: boolean; is_admin?: boolean; email?: string } | null): boolean {
   if (!user) return false;
 
-  // 1. Direct boolean / database flag check (supports both camelCase and snake_case)
-  if (
-    user.isAdmin === true ||
-    user.is_admin === true ||
-    (user as any).isAdmin === 'true' ||
-    (user as any).is_admin === 'true' ||
-    (user as any).isAdmin === 1 ||
-    (user as any).is_admin === 1
-  ) {
+  // 1. Database-backed administrator flag (supports both camelCase and snake_case shapes).
+  if (user.isAdmin === true || user.is_admin === true) {
     return true;
   }
 
-  // 2. Role-based check
-  const role = (user.role || '').toLowerCase().trim();
-  if (
-    role === 'admin' ||
-    role === 'administrator' ||
-    role === 'yönetici' ||
-    role === 'founder' ||
-    role === 'kurucu' ||
-    role === 'code4ever yetkilisi' ||
-    role === 'yetkili'
-  ) {
-    return true;
-  }
-
-  // 3. Known system admin usernames or email checks
+  // 2. Reserved system accounts. These usernames cannot be registered by regular users
+  //    (see RESERVED_USERNAMES + the unique username constraint in PostgreSQL).
   const username = (user.username || '').toLowerCase().trim().replace(/^@/, '');
-  const email = (user.email || '').toLowerCase().trim();
-  if (
-    username === 'nylithra' ||
-    username === 'c4e_admin' ||
-    username === 'admin' ||
-    username === 'administrator' ||
-    username === 'rifat' ||
-    username === 'atesrifail' ||
-    email === 'atesrifail@gmail.com'
-  ) {
+  if (SYSTEM_ADMIN_USERNAMES.has(username) && RESERVED_USERNAMES.has(username)) {
     return true;
   }
 

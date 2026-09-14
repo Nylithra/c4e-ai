@@ -1,7 +1,24 @@
 /**
- * End-to-End Encryption (E2EE) Module for Code4Ever Messaging
- * Built using native Web Crypto API (SubtleCrypto) with AES-GCM 256-bit.
- * Sub-millisecond execution time, persistent device keys, and zero plain text leakage.
+ * Message Encryption Module for Code4Ever Messaging
+ * Native Web Crypto (SubtleCrypto), AES-GCM 256-bit.
+ *
+ * ⚠️ KNOWN LIMITATION — READ BEFORE RELYING ON THIS FOR PRIVACY ⚠️
+ * This is transport/at-rest encryption, NOT end-to-end encryption in the cryptographic
+ * sense. The AES key is derived deterministically from the conversation id plus a constant
+ * that ships inside the (open source, publicly readable) client bundle — see
+ * `deriveChannelCryptoKey` below. Anyone who can READ a message row can therefore also
+ * derive its key and decrypt it.
+ *
+ * What actually protects direct messages today is the database layer: the `messages` table
+ * has a Row Level Security policy that only lets conversation participants select a row
+ * (see `supabase_schema.sql` → `messages_select_participants`). Before that policy existed,
+ * the anon key alone was enough to dump and decrypt every conversation on the platform.
+ *
+ * Real E2EE requires per-user key pairs and a key agreement step (e.g. ECDH P-256 public
+ * keys published on the profile, private key kept in the browser, conversation key =
+ * HKDF(ECDH(my private, their public))). That is a breaking change for existing message
+ * history and for multi-device sign-in, so it is deliberately left as a follow-up rather
+ * than silently changed here. Until then, do not advertise these messages as E2EE.
  */
 
 const E2EE_STORAGE_PREFIX = 'c4e_e2ee_device_key_';
@@ -27,7 +44,9 @@ export function getOrCreateDeviceMasterToken(): string {
   }
 }
 
-// Convert channel/group ID to deterministic 256-bit AES-GCM CryptoKey for the conversation participants
+// Derives a deterministic 256-bit AES-GCM key from the conversation id.
+// NOTE: deterministic and derived from public inputs — see the limitation notice at the top
+// of this file. Access control for messages is enforced by Row Level Security, not by this key.
 async function deriveChannelCryptoKey(channelOrGroupId: string): Promise<CryptoKey> {
   const normalizedChannel = (channelOrGroupId || 'general').trim().toLowerCase();
   const rawKeyMaterial = `c4e_e2ee_v2_channel:${normalizedChannel}:c4e_sec_salt_aes256_hash`;

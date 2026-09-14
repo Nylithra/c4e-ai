@@ -1,4 +1,5 @@
 import { UserProfile } from '../types';
+import { verifyAdminAccess } from './securityHelper';
 
 export const MAX_NORMAL_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB
 export const MAX_SPARK_FILE_SIZE_BYTES = 250 * 1024 * 1024; // 250 MB
@@ -32,36 +33,24 @@ export interface FileSizeValidationResult {
 }
 
 /**
- * Checks if a user has the Spark supporter status / role / badge or admin perks.
+ * Checks whether a user holds the paid Spark supporter perks.
+ *
+ * SECURITY: the answer comes exclusively from `supporter_tier`, a profile column that only
+ * the backend / administrators can write (enforced by a Postgres trigger, see
+ * supabase_schema.sql), or from the administrator flag.
+ *
+ * The previous implementation also accepted `role`, `badges` and `subscription` — all of
+ * which a user can set on their own profile — so anyone could simply type "Spark" into
+ * their role field and unlock the 250MB upload / 1000 character perks for free.
  */
 export function isUserSpark(user?: Partial<UserProfile> | null): boolean {
   if (!user) return false;
-  const username = (user.username || '').toLowerCase().trim().replace(/^@/, '');
-  if (username === 'nylithra') return true; // Platform founder/admin has full limits
 
-  const role = (user.role || '').toLowerCase();
-  if (role.includes('spark') || role.includes('destek') || role === 'admin' || role === 'founder' || role.includes('yetkili')) {
-    return true;
-  }
+  const tier = (user.supporter_tier || (user as any).custom_fields?.supporter_tier || '').toString().toLowerCase().trim();
+  if (tier === 'spark') return true;
 
-  if (user.badges && Array.isArray(user.badges)) {
-    const hasSparkBadge = user.badges.some((b) => {
-      const id = (b.id || '').toLowerCase();
-      const label = (b.label || '').toLowerCase();
-      return id === 'spark' || id === 'c4e_spark' || label.includes('spark') || label.includes('destek');
-    });
-    if (hasSparkBadge) return true;
-  }
-
-  if (user.subscription && user.subscription.isActive) {
-    const planId = (user.subscription.planId || '').toLowerCase();
-    const planName = (user.subscription.planName || '').toLowerCase();
-    if (planId === 'spark' || planName.includes('spark') || planName.includes('destek')) {
-      return true;
-    }
-  }
-
-  return false;
+  // Platform administrators implicitly get the full limits.
+  return verifyAdminAccess(user as any);
 }
 
 /**

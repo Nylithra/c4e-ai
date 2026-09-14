@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { verifyAdminAccess } from '../utils/securityHelper';
+import { apiFetch } from '../services/apiClient';
 
 interface EveryChatViewProps {
   user: UserProfile;
@@ -80,13 +81,13 @@ export const EveryChatView: React.FC<EveryChatViewProps> = ({ user, language }) 
         content: m.content
       }));
 
-      const response = await fetch('/api/everychat', {
+      const response = await apiFetch('/api/everychat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages })
+        json: { messages: apiMessages },
+        timeoutMs: 60000
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Groq API yanıt veremedi.');

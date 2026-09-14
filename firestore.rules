@@ -1,9 +1,17 @@
 rules_version = '2';
 
+// ================================================================
+// Code4Ever — Cloud Firestore Security Rules
+// ================================================================
+// The previous ruleset allowed ANY signed-in user to update or delete ANY document
+// (`allow update: if isAuthenticated()`), including other members' profiles, every post,
+// every community and the platform settings. These rules restrict each document to its
+// owner, with a database-backed administrator flag as the only escalation path.
+// ================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions for security validation
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -12,34 +20,82 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Administrator status lives in the user's own document and can only be written by a
+    // backend using the Admin SDK (which bypasses these rules).
+    function isAdmin() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // True when the incoming write does not touch any of the listed privileged fields.
+    function keepsFields(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
     // User Profile Documents
     match /users/{userId} {
       allow read: if true;
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isOwner(userId)
+                    && request.resource.data.get('isAdmin', false) == false
+                    && request.resource.data.get('verified', false) == false
+                    && request.resource.data.get('supporterTier', 'none') == 'none';
+      // Owners may edit their own profile but never grant themselves privileges.
+      allow update: if isAdmin()
+                    || (isOwner(userId)
+                        && keepsFields(['isAdmin', 'verified', 'supporterTier', 'isBanned', 'banReason', 'suspendedUntil', 'betaStatus']));
+      allow delete: if isOwner(userId) || isAdmin();
     }
 
     // Feed Posts
     match /posts/{postId} {
       allow read: if true;
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+      // Anyone signed in may interact (like / repost / bookmark / comment), but only the
+      // author or an administrator may change the content of a post.
+      allow update: if isAdmin()
+                    || resource.data.authorId == request.auth.uid
+                    || (isAuthenticated()
+                        && keepsFields(['authorId', 'author', 'content', 'codeSnippet', 'mediaUrl', 'mediaType', 'createdAt']));
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
     }
 
     // Communities
     match /communities/{communityId} {
       allow read: if true;
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin()
+                    || resource.data.createdBy == request.auth.uid
+                    // Joining/leaving only changes the member counter.
+                    || (isAuthenticated() && keepsFields(['createdBy', 'creatorUsername', 'name', 'handle', 'avatarUrl', 'bannerUrl', 'description']));
+      allow delete: if isAdmin() || resource.data.createdBy == request.auth.uid;
     }
 
-    // Platform Settings & Admin Configs
+    // Direct messages: readable only by the participants.
+    match /messages/{messageId} {
+      allow read: if isAdmin()
+                  || (isAuthenticated() && request.auth.uid in resource.data.participants);
+      allow create: if isAuthenticated()
+                    && request.resource.data.senderId == request.auth.uid
+                    && request.auth.uid in request.resource.data.participants;
+      allow update, delete: if isAdmin() || (isAuthenticated() && resource.data.senderId == request.auth.uid);
+    }
+
+    // Notifications belong to their recipient.
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isAdmin() || (isAuthenticated() && resource.data.recipientId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.actorId == request.auth.uid;
+    }
+
+    // Platform Settings & Admin Configs — readable by everyone, writable by admins only.
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Anything not matched above is denied by default.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -43,6 +43,19 @@ export interface UserProfile {
   role: string;
   isAdmin?: boolean;
   is_admin?: boolean;
+  /**
+   * Paid supporter tier ('none' | 'spark'). SECURITY: this column is written by the
+   * backend/administrators only (protected by a Postgres trigger), which is what makes the
+   * Spark perks impossible to self-assign. Never derive perks from `role` or `badges`,
+   * both of which the user edits freely on their own profile.
+   */
+  supporter_tier?: 'none' | 'spark' | string;
+  /**
+   * Spark gradient theme (see utils/themeHelper). Stored as a JSON object; always
+   * re-validated before it is turned into CSS, because it is rendered in other users'
+   * browsers when the owner shares it.
+   */
+  profile_theme?: unknown;
   website?: string;
   pinned_repos?: GitHubRepo[];
   verified?: boolean;

@@ -1,4 +1,5 @@
 import { JobListing, JobApplication, WebhookIntegrationSettings, DEFAULT_WEBHOOK_TEMPLATE } from '../types';
+import { apiFetch } from './apiClient';
 
 const WEBHOOK_STORAGE_KEY = 'c4e_webhook_integrations';
 
@@ -112,14 +113,9 @@ export async function testWebhook(
   );
 
   try {
-    const res = await fetch('/api/integrations/webhook/test', {
+    const res = await apiFetch('/api/integrations/webhook/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        platform,
-        config,
-        message: messageText
-      })
+      json: { platform, config, message: messageText }
     });
 
     const rawText = await res.text();
@@ -172,15 +168,14 @@ export async function dispatchJobApplicationWebhooks(
 
   // Dispatch via backend relay
   try {
-    const res = await fetch('/api/integrations/webhook/send', {
+    const res = await apiFetch('/api/integrations/webhook/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      json: {
         settings,
         message: messageText,
         listing_title: listing.title,
         applicant_username: application.applicant_username
-      })
+      }
     });
 
     if (res.ok) {

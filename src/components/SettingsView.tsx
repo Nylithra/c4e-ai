@@ -17,7 +17,8 @@ import {
   Users,
   Bot,
   Layers,
-  Check
+  Check,
+  Palette
 } from 'lucide-react';
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { isPWARunningStandalone } from '../utils/pwaHelper';
@@ -27,6 +28,9 @@ import {
   sendNativeNotification
 } from '../utils/notificationSound';
 import { IntegrationsSettings } from './IntegrationsSettings';
+import { ThemeStudio } from './ThemeStudio';
+import { ProfileTheme } from '../utils/themeHelper';
+import { isUserSpark } from '../utils/fileUploadHelper';
 import { sanitizeUrl } from '../utils/securityHelper';
 
 interface SettingsViewProps {
@@ -36,9 +40,10 @@ interface SettingsViewProps {
   onChangeLanguage: (lang: 'tr' | 'en') => void;
   onLogout: () => void;
   onOpenInstallPWA?: () => void;
+  onOpenSupport?: () => void;
 }
 
-type SettingsSection = 'overview' | 'profile' | 'integrations' | 'notifications' | 'privacy' | 'preferences';
+type SettingsSection = 'overview' | 'profile' | 'integrations' | 'notifications' | 'privacy' | 'preferences' | 'theme';
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   user,
@@ -46,7 +51,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onUpdateProfile,
   onChangeLanguage,
   onLogout,
-  onOpenInstallPWA
+  onOpenInstallPWA,
+  onOpenSupport
 }) => {
   const getInitialFormData = (u: UserProfile): UserProfile => {
     const web = u.website || u.custom_fields?.website || '';
@@ -183,7 +189,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     integrations: language === 'tr' ? 'Webhook & Entegrasyonlar' : 'Webhook & Integrations',
     notifications: language === 'tr' ? 'Bildirimler & Ses' : 'Notifications & Sound',
     privacy: language === 'tr' ? 'Grup & Gizlilik Ayarları' : 'Group & Privacy Settings',
-    preferences: language === 'tr' ? 'Dil & Tercihler' : 'Language & Preferences'
+    preferences: language === 'tr' ? 'Dil & Tercihler' : 'Language & Preferences',
+    theme: language === 'tr' ? 'Gradyan Tema Stüdyosu' : 'Gradient Theme Studio'
+  };
+
+  /**
+   * Persists the Spark gradient theme on the profile. The value is stored both in the
+   * dedicated `profile_theme` column and in `custom_fields`, so it survives on deployments
+   * whose schema has not been migrated yet.
+   */
+  const handleSaveTheme = (theme: ProfileTheme) => {
+    onUpdateProfile({
+      ...user,
+      profile_theme: theme,
+      custom_fields: {
+        ...(user.custom_fields || {}),
+        profile_theme: theme
+      }
+    } as UserProfile);
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2000);
   };
 
   return (
@@ -305,6 +330,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </span>
                     <span className="text-[11px] text-zinc-400 font-mono block">
                       {language === 'tr' ? 'Grup daveti alma izinleri ve gizlilik kontrolleri' : 'Group invite permissions and privacy filters'}
+                    </span>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" />
+              </button>
+
+              {/* 4.5 Gradient Theme Studio (Spark) */}
+              <button
+                type="button"
+                onClick={() => setActiveSection('theme')}
+                className="w-full flex items-center justify-between p-4 rounded-2xl bg-[#0c0c0e] hover:bg-zinc-900/60 border border-zinc-800/80 transition-all text-left group cursor-pointer"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-amber-950/60 text-amber-400 border border-amber-900/40 group-hover:scale-105 transition-transform">
+                    <Palette className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-white block group-hover:text-amber-400 transition-colors flex items-center gap-2">
+                      {language === 'tr' ? 'Gradyan Tema Stüdyosu' : 'Gradient Theme Studio'}
+                      <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[9px] font-black uppercase tracking-wider">
+                        {isUserSpark(user) ? 'Spark' : (language === 'tr' ? 'Kilitli' : 'Locked')}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-zinc-400 font-mono block">
+                      {language === 'tr'
+                        ? 'Tüm renkler, gradyan türü ve yönü — profilinizde herkese görünür'
+                        : 'Every colour, gradient type and direction — visible on your profile'}
                     </span>
                   </div>
                 </div>
@@ -661,6 +713,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
             </div>
           </div>
+        )}
+
+        {/* Spark Gradient Theme Studio */}
+        {activeSection === 'theme' && (
+          <ThemeStudio
+            user={user}
+            language={language}
+            onSaveTheme={handleSaveTheme}
+            onOpenSupport={onOpenSupport}
+          />
         )}
 
         {/* Language & Preferences Section */}

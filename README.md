@@ -48,9 +48,10 @@ Code4Ever provides developers with a dedicated environment where they can commun
 
 * **⚡ Real-Time Feed System:** Stay connected with developers from different parts of the world through a real-time social feed.
 * **🐙 GitHub Integration:** Your GitHub repositories are synchronized with Code4Ever, allowing you to attach your repositories when creating feed posts.
-* **🔐 End-to-End Encrypted Messaging:** Communicate privately with other developers using end-to-end encrypted messaging.
+* **🔐 Private Messaging:** Direct messages are encrypted in the browser (AES-GCM) and readable only by the conversation participants, enforced at the database level. See [SECURITY.md](SECURITY.md) for the exact threat model.
 * **💼 Job Listings:** Quickly create job listings when you need a teammate or a developer to work on a project.
 * **👥 Developer Community:** Discover, connect, and communicate with developers from around the world.
+* **🎨 Spark Gradient Theme Studio:** Spark supporters can repaint the platform — every surface, text, border and glow colour, plus the gradient type (linear / radial / conic), its direction, centre point and up to six colour stops — and share the result on their profile so other members see it.
 * **🚀 And More:** Code4Ever is constantly evolving with new features and improvements.
 
 ---
@@ -72,6 +73,15 @@ npm start
 ```
 
 6. Open the application in your browser.
+
+---
+
+## 🛡️ Security & Setup
+
+Before deploying, run the whole of [`supabase_schema.sql`](supabase_schema.sql) in the Supabase
+SQL editor and fill in the variables from [`.env.example`](.env.example).
+[`SECURITY.md`](SECURITY.md) documents the hardening work, the required environment variables
+and the known limitations.
 
 ---
 
@@ -120,9 +130,10 @@ Code4Ever; geliştiricilerin projelerini paylaşabileceği, diğer geliştiricil
 
 * **⚡ Eşzamanlı Feed Sistemi:** Dünyanın farklı bölgelerindeki geliştiriciler ile gerçek zamanlı feed sistemi üzerinden iletişimde kalın.
 * **🐙 GitHub Entegrasyonu:** GitHub depolarınız Code4Ever ile senkronize edilir. Gönderi oluştururken depolarınızı gönderilerinize ekleyebilirsiniz.
-* **🔐 Uçtan Uca Şifreli Mesajlaşma:** Diğer geliştiriciler ile uçtan uca şifreli şekilde özel olarak iletişim kurabilirsiniz.
+* **🔐 Özel Mesajlaşma:** Mesajlar tarayıcıda şifrelenir (AES-GCM) ve veritabanı seviyesinde yalnızca konuşmanın taraflarına gösterilir. Tehdit modeli için [SECURITY.md](SECURITY.md) dosyasına bakın.
 * **💼 İş İlanları:** Bir ekip arkadaşı veya projeniz için geliştirici arıyorsanız hızlı bir şekilde iş ilanı oluşturabilirsiniz.
 * **👥 Geliştirici Topluluğu:** Dünyanın farklı bölgelerinden geliştiricileri keşfedin, bağlantı kurun ve iletişim kurun.
+* **🎨 Spark Gradyan Tema Stüdyosu:** Spark destekçileri platformun tüm renklerini (zemin, kart, vurgu, banner, metin, kenarlık, ışıma) ve gradyanın türünü (doğrusal / dairesel / konik), yönünü, merkezini ve altıya kadar renk durağını değiştirebilir; temalarını profillerinde diğer kullanıcılara gösterebilir.
 * **🚀 Ve Daha Fazlası:** Code4Ever sürekli olarak yeni özellikler ve geliştirmeler ile büyümeye devam ediyor.
 
 ---

@@ -3,15 +3,15 @@
   "collections": {
     "users": {
       "allowRead": "true",
-      "allowWrite": "request.auth != null && (request.auth.uid == resource.data.id || resource == null)"
+      "allowWrite": "request.auth != null && request.auth.uid == resource.id"
     },
     "posts": {
       "allowRead": "true",
-      "allowWrite": "request.auth != null"
+      "allowWrite": "request.auth != null && request.auth.uid == resource.data.authorId"
     },
     "communities": {
       "allowRead": "true",
-      "allowWrite": "request.auth != null"
+      "allowWrite": "request.auth != null && request.auth.uid == resource.data.createdBy"
     }
   }
 }

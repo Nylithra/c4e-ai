@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { UserProfile, DynamicTheme, Community, Post, GitHubRepo } from '../types';
 import { UserBadges } from './UserBadges';
 import { CodeSnippetBlock } from './CodeSnippetBlock';
@@ -34,6 +34,7 @@ import {
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { validateUsername, sanitizeText, sanitizeUrl, checkUsernameAvailability, verifyAdminAccess } from '../utils/securityHelper';
 import { ShowcaseReposModal } from './ShowcaseReposModal';
+import { ensureThemeStylesheet, getVisibleProfileTheme, themeToStyle } from '../utils/themeHelper';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -116,6 +117,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const isOwnProfile =
     (currentUser && (currentUser.id === user.id || currentUser.username?.toLowerCase() === user.username?.toLowerCase())) ||
     (!currentUser);
+
+  // Spark gradient theme of the profile being viewed. Visitors only see it when the owner
+  // shared it; the value is re-validated by getVisibleProfileTheme before it becomes CSS.
+  const profileTheme = useMemo(() => getVisibleProfileTheme(user, Boolean(isOwnProfile)), [user, isOwnProfile]);
+
+  useEffect(() => {
+    if (profileTheme) ensureThemeStylesheet();
+  }, [profileTheme]);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
@@ -293,15 +302,26 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
       : userMediaPosts;
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
+    <div
+      className={`flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] ${profileTheme ? 'c4e-theme-scope' : ''}`}
+      style={profileTheme ? themeToStyle(profileTheme) : undefined}
+    >
       <div className="relative group">
         <div className="h-44 w-full overflow-hidden bg-zinc-900 relative">
-          <img
-            src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
-            alt="Profile Banner"
-            className="w-full h-full object-cover"
+          {profileTheme && profileTheme.banner.kind === 'gradient' ? (
+            /* Spark supporters can replace the banner image with their own gradient. */
+            <div className={`c4e-theme-banner w-full h-full ${profileTheme.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
+          ) : (
+            <img
+              src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
+              alt="Profile Banner"
+              className="w-full h-full object-cover"
+            />
+          )}
+          <div
+            className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-transparent to-black/30"
+            style={profileTheme ? { opacity: profileTheme.banner.overlayOpacity / 100 } : undefined}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-transparent to-black/30" />
         </div>
 
         <div className="px-6 relative -mt-14 flex items-end justify-between pb-4 border-b border-zinc-800/40">
@@ -329,9 +349,11 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
             onStartDirectChat && (
               <button
                 onClick={() => onStartDirectChat(formData)}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+                className={`px-4 py-2 rounded-xl text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer ${
+                  profileTheme ? 'c4e-theme-accent' : 'bg-blue-600 hover:bg-blue-500'
+                }`}
               >
-                <Mail className="w-3.5 h-3.5 text-white" />
+                <Mail className="w-3.5 h-3.5" />
                 <span>{language === 'tr' ? 'Mesaj Gönder' : 'Send Message'}</span>
               </button>
             )

@@ -25,6 +25,7 @@ import { UserProfile, Community } from '../types';
 import { UserBadges } from './UserBadges';
 import { sanitizeUrl } from '../utils/securityHelper';
 import { getSupabaseClient, loadStoredAllUsers, normalizeProfile } from '../services/supabaseClient';
+import { ensureThemeStylesheet, getVisibleProfileTheme, themeToStyle } from '../utils/themeHelper';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -234,9 +235,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const currentComm = communityData ? communities.find((c) => c.id === communityData.id) || communityData : null;
 
+  // The profile owner's Spark gradient theme, when they chose to share it with visitors.
+  const isOwnCard =
+    !!profileData &&
+    (currentUser?.id === profileData.id ||
+      (currentUser?.username || '').toLowerCase() === (profileData.username || '').toLowerCase());
+  const cardTheme = profileData ? getVisibleProfileTheme(profileData, isOwnCard) : null;
+  if (cardTheme) ensureThemeStylesheet();
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-[#121215] border border-zinc-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl relative text-white">
+      <div
+        className={`bg-[#121215] border border-zinc-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl relative text-white ${
+          cardTheme ? 'c4e-theme-surface' : ''
+        }`}
+        style={cardTheme ? themeToStyle(cardTheme) : undefined}
+      >
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -398,15 +412,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <div>
             {/* Banner */}
             <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
-              <img
-                src={
-                  profileData.banner_url ||
-                  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
-                }
-                alt="Profile Banner"
-                className="w-full h-full object-cover opacity-80"
+              {cardTheme && cardTheme.banner.kind === 'gradient' ? (
+                <div className={`c4e-theme-banner w-full h-full ${cardTheme.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
+              ) : (
+                <img
+                  src={
+                    profileData.banner_url ||
+                    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
+                  }
+                  alt="Profile Banner"
+                  className="w-full h-full object-cover opacity-80"
+                />
+              )}
+              <div
+                className="absolute inset-0 bg-gradient-to-t from-[#121215] via-transparent to-black/30"
+                style={cardTheme ? { opacity: cardTheme.banner.overlayOpacity / 100 } : undefined}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#121215] via-transparent to-black/30" />
             </div>
 
             {/* Main Info */}
@@ -445,6 +466,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer ${
                         isFollowing
                           ? 'bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 border border-zinc-700 text-zinc-300'
+                          : cardTheme
+                          ? `c4e-theme-accent ${cardTheme.accent.gradient.animate ? 'c4e-theme-animated' : ''}`
                           : 'bg-blue-600 hover:bg-blue-500 text-white'
                       }`}
                     >

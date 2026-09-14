@@ -69,6 +69,7 @@ import {
   clearAllNotificationsInSupabase
 } from './services/supabaseClient';
 import { decryptE2EEMessage } from './utils/e2eeHelper';
+import { applyGlobalProfileTheme, ensureThemeStylesheet, getProfileTheme } from './utils/themeHelper';
 import {
   checkPersistentRateLimit,
   checkDuplicatePost,
@@ -215,23 +216,40 @@ export default function App() {
       const match = path.match(/^\/?@?([a-zA-Z0-9_\-]+)$/);
       if (match) {
         const routeUser = match[1].toLowerCase();
-        if (routeUser === 'admin') {
-          setActiveTab('admin');
+
+        // System routes open their tab directly. Previously only /admin and /abonelik were
+        // handled, so deep links such as /settings or /messages silently landed on the feed.
+        const systemTabAliases: Record<string, string> = {
+          feed: 'feed',
+          explore: 'explore',
+          notifications: 'notifications',
+          messages: 'messages',
+          everychat: 'everychat',
+          projects: 'projects',
+          communities: 'communities',
+          bookmarks: 'bookmarks',
+          settings: 'settings',
+          profile: 'profile',
+          admin: 'admin',
+          support: 'support',
+          jobs: 'jobs',
+          abonelik: 'subscriptions',
+          subscriptions: 'subscriptions'
+        };
+
+        const mappedTab = systemTabAliases[routeUser];
+        if (mappedTab) {
+          if (mappedTab === 'profile') setViewingUser(null);
+          setActiveTab(mappedTab);
           return;
         }
-        if (routeUser === 'abonelik' || routeUser === 'subscriptions') {
-          setActiveTab('subscriptions');
-          return;
-        }
-        const systemTabs = ['feed', 'explore', 'notifications', 'messages', 'everychat', 'projects', 'communities', 'bookmarks', 'settings', 'profile', 'admin', 'abonelik', 'subscriptions', 'support', 'jobs'];
-        if (!systemTabs.includes(routeUser)) {
-          const activeUser = currentUser || user;
-          if (activeUser.username && activeUser.username.toLowerCase() === routeUser) {
-            setViewingUser(null);
-            setActiveTab('profile');
-          } else {
-            setSelectedModalUsername(routeUser);
-          }
+
+        const activeUser = currentUser || user;
+        if (activeUser.username && activeUser.username.toLowerCase() === routeUser) {
+          setViewingUser(null);
+          setActiveTab('profile');
+        } else {
+          setSelectedModalUsername(routeUser);
         }
       }
     }
@@ -343,6 +361,12 @@ export default function App() {
       unsubscribeJobListings();
     };
   }, []);
+
+  // Spark gradient theme: repaint the session whenever the signed-in user's theme changes.
+  useEffect(() => {
+    ensureThemeStylesheet();
+    applyGlobalProfileTheme(getProfileTheme(user));
+  }, [user.profile_theme, user.custom_fields?.profile_theme]);
 
   // Global Realtime Incoming Message Listener & Notification Engine
   useEffect(() => {
@@ -1300,6 +1324,7 @@ export default function App() {
               onChangeLanguage={handleChangeLanguage}
               onLogout={handleLogout}
               onOpenInstallPWA={() => setIsPWAInstallModalOpen(true)}
+              onOpenSupport={() => setActiveTab('support')}
             />
           )}
 

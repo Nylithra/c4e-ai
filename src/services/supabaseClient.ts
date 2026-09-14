@@ -24,7 +24,9 @@ import {
   INITIAL_CATEGORIES,
   UserSubscriptionInfo
 } from '../types';
-import { sanitizeText, sanitizeUrl } from '../utils/securityHelper';
+import { sanitizeText, sanitizeUrl, verifyAdminAccess } from '../utils/securityHelper';
+import { normalizeProfileTheme, sanitizeProfileTheme } from '../utils/themeHelper';
+import { apiFetch, apiFetchJson, getAccessToken, setAccessTokenProvider } from './apiClient';
 import { encryptE2EEMessage } from '../utils/e2eeHelper';
 import { sendJobApplicationWebhook } from './webhookService';
 
@@ -297,6 +299,40 @@ export function saveCustomSupabaseCredentials(url: string, anonKey: string): boo
 }
 
 export const supabase = getSupabaseClient();
+
+/**
+ * Headers for the raw PostgREST fallbacks below.
+ *
+ * SECURITY: these fallbacks used to authenticate with the public anon key, which only ever
+ * worked because the old RLS policies allowed anonymous writes. They now forward the signed-in
+ * user's access token, so PostgREST applies the same Row Level Security as the JS client.
+ */
+async function supabaseRestHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
+  const config = getSupabaseConfig();
+  const token = await getAccessToken();
+  return {
+    apikey: config.anonKey,
+    Authorization: `Bearer ${token || config.anonKey}`,
+    ...extra
+  };
+}
+
+
+/**
+ * Registers the Supabase access-token provider used by `apiFetch` so every call to the
+ * Code4Ever backend carries the signed-in user's session (the API now authenticates and
+ * authorises requests instead of trusting whatever the browser sends).
+ */
+setAccessTokenProvider(async () => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    return data.session?.access_token || null;
+  } catch {
+    return null;
+  }
+});
 
 export const DEFAULT_USER: UserProfile = {
   id: '',
@@ -845,12 +881,10 @@ export async function resilientSupabaseUpsert(
       const cleanUrl = config.url.replace(/\/+$/, '');
       const response = await fetch(`${cleanUrl}/rest/v1/${table}`, {
         method: 'POST',
-        headers: {
+        headers: await supabaseRestHeaders({
           'Content-Type': 'application/json',
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
           Prefer: 'resolution=merge-duplicates'
-        },
+        }),
         body: JSON.stringify(currentPayload)
       });
 
@@ -864,12 +898,10 @@ export async function resilientSupabaseUpsert(
           delete currentPayload[missingColMatch[1]];
           const retryRes = await fetch(`${cleanUrl}/rest/v1/${table}`, {
             method: 'POST',
-            headers: {
+            headers: await supabaseRestHeaders({
               'Content-Type': 'application/json',
-              apikey: config.anonKey,
-              Authorization: `Bearer ${config.anonKey}`,
               Prefer: 'resolution=merge-duplicates'
-            },
+            }),
             body: JSON.stringify(currentPayload)
           });
           if (retryRes.ok) return { success: true };
@@ -951,12 +983,10 @@ export async function resilientSupabaseUpdate(
       const cleanUrl = config.url.replace(/\/+$/, '');
       const response = await fetch(`${cleanUrl}/rest/v1/${table}?${matchColumn}=eq.${encodeURIComponent(matchValue)}`, {
         method: 'PATCH',
-        headers: {
+        headers: await supabaseRestHeaders({
           'Content-Type': 'application/json',
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
           Prefer: 'return=minimal'
-        },
+        }),
         body: JSON.stringify(currentUpdate)
       });
       if (response.ok) {
@@ -1071,7 +1101,7 @@ export async function deletePostInSupabase(postId: string, requestingUser?: User
     const isAuthor =
       (target.author?.username || '').toLowerCase() === (requestingUser.username || '').toLowerCase() ||
       ((target.author as any)?.id && requestingUser.id && (target.author as any).id === requestingUser.id);
-    const isAdmin = requestingUser.isAdmin === true || (requestingUser as any).role === 'admin' || (requestingUser.username || '').toLowerCase() === 'nylithra';
+    const isAdmin = verifyAdminAccess(requestingUser);
     if (!isAuthor && !isAdmin) {
       console.warn('Post deletion blocked: Not author and not admin');
       return false;
@@ -1087,58 +1117,24 @@ export async function deletePostInSupabase(postId: string, requestingUser?: User
     window.dispatchEvent(new CustomEvent('c4e_post_deleted', { detail: { postId } }));
   } catch {}
 
-  const config = getSupabaseConfig();
   const client = getSupabaseClient();
 
-  // 4. Server-Side Synchronized Delete Relay (Broadcasts to all devices & deletes in backend)
-  try {
-    fetch('/api/posts/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        postId,
-        customSupabaseUrl: config.url,
-        customSupabaseAnonKey: config.anonKey
-      })
-    }).catch(() => {});
-  } catch {}
+  // 4. Server-Side Synchronized Delete Relay (Broadcasts to all devices & deletes in backend).
+  //    The relay authenticates with the caller's own session token; it no longer receives
+  //    Supabase credentials from the browser, and the backend enforces ownership via RLS.
+  apiFetch('/api/posts/delete', { method: 'POST', json: { postId } }).catch(() => {});
 
-  // 5. Direct Supabase Client Delete
+  // 5. Direct Supabase delete using the signed-in session (Row Level Security decides).
   if (client) {
     try {
       const { error } = await client.from('posts').delete().eq('id', postId);
       if (error) {
-        // Fallback soft-delete in case DELETE policy or constraint fails
+        // Fallback soft-delete in case the DELETE policy is stricter than UPDATE.
         await client.from('posts').update({ is_deleted: true, content: '[DELETED]' } as any).eq('id', postId);
       }
     } catch (err) {
       console.warn('Supabase post delete network error:', err);
     }
-  }
-
-  // 6. Direct REST DELETE & PATCH fallback to Supabase HTTP API
-  if (config.url && config.anonKey) {
-    try {
-      const cleanUrl = config.url.replace(/\/+$/, '');
-      fetch(`${cleanUrl}/rest/v1/posts?id=eq.${encodeURIComponent(postId)}`, {
-        method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=representation'
-        }
-      }).catch(() => {});
-
-      fetch(`${cleanUrl}/rest/v1/posts?id=eq.${encodeURIComponent(postId)}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`
-        },
-        body: JSON.stringify({ is_deleted: true, content: '[DELETED]' })
-      }).catch(() => {});
-    } catch {}
   }
 
   return true;
@@ -1344,12 +1340,10 @@ export async function createCommunityInSupabase(comm: Community): Promise<void> 
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/communities`, {
         method: 'POST',
-        headers: {
+        headers: await supabaseRestHeaders({
           'Content-Type': 'application/json',
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
           Prefer: 'resolution=merge-duplicates'
-        },
+        }),
         body: JSON.stringify(payload)
       }).catch(() => {});
     } catch {}
@@ -1391,12 +1385,10 @@ export async function updateCommunityInSupabase(commId: string, updateData: Part
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/communities?id=eq.${encodeURIComponent(commId)}`, {
         method: 'PATCH',
-        headers: {
+        headers: await supabaseRestHeaders({
           'Content-Type': 'application/json',
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
           Prefer: 'return=minimal'
-        },
+        }),
         body: JSON.stringify(payload)
       }).catch(() => {});
     } catch {}
@@ -1425,11 +1417,7 @@ export async function deleteCommunityFromSupabase(commId: string): Promise<void>
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/communities?id=eq.${encodeURIComponent(commId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
     } catch {}
   }
@@ -1802,27 +1790,15 @@ export async function deleteJobListing(jobId: string): Promise<void> {
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/job_listings?id=eq.${encodeURIComponent(jobId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
       fetch(`${cleanUrl}/rest/v1/job_applications?job_id=eq.${encodeURIComponent(jobId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
       fetch(`${cleanUrl}/rest/v1/notifications?type=eq.job_application&target_id=eq.${encodeURIComponent(jobId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
     } catch {}
   }
@@ -2614,13 +2590,17 @@ export function normalizeProfile(raw: any): UserProfile {
     }
   }
 
-  // Resilient protection for essential role-based and status badges
-  const roleLower = (raw.role || '').toLowerCase();
-  const isSparkSupporter =
-    roleLower === 'spark' ||
-    roleLower.includes('spark') ||
-    subscription?.planId === 'spark' ||
-    (subscription?.planName || '').toLowerCase().includes('spark');
+  // Profile theme (Spark gradient studio). Always re-validated on the way in: the record may
+  // have been written by another user's browser.
+  const rawTheme = raw.profile_theme ?? cf.profile_theme ?? null;
+  const parsedTheme = normalizeProfileTheme(rawTheme);
+  const profileTheme = parsedTheme ? parsedTheme : rawTheme ? sanitizeProfileTheme(rawTheme) : undefined;
+
+  // Supporter tier is a BACKEND-CONTROLLED column: it is the single source of truth for the
+  // paid Spark perks. `role`/`badges`/`subscription` are user editable and must never grant
+  // perks on their own (they are still rendered, they just do not authorise anything).
+  const supporterTier = String(raw.supporter_tier ?? cf.supporter_tier ?? 'none').toLowerCase().trim();
+  const isSparkSupporter = supporterTier === 'spark';
 
   if (isSparkSupporter) {
     const hasSparkBadge = badges.some(
@@ -2684,6 +2664,8 @@ export function normalizeProfile(raw: any): UserProfile {
     banReason,
     suspendedUntil,
     subscription,
+    supporter_tier: supporterTier,
+    profile_theme: profileTheme,
     custom_fields: {
       ...cf,
       website: website || '',
@@ -2691,7 +2673,9 @@ export function normalizeProfile(raw: any): UserProfile {
       badges,
       betaStatus,
       betaContact,
-      subscription
+      subscription,
+      supporter_tier: supporterTier,
+      profile_theme: profileTheme
     }
   };
 }
@@ -2743,6 +2727,8 @@ export const ALLOWED_PROFILE_COLUMNS = new Set([
   'pinned_repos',
   'theme_color',
   'accent_color',
+  'profile_theme',
+  'supporter_tier',
   'joined_communities',
   'custom_fields',
   'is_admin',
@@ -2932,32 +2918,19 @@ export async function updateUserProfileInSupabase(userId: string, updateData: Pa
 }
 
 export async function deleteUserFromSupabase(userId: string): Promise<void> {
+  // Deletion runs through the authenticated Supabase client so Row Level Security decides
+  // (own account or administrator). The previous raw REST fallback authenticated with the
+  // public anon key, which only worked because every table allowed anonymous deletes.
   const client = getSupabaseClient();
-  const config = getSupabaseConfig();
+  if (!client) return;
 
-  if (client) {
-    try {
-      const { error } = await client.from('profiles').delete().eq('id', userId);
-      if (error) {
-        console.warn('Supabase user delete error:', error.message || error);
-      }
-    } catch (err) {
-      console.warn('Supabase user delete exception:', err);
+  try {
+    const { error } = await client.from('profiles').delete().eq('id', userId);
+    if (error) {
+      console.warn('Supabase user delete error:', error.message || error);
     }
-  }
-
-  if (config.url && config.anonKey) {
-    try {
-      const cleanUrl = config.url.replace(/\/+$/, '');
-      fetch(`${cleanUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
-        method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
-      }).catch(() => {});
-    } catch {}
+  } catch (err) {
+    console.warn('Supabase user delete exception:', err);
   }
 }
 
@@ -4568,11 +4541,7 @@ export async function deleteSystemErrorReportInSupabase(reportId: string): Promi
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/system_error_reports?id=eq.${encodeURIComponent(reportId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
     } catch {}
   }
@@ -4795,11 +4764,7 @@ export async function deletePostReportInSupabase(reportId: string): Promise<void
       const cleanUrl = config.url.replace(/\/+$/, '');
       fetch(`${cleanUrl}/rest/v1/post_reports?id=eq.${encodeURIComponent(reportId)}`, {
         method: 'DELETE',
-        headers: {
-          apikey: config.anonKey,
-          Authorization: `Bearer ${config.anonKey}`,
-          Prefer: 'return=minimal'
-        }
+        headers: await supabaseRestHeaders({ Prefer: 'return=minimal' })
       }).catch(() => {});
     } catch {}
   }
@@ -4868,14 +4833,17 @@ export async function submitDonationClaim(claimData: {
     window.dispatchEvent(new CustomEvent('c4e_donation_claim_broadcast', { detail: newClaim }));
   } catch {}
 
-  // Also notify server endpoint if running
-  try {
-    fetch('/api/bynogame/claim-donation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newClaim)
-    }).catch(() => {});
-  } catch {}
+  // Notify the backend ledger (authenticated; the server records the claim as UNVERIFIED
+  // and only an administrator can approve it).
+  apiFetch('/api/bynogame/claim-donation', {
+    method: 'POST',
+    json: {
+      username: cleanUsername,
+      amount: newClaim.amount,
+      message: newClaim.message,
+      reference_code: newClaim.reference_code
+    }
+  }).catch(() => {});
 
   return {
     success: true,
@@ -4884,85 +4852,55 @@ export async function submitDonationClaim(claimData: {
   };
 }
 
+/**
+ * Requests the Spark supporter perks for a user.
+ *
+ * SECURITY: the client cannot grant perks by itself any more. The backend checks the
+ * donation ledger (or administrator privileges) and writes the protected `supporter_tier`
+ * column with the service role key; the browser only reflects the result.
+ */
 export async function grantSparkPerksToUser(username: string): Promise<{ success: boolean; message?: string }> {
   const cleanUsername = (username || '').replace(/^@/, '').trim().toLowerCase();
-  const allUsers = loadStoredAllUsers();
-  const targetUser = allUsers.find(
-    (u) => (u.username && u.username.toLowerCase() === cleanUsername) || (u.id && u.id === cleanUsername)
-  );
+  if (!cleanUsername) {
+    return { success: false, message: 'Kullanıcı adı gereklidir.' };
+  }
 
-  const sparkBadge: BadgeItem = {
-    id: 'spark',
-    label: 'Spark Destekçi',
-    color: '#f59e0b',
-    icon: 'sparkles',
-    description:
-      'Code4Ever Bağışçısı özel Spark Destekçi rozetidir. 250MB tek seferde dosya yükleme ayrıcalığı ve altın parıltı tanır.'
-  };
+  const response = await apiFetchJson<{ success?: boolean; message?: string }>('/api/bynogame/claim-perks', {
+    method: 'POST',
+    json: { username: cleanUsername }
+  });
 
-  const local = loadStoredProfile();
-  const isLocalTarget =
-    local &&
-    ((local.username && local.username.toLowerCase() === cleanUsername) ||
-      (local.id && local.id === targetUser?.id) ||
-      (!targetUser && local.username.toLowerCase().includes(cleanUsername)));
-
-  const existingBadges: BadgeItem[] = targetUser?.badges || (isLocalTarget ? local?.badges || [] : []);
-  const hasBadge = existingBadges.some(
-    (b) => b.id === 'spark' || b.id === 'c4e_spark' || (b.label || '').toLowerCase().includes('spark')
-  );
-
-  const updatedBadges = hasBadge ? existingBadges : [...existingBadges, sparkBadge];
-  const sparkSub: UserSubscriptionInfo = {
-    planId: 'spark',
-    planName: 'Spark Destekçisi',
-    isActive: true,
-    assignedAt: new Date().toISOString(),
-    expiresAt: '2028-12-31T23:59:59Z'
-  };
-
-  const targetId = targetUser?.id || (isLocalTarget ? local?.id : undefined);
-
-  if (targetId) {
-    await updateUserProfileInSupabase(targetId, {
-      role: 'Spark',
-      badges: updatedBadges,
-      subscription: sparkSub
-    });
-  } else if (isLocalTarget && local) {
-    const updatedLocal = {
-      ...local,
-      role: 'Spark',
-      badges: updatedBadges,
-      subscription: sparkSub,
-      custom_fields: {
-        ...(local.custom_fields || {}),
-        badges: updatedBadges,
-        subscription: sparkSub
-      }
+  if (!response.ok || !response.data?.success) {
+    return {
+      success: false,
+      message:
+        response.data?.message ||
+        'Spark ayrıcalıkları doğrulanamadı. Bağışınız yönetici tarafından onaylandıktan sonra otomatik olarak tanımlanacaktır.'
     };
-    saveStoredProfile(updatedLocal);
   }
 
-  // Also create a celebratory system notification for the user
-  if (targetId) {
-    sendNotificationService({
-      id: 'notif_spark_' + Date.now(),
-      type: 'like',
-      recipient_id: targetId,
-      actor: {
-        username: 'code4ever',
-        display_name: 'Code4Ever Sistem',
-        avatar_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100'
-      },
-      content: 'Spark Destekçi rozetiniz ve 250MB tek seferlik dosya yükleme hakkınız aktif edildi! Teşekkür ederiz.',
-      time_ago: 'Şimdi',
-      is_read: false,
-      created_at: new Date().toISOString()
-    }).catch(() => {});
+  // Reflect the verified tier in the local caches so the UI updates immediately.
+  const local = loadStoredProfile();
+  if (local && (local.username || '').toLowerCase() === cleanUsername) {
+    const updatedLocal: UserProfile = {
+      ...local,
+      supporter_tier: 'spark',
+      custom_fields: { ...(local.custom_fields || {}), supporter_tier: 'spark' }
+    };
+    saveStoredProfile(normalizeProfile(updatedLocal));
   }
 
-  return { success: true, message: `@${cleanUsername} kullanıcısına Spark Destekçi rozeti ve yetkileri verildi!` };
+  const cachedUsers = loadStoredAllUsers();
+  const index = cachedUsers.findIndex((u) => (u.username || '').toLowerCase() === cleanUsername);
+  if (index !== -1) {
+    cachedUsers[index] = normalizeProfile({ ...cachedUsers[index], supporter_tier: 'spark' });
+    saveStoredAllUsers(cachedUsers);
+  }
+
+  return {
+    success: true,
+    message: response.data.message || `@${cleanUsername} kullanıcısına Spark Destekçi ayrıcalıkları tanımlandı!`
+  };
 }
 
 export async function verifyAndApproveDonation(
@@ -4988,14 +4926,11 @@ export async function verifyAndApproveDonation(
     window.dispatchEvent(new CustomEvent('c4e_donation_claim_broadcast', { detail: claim }));
   } catch {}
 
-  // Sync with server if available
-  try {
-    fetch('/api/bynogame/approve-donation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claimId, username: claim.username, adminUsername })
-    }).catch(() => {});
-  } catch {}
+  // Sync with the server ledger (administrator-only endpoint).
+  apiFetch('/api/bynogame/approve-donation', {
+    method: 'POST',
+    json: { claimId, username: claim.username, adminUsername }
+  }).catch(() => {});
 
   return { success: true, message: `@${claim.username} kullanıcısının bağışı onaylandı ve Spark rozeti tanımlandı.` };
 }
@@ -5016,8 +4951,10 @@ export async function rejectDonationClaim(claimId: string, reason?: string): Pro
 }
 
 export function subscribeToDonationClaims(
-  onUpdate: (claims: ByNoGameDonationClaim[]) => void
+  onUpdate: (claims: ByNoGameDonationClaim[]) => void,
+  options: { adminScope?: boolean } = {}
 ): () => void {
+  const adminScope = options.adminScope === true;
   // Initial delivery
   onUpdate(loadStoredDonations());
 
@@ -5028,12 +4965,14 @@ export function subscribeToDonationClaims(
 
   window.addEventListener('c4e_donation_claim_broadcast', handleBroadcast);
 
-  // Also poll server endpoint if available
+  // Poll the backend ledger. Regular users may only read their own records; the full
+  // supporter ledger is administrator-only.
   const pollServer = async () => {
     try {
-      const res = await fetch('/api/bynogame/donations');
+      const endpoint = adminScope ? '/api/bynogame/donations' : '/api/bynogame/my-donations';
+      const res = await apiFetchJson<{ donations?: any[] }>(endpoint);
       if (res.ok) {
-        const data = await res.json();
+        const data = res.data;
         if (data && Array.isArray(data.donations)) {
           const local = loadStoredDonations();
           const map = new Map<string, ByNoGameDonationClaim>();
@@ -5065,7 +5004,7 @@ export function subscribeToDonationClaims(
   };
 
   pollServer();
-  const interval = setInterval(pollServer, 15000);
+  const interval = setInterval(pollServer, 30000);
 
   return () => {
     window.removeEventListener('c4e_donation_claim_broadcast', handleBroadcast);

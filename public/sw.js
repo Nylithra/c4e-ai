@@ -40,15 +40,15 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass non-GET, API, Supabase, OAuth, Google and WebSockets
+  // Only same-origin GET requests are cached. Caching cross-origin responses would let a
+  // third-party host poison the cache with a script that then runs on our origin, and also
+  // risks storing personalised/authenticated responses in a shared cache.
   if (
     event.request.method !== 'GET' ||
+    url.origin !== self.location.origin ||
     url.pathname.startsWith('/api') ||
-    url.hostname.includes('supabase.co') ||
-    url.hostname.includes('googleapis.com') ||
-    url.hostname.includes('firebase') ||
-    url.hostname.includes('github.com') ||
-    url.protocol.startsWith('ws')
+    url.protocol.startsWith('ws') ||
+    event.request.headers.has('Authorization')
   ) {
     return;
   }
@@ -120,7 +120,18 @@ self.addEventListener('fetch', (event) => {
 // Push & Notification Click Handlers
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  // Only same-origin destinations: a push payload must never be able to open an arbitrary
+  // external page on the user's behalf.
+  const rawUrl = (event.notification.data && event.notification.data.url) || '/';
+  let targetUrl = '/';
+  try {
+    const resolved = new URL(rawUrl, self.location.origin);
+    if (resolved.origin === self.location.origin) {
+      targetUrl = resolved.href;
+    }
+  } catch (e) {
+    targetUrl = '/';
+  }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
@@ -149,7 +160,8 @@ self.addEventListener('push', (event) => {
         tag: data.tag || 'c4e-notification',
         renotify: true,
         data: {
-          url: data.url || '/'
+          // Resolved and origin-checked in the notificationclick handler above.
+          url: typeof data.url === 'string' ? data.url : '/'
         }
       };
       event.waitUntil(self.registration.showNotification(title, options));

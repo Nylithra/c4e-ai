@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Settings,
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Community, UserProfile } from '../types';
 import { ImageCropperModal } from './ImageCropperModal';
-import { sanitizeText, sanitizeUrl, validateUsername } from '../utils/securityHelper';
+import { sanitizeText, sanitizeUrl, validateUsername, verifyAdminAccess } from '../utils/securityHelper';
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 
 interface CommunitySettingsModalProps {
@@ -41,21 +41,16 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
   onDeleteCommunity,
   onTransferOwnership
 }) => {
-  if (!isOpen || !community) return null;
+  // NOTE: hooks must run on every render, so the `isOpen` bail-out happens *after* them.
+  // Previously the component returned before these hooks, which throws
+  // "Rendered more hooks than during the previous render" the moment this modal is kept
+  // mounted while closed (it only worked because the parent unmounts it today).
+  const [name, setName] = useState(community?.name || '');
+  const [handle, setHandle] = useState(community?.handle?.replace(/^@/, '') || '');
+  const [description, setDescription] = useState(community?.description || '');
+  const [avatarUrl, setAvatarUrl] = useState(community?.avatar_url || '');
+  const [bannerUrl, setBannerUrl] = useState(community?.banner_url || '');
 
-  const isOwner =
-    community.created_by === currentUser.id ||
-    community.creator_username?.toLowerCase() === currentUser.username.toLowerCase() ||
-    currentUser.isAdmin === true ||
-    currentUser.role === 'admin' ||
-    currentUser.role === 'Founder';
-
-  const [name, setName] = useState(community.name || '');
-  const [handle, setHandle] = useState(community.handle?.replace(/^@/, '') || '');
-  const [description, setDescription] = useState(community.description || '');
-  const [avatarUrl, setAvatarUrl] = useState(community.avatar_url || '');
-  const [bannerUrl, setBannerUrl] = useState(community.banner_url || '');
-  
   // Transfer ownership state
   const [transferTargetUsername, setTransferTargetUsername] = useState('');
   const [showTransferConfirm, setShowTransferConfirm] = useState(false);
@@ -73,6 +68,32 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep the form in sync when a different community is opened in the same modal instance.
+  useEffect(() => {
+    if (!community) return;
+    setName(community.name || '');
+    setHandle((community.handle || '').replace(/^@/, ''));
+    setDescription(community.description || '');
+    setAvatarUrl(community.avatar_url || '');
+    setBannerUrl(community.banner_url || '');
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setShowTransferConfirm(false);
+    setShowDeleteConfirm(false);
+    setDeleteConfirmationText('');
+    setTransferTargetUsername('');
+  }, [community?.id]);
+
+  if (!isOpen || !community) return null;
+
+  // SECURITY: ownership is decided by the community record and the database-backed
+  // administrator flag only. `role` is a free-text field the user edits on their own
+  // profile, so trusting it here let ANY user take over ANY community.
+  const isOwner =
+    community.created_by === currentUser.id ||
+    community.creator_username?.toLowerCase() === currentUser.username.toLowerCase() ||
+    verifyAdminAccess(currentUser);
 
   const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'banner') => {
     const file = e.target.files?.[0];

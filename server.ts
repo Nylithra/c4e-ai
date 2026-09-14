@@ -1,69 +1,104 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import { createServer as createViteServer } from 'vite';
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY,
+  asString,
+  attachOptionalAuth,
+  createSignedState,
+  env,
+  escapeHtml,
+  isPlainObject,
+  jsonForScript,
+  normalizeUsername,
+  rateLimit,
+  requireAdmin,
+  requireAuth,
+  safeEquals,
+  safeFetch,
+  supabaseConfigured,
+  verifySignedState,
+  hmacHex
+} from './src/server/security';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(env('PORT', '3000'));
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-app.use(express.json());
+/**
+ * `trust proxy` must reflect the real deployment, otherwise `req.ip` is either spoofable
+ * (when set too permissively) or always the proxy address (when unset behind a load
+ * balancer), which silently disables every per-IP rate limit.
+ */
+app.set('trust proxy', env('TRUST_PROXY', IS_PRODUCTION ? '1' : 'loopback'));
+app.disable('x-powered-by');
 
-const rateLimitWindowMs = 60000;
-const maxRequestsPerWindow = 60;
-const ipRequestStore = new Map<string, number[]>();
+// Small bodies only: every endpoint below exchanges JSON metadata, never media blobs.
+app.use(
+  express.json({
+    limit: '256kb',
+    verify: (req: Request, _res, buf) => {
+      // Keep the exact bytes around so inbound webhook signatures can be verified.
+      (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    }
+  })
+);
 
-const rateLimiterMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  const ip = req.ip || req.headers['x-forwarded-for']?.toString() || '127.0.0.1';
-  const now = Date.now();
-  const timestamps = ipRequestStore.get(ip) || [];
+// -------------------------------------------------------------
+// SECURITY HEADERS
+// -------------------------------------------------------------
 
-  const validTimestamps = timestamps.filter((t) => now - t < rateLimitWindowMs);
-
-  if (validTimestamps.length >= maxRequestsPerWindow) {
-    res.setHeader('X-RateLimit-Limit', maxRequestsPerWindow.toString());
-    res.setHeader('X-RateLimit-Remaining', '0');
-    res.setHeader('Retry-After', '60');
-    res.status(429).json({
-      error: 'Too Many Requests',
-      message: 'Rate limit exceeded. Please wait 60 seconds.'
-    });
-    return;
-  }
-
-  validTimestamps.push(now);
-  ipRequestStore.set(ip, validTimestamps);
-
-  res.setHeader('X-RateLimit-Limit', maxRequestsPerWindow.toString());
-  res.setHeader('X-RateLimit-Remaining', (maxRequestsPerWindow - validTimestamps.length).toString());
-
-  next();
-};
+const CSP_DIRECTIVES = [
+  "default-src 'self'",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.github.com https://github.com ws://localhost:* ws://127.0.0.1:*",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  // No 'unsafe-eval' and no wildcard host: only first-party scripts may execute.
+  "script-src 'self' 'unsafe-inline'",
+  "script-src-elem 'self' 'unsafe-inline'",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-src 'none'",
+  "frame-ancestors 'none'"
+].join('; ');
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; " +
-    "connect-src 'self' https://*.firebaseapp.com https://*.googleapis.com https://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://api.github.com https://github.com https: wss: ws:; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: https://apis.google.com https://*.gstatic.com https://*.firebaseapp.com https://*.googleapis.com blob: data:; " +
-    "script-src-elem 'self' 'unsafe-inline' 'unsafe-eval' https: https://apis.google.com https://*.gstatic.com https://*.firebaseapp.com https://*.googleapis.com blob: data:; " +
-    "img-src 'self' data: blob: https: https://avatars.githubusercontent.com https://raw.githubusercontent.com https://unavatar.io https://images.unsplash.com https://*.googleusercontent.com; " +
-    "style-src 'self' 'unsafe-inline' https:; " +
-    "font-src 'self' data: https:; " +
-    "frame-src 'self' https://*.firebaseapp.com https://*.google.com https://apis.google.com https:;"
-  );
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  res.setHeader('Content-Security-Policy', CSP_DIRECTIVES);
+  if (IS_PRODUCTION) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  // NOTE: X-XSS-Protection is deliberately NOT set. The legacy auditor is disabled in
+  // every current browser and its filter introduced vulnerabilities of its own.
   next();
 });
 
-app.get('/api/health', (req: Request, res: Response) => {
+// Attach the caller's Supabase identity (when present) before the routes run.
+app.use('/api', attachOptionalAuth);
+
+// Baseline limiter for the whole API surface; individual routes tighten it further.
+app.use('/api', rateLimit({ scope: 'api', windowMs: 60000, max: 120 }));
+
+app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     platform: 'Code4Ever (C4E)',
     timestamp: new Date().toISOString(),
-    e2ee_supported: true,
+    auth: supabaseConfigured() ? 'supabase' : 'unconfigured',
     webhooks_supported: true,
     rate_limiter: 'sliding_window_active'
   });
@@ -72,109 +107,92 @@ app.get('/api/health', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // WEBHOOK RELAY ENGINE (DISCORD, JUBBIO, TELEGRAM)
 // -------------------------------------------------------------
+// Every destination is validated by `safeFetch`: https only, host allow-listed, and the
+// resolved IP must be public. Without this an authenticated user could point the relay at
+// http://169.254.169.254/ (cloud metadata) or any internal service and read the response.
+
+const DISCORD_HOSTS = ['discord.com', 'discordapp.com', 'ptb.discord.com', 'canary.discord.com'];
+const TELEGRAM_HOSTS = ['api.telegram.org'];
+const JUBBIO_HOSTS = env('JUBBIO_ALLOWED_HOSTS', 'jubbio.com,*.jubbio.com')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean);
+
+const MAX_WEBHOOK_MESSAGE_LENGTH = 3500;
 
 async function sendDiscordWebhook(webhookUrl: string, message: string, botName?: string, avatarUrl?: string) {
   const payload = {
     content: message,
-    username: botName || 'Code4Ever Bot',
-    avatar_url: avatarUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200'
+    username: asString(botName, 80) || 'Code4Ever Bot',
+    avatar_url: asString(avatarUrl, 500) || undefined
   };
 
-  const response = await fetch(webhookUrl, {
+  const response = await safeFetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    allowedHosts: DISCORD_HOSTS,
+    timeoutMs: 12000
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Discord Webhook hatası (${response.status}): ${text || response.statusText}`);
+    throw new Error(`Discord Webhook hatası (${response.status}): ${response.text || response.statusText}`);
   }
   return true;
 }
 
-async function sendJubbioWebhook(config: { webhook_url?: string; bot_token?: string; guild_id?: string; channel_id?: string }, message: string) {
-  const cleanUrl = config.webhook_url ? config.webhook_url.trim() : '';
-  const cleanToken = config.bot_token ? config.bot_token.trim() : '';
-  const cleanChannelId = config.channel_id ? config.channel_id.trim() : '';
+async function sendJubbioWebhook(
+  config: { webhook_url?: string; bot_token?: string; guild_id?: string; channel_id?: string },
+  message: string
+) {
+  const cleanUrl = asString(config.webhook_url, 500);
+  const cleanToken = asString(config.bot_token, 300);
+  const cleanChannelId = asString(config.channel_id, 100).replace(/[^a-zA-Z0-9_-]/g, '');
 
   // 1. Direct Webhook URL if provided
-  if (cleanUrl.startsWith('http')) {
-    const payload = {
-      content: message,
-      text: message,
-      message: message,
-      username: 'Code4Ever Bot',
-      name: 'Code4Ever Bot',
-      platform: 'Code4Ever'
-    };
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-    let response: globalThis.Response;
-    try {
-      response = await fetch(cleanUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Code4Ever-Webhook/1.0',
-          'Accept': 'application/json, text/plain, */*'
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-    } catch (fetchErr: any) {
-      clearTimeout(timeoutId);
-      if (fetchErr.name === 'AbortError') {
-        throw new Error('Jubbio sunucusuna bağlanırken zaman aşımı (12s) oluştu.');
-      }
-      throw new Error(`Jubbio Webhook bağlantı hatası: ${fetchErr.message}`);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  if (cleanUrl) {
+    const response = await safeFetch(cleanUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Code4Ever-Webhook/1.0',
+        Accept: 'application/json, text/plain, */*'
+      },
+      body: JSON.stringify({
+        content: message,
+        text: message,
+        message,
+        username: 'Code4Ever Bot',
+        name: 'Code4Ever Bot',
+        platform: 'Code4Ever'
+      }),
+      allowedHosts: JUBBIO_HOSTS,
+      timeoutMs: 12000
+    });
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Jubbio Webhook hatası (${response.status}): ${text || response.statusText || 'Bilinmeyen yanıt'}`);
+      throw new Error(`Jubbio Webhook hatası (${response.status}): ${response.text || response.statusText || 'Bilinmeyen yanıt'}`);
     }
     return true;
   }
 
   // 2. Jubbio Bot API endpoint if bot token & channel id provided
   if (cleanToken && cleanChannelId) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-    let response: globalThis.Response;
-    try {
-      response = await fetch(`https://jubbio.com/api/v1/channels/${encodeURIComponent(cleanChannelId)}/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bot ${cleanToken.replace(/^Bot\s+/i, '')}`,
-          'User-Agent': 'Code4Ever-Webhook/1.0',
-          'Accept': 'application/json, text/plain, */*'
-        },
-        body: JSON.stringify({
-          content: message,
-          message: message
-        }),
-        signal: controller.signal
-      });
-    } catch (fetchErr: any) {
-      clearTimeout(timeoutId);
-      if (fetchErr.name === 'AbortError') {
-        throw new Error('Jubbio Bot API sunucusuna bağlanırken zaman aşımı (12s) oluştu.');
-      }
-      throw new Error(`Jubbio Bot API bağlantı hatası: ${fetchErr.message}`);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const response = await safeFetch(`https://jubbio.com/api/v1/channels/${encodeURIComponent(cleanChannelId)}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bot ${cleanToken.replace(/^Bot\s+/i, '')}`,
+        'User-Agent': 'Code4Ever-Webhook/1.0',
+        Accept: 'application/json, text/plain, */*'
+      },
+      body: JSON.stringify({ content: message, message }),
+      allowedHosts: JUBBIO_HOSTS,
+      timeoutMs: 12000
+    });
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Jubbio Bot API hatası (${response.status}): ${text || response.statusText || 'Bilinmeyen yanıt'}`);
+      throw new Error(`Jubbio Bot API hatası (${response.status}): ${response.text || response.statusText || 'Bilinmeyen yanıt'}`);
     }
     return true;
   }
@@ -183,13 +201,16 @@ async function sendJubbioWebhook(config: { webhook_url?: string; bot_token?: str
 }
 
 async function sendTelegramWebhook(botToken: string, chatId: string, message: string) {
-  const cleanToken = botToken.trim().replace(/^bot/i, '');
-  const cleanChatId = chatId.trim();
+  const cleanToken = asString(botToken, 200).replace(/^bot/i, '');
+  const cleanChatId = asString(chatId, 100);
+
+  if (!/^[A-Za-z0-9:_-]+$/.test(cleanToken)) {
+    throw new Error('Geçersiz Telegram Bot Token biçimi.');
+  }
 
   const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
-  
-  // Try Markdown first
-  let response = await fetch(url, {
+
+  let response = await safeFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -197,25 +218,34 @@ async function sendTelegramWebhook(botToken: string, chatId: string, message: st
       text: message,
       parse_mode: 'Markdown',
       disable_web_page_preview: false
-    })
+    }),
+    allowedHosts: TELEGRAM_HOSTS,
+    timeoutMs: 12000
   });
 
-  // Fallback to plain text if Markdown format fails
+  // Fallback to plain text if the Markdown parse fails on Telegram's side
   if (!response.ok) {
-    response = await fetch(url, {
+    response = await safeFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: cleanChatId,
         text: message.replace(/[*_`[\]()]/g, ''),
         disable_web_page_preview: false
-      })
+      }),
+      allowedHosts: TELEGRAM_HOSTS,
+      timeoutMs: 12000
     });
   }
 
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(`Telegram API hatası (${response.status}): ${data.description || 'Geçersiz Bot Token veya Chat ID'}`);
+    let description = '';
+    try {
+      description = JSON.parse(response.text || '{}').description || '';
+    } catch {
+      /* ignore malformed error payloads */
+    }
+    throw new Error(`Telegram API hatası (${response.status}): ${description || 'Geçersiz Bot Token veya Chat ID'}`);
   }
   return true;
 }
@@ -223,74 +253,97 @@ async function sendTelegramWebhook(botToken: string, chatId: string, message: st
 // -------------------------------------------------------------
 // POST DELETION & MULTI-DEVICE SYNC ENGINE
 // -------------------------------------------------------------
+// The deletion itself is performed with the CALLER's Supabase access token, so Row Level
+// Security decides whether they own the post. The previous implementation accepted
+// attacker supplied Supabase credentials and deleted any post for any anonymous caller.
+
+const MAX_TRACKED_DELETIONS = 5000;
 const globalDeletedPostIds = new Set<string>();
 
-app.get('/api/posts/deleted', (req: Request, res: Response) => {
+function trackDeletedPost(postId: string): void {
+  globalDeletedPostIds.add(postId);
+  if (globalDeletedPostIds.size > MAX_TRACKED_DELETIONS) {
+    const overflow = globalDeletedPostIds.size - MAX_TRACKED_DELETIONS;
+    let removed = 0;
+    for (const id of globalDeletedPostIds) {
+      globalDeletedPostIds.delete(id);
+      if (++removed >= overflow) break;
+    }
+  }
+}
+
+app.get('/api/posts/deleted', (_req: Request, res: Response) => {
   res.json({ success: true, deleted_ids: Array.from(globalDeletedPostIds) });
 });
 
-app.post('/api/posts/delete', rateLimiterMiddleware, async (req: Request, res: Response) => {
-  const { postId, customSupabaseUrl, customSupabaseAnonKey } = req.body || {};
+app.post(
+  '/api/posts/delete',
+  requireAuth,
+  rateLimit({ scope: 'post-delete', windowMs: 60000, max: 30, perUser: true }),
+  async (req: Request, res: Response) => {
+    const postId = asString(req.body?.postId, 120);
 
-  if (!postId || typeof postId !== 'string') {
-    res.status(400).json({ success: false, error: 'postId gereklidir.' });
-    return;
-  }
+    if (!postId) {
+      res.status(400).json({ success: false, error: 'postId gereklidir.' });
+      return;
+    }
 
-  globalDeletedPostIds.add(postId);
+    const accessToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    let supabaseDeleted = false;
+    let supabaseError: string | null = null;
 
-  const supabaseUrl = (customSupabaseUrl || process.env.VITE_SUPABASE_URL || '').trim();
-  const supabaseKey = (customSupabaseAnonKey || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+    if (SUPABASE_URL && SUPABASE_ANON_KEY && accessToken) {
+      const endpoint = `${SUPABASE_URL}/rest/v1/posts?id=eq.${encodeURIComponent(postId)}`;
+      const headers = {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      };
 
-  let supabaseDeleted = false;
-  let supabaseError = null;
-
-  if (supabaseUrl && supabaseKey) {
-    try {
-      const cleanUrl = supabaseUrl.replace(/\/+$/, '');
-      
-      // 1. Direct REST DELETE call to Supabase
-      const deleteRes = await fetch(`${cleanUrl}/rest/v1/posts?id=eq.${encodeURIComponent(postId)}`, {
-        method: 'DELETE',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Prefer': 'return=representation'
-        }
-      });
-
-      if (deleteRes.ok) {
-        supabaseDeleted = true;
-      } else {
-        // 2. Fallback Soft-Delete PATCH in case DELETE policy was restrictive
-        const patchRes = await fetch(`${cleanUrl}/rest/v1/posts?id=eq.${encodeURIComponent(postId)}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`
-          },
-          body: JSON.stringify({ is_deleted: true, content: '[DELETED]' })
+      try {
+        const deleteRes = await safeFetch(endpoint, {
+          method: 'DELETE',
+          headers: { ...headers, Prefer: 'return=representation' },
+          timeoutMs: 10000
         });
-        if (patchRes.ok) {
+
+        if (deleteRes.ok) {
           supabaseDeleted = true;
         } else {
-          supabaseError = await patchRes.text().catch(() => 'Supabase RLS error');
+          // Soft-delete fallback for deployments whose DELETE policy is stricter than UPDATE.
+          const patchRes = await safeFetch(endpoint, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ is_deleted: true, content: '[DELETED]' }),
+            timeoutMs: 10000
+          });
+          if (patchRes.ok) {
+            supabaseDeleted = true;
+          } else {
+            supabaseError = 'Bu gönderiyi silme yetkiniz yok.';
+          }
         }
+      } catch (err: any) {
+        supabaseError = err?.message || 'Network error';
       }
-    } catch (err: any) {
-      supabaseError = err?.message || 'Network error';
+    } else {
+      supabaseError = 'Supabase yapılandırılmamış.';
     }
-  }
 
-  res.json({
-    success: true,
-    postId,
-    supabaseDeleted,
-    supabaseError,
-    message: 'Gönderi başarıyla silindi ve tüm cihazlarda senkronize edildi.'
-  });
-});
+    if (!supabaseDeleted) {
+      res.status(403).json({ success: false, postId, error: supabaseError || 'Silme işlemi reddedildi.' });
+      return;
+    }
+
+    trackDeletedPost(postId);
+    res.json({
+      success: true,
+      postId,
+      supabaseDeleted,
+      message: 'Gönderi başarıyla silindi ve tüm cihazlarda senkronize edildi.'
+    });
+  }
+);
 
 // -------------------------------------------------------------
 // COMMUNITY CODE SHARING HTTP API (REST & WEBHOOKS)
@@ -299,20 +352,21 @@ interface CommunityStore {
   id: string;
   name: string;
   handle: string;
-  api_key?: string;
   avatar_url?: string;
   description?: string;
 }
 
+// NOTE: API keys are never stored or served from here. They used to be hard-coded live
+// credentials committed to a public repository.
 const inMemoryCommunities: CommunityStore[] = [
-  { id: 'comm_react', name: 'React Türkiye', handle: '@react_tr', api_key: 'c4e_comm_react_tr_live', description: 'React, Vite, Next.js ekosistemi' },
-  { id: 'comm_backend', name: 'Backend & System Arch', handle: '@backend_devs', api_key: 'c4e_comm_backend_live', description: 'Node.js, Go, Rust, microservices' },
-  { id: 'comm_ai', name: 'AI & Machine Learning', handle: '@ai_agents', api_key: 'c4e_comm_ai_live', description: 'LLMs, AI agents, PyTorch' },
-  { id: 'comm_cyber', name: 'Cyber Security & E2EE', handle: '@cyber_sec', api_key: 'c4e_comm_cyber_live', description: 'Security, cryptography and E2EE' }
+  { id: 'comm_react', name: 'React Türkiye', handle: '@react_tr', description: 'React, Vite, Next.js ekosistemi' },
+  { id: 'comm_backend', name: 'Backend & System Arch', handle: '@backend_devs', description: 'Node.js, Go, Rust, microservices' },
+  { id: 'comm_ai', name: 'AI & Machine Learning', handle: '@ai_agents', description: 'LLMs, AI agents, PyTorch' },
+  { id: 'comm_cyber', name: 'Cyber Security & E2EE', handle: '@cyber_sec', description: 'Security, cryptography and E2EE' }
 ];
 
 // 1. List Communities & API Documentation
-app.get(['/api/v1/communities', '/api/communities'], (req: Request, res: Response) => {
+app.get(['/api/v1/communities', '/api/communities'], (_req: Request, res: Response) => {
   res.json({
     success: true,
     api_version: 'v1',
@@ -320,7 +374,7 @@ app.get(['/api/v1/communities', '/api/communities'], (req: Request, res: Respons
     endpoints: {
       list_communities: 'GET /api/v1/communities',
       get_community_posts: 'GET /api/v1/communities/:handle/posts',
-      publish_code_post: 'POST /api/v1/communities/:handle/posts (or /api/v1/community/post)',
+      publish_code_post: 'POST /api/v1/communities/:handle/posts (or /api/v1/community/post)'
     },
     payload_example: {
       content: 'Burada paylaşılan kod hakkında açıklama',
@@ -330,7 +384,7 @@ app.get(['/api/v1/communities', '/api/communities'], (req: Request, res: Respons
       author_name: 'API Developer',
       author_username: 'api_dev'
     },
-    communities: inMemoryCommunities.map(c => ({
+    communities: inMemoryCommunities.map((c) => ({
       id: c.id,
       name: c.name,
       handle: c.handle,
@@ -341,37 +395,40 @@ app.get(['/api/v1/communities', '/api/communities'], (req: Request, res: Respons
 });
 
 // 2. Fetch Posts for a Community
-app.get(['/api/v1/communities/:handle/posts', '/api/communities/:handle/posts'], async (req: Request, res: Response) => {
-  const rawHandle = req.params.handle || '';
-  const cleanHandle = rawHandle.startsWith('@') ? rawHandle.toLowerCase() : `@${rawHandle.toLowerCase()}`;
-
-  const supabaseUrl = (process.env.VITE_SUPABASE_URL || '').trim();
-  const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || '').trim();
-
-  if (supabaseUrl && supabaseKey) {
-    try {
-      const cleanUrl = supabaseUrl.replace(/\/+$/, '');
-      const fetchRes = await fetch(
-        `${cleanUrl}/rest/v1/posts?community_handle=eq.${encodeURIComponent(cleanHandle)}&is_deleted=eq.false&order=created_at.desc&limit=50`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`
-          }
-        }
-      );
-      if (fetchRes.ok) {
-        const posts = await fetchRes.json();
-        res.json({ success: true, community_handle: cleanHandle, count: posts.length, posts });
-        return;
-      }
-    } catch (e: any) {
-      console.warn('Supabase fetch community posts error:', e?.message);
+app.get(
+  ['/api/v1/communities/:handle/posts', '/api/communities/:handle/posts'],
+  rateLimit({ scope: 'community-posts', windowMs: 60000, max: 60 }),
+  async (req: Request, res: Response) => {
+    const rawHandle = normalizeUsername(req.params.handle);
+    if (!rawHandle) {
+      res.status(400).json({ success: false, error: 'Geçersiz topluluk adresi.' });
+      return;
     }
-  }
+    const cleanHandle = `@${rawHandle}`;
 
-  res.json({ success: true, community_handle: cleanHandle, count: 0, posts: [] });
-});
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      try {
+        const fetchRes = await safeFetch(
+          `${SUPABASE_URL}/rest/v1/posts?community_handle=eq.${encodeURIComponent(cleanHandle)}&is_deleted=eq.false&order=created_at.desc&limit=50`,
+          {
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+            timeoutMs: 10000,
+            maxResponseBytes: 1024 * 1024
+          }
+        );
+        if (fetchRes.ok) {
+          const posts = JSON.parse(fetchRes.text || '[]');
+          res.json({ success: true, community_handle: cleanHandle, count: posts.length, posts });
+          return;
+        }
+      } catch (e: any) {
+        console.warn('Supabase fetch community posts error:', e?.message);
+      }
+    }
+
+    res.json({ success: true, community_handle: cleanHandle, count: 0, posts: [] });
+  }
+);
 
 // 3. Publish Code / Post to Community via HTTP Request
 app.post(
@@ -382,291 +439,381 @@ app.post(
     '/api/v1/community/publish',
     '/api/community/post'
   ],
-  rateLimiterMiddleware,
-  async (req: Request, res: Response) => {
+  rateLimit({ scope: 'community-publish', windowMs: 60000, max: 20 }),
+  async (_req: Request, res: Response) => {
     // Community API is in Closed Beta
     res.status(503).json({
       success: false,
       status: 'beta_locked',
-      error: 'Topluluk HTTP API şu anda Kapalı Beta aşamasındadır ve harici paylaşımlara geçici olarak kapalıdır. / Community HTTP API is currently in Closed Beta and temporarily disabled.',
+      error:
+        'Topluluk HTTP API şu anda Kapalı Beta aşamasındadır ve harici paylaşımlara geçici olarak kapalıdır. / Community HTTP API is currently in Closed Beta and temporarily disabled.',
       documentation: '/api/v1/communities'
     });
   }
 );
 
-// Webhook Test Endpoint
-app.post('/api/integrations/webhook/test', rateLimiterMiddleware, async (req: Request, res: Response) => {
-  const { platform, config, message } = req.body || {};
+// Webhook Test Endpoint — authenticated: it makes the server perform an outbound request.
+app.post(
+  '/api/integrations/webhook/test',
+  requireAuth,
+  rateLimit({ scope: 'webhook-test', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const platform = asString(req.body?.platform, 20).toLowerCase();
+    const message = asString(req.body?.message, MAX_WEBHOOK_MESSAGE_LENGTH);
+    const config = isPlainObject(req.body?.config) ? (req.body.config as Record<string, string>) : {};
 
-  if (!platform || !message) {
-    res.status(400).json({ success: false, error: 'Platform ve mesaj parametresi zorunludur.' });
-    return;
-  }
+    if (!platform || !message) {
+      res.status(400).json({ success: false, error: 'Platform ve mesaj parametresi zorunludur.' });
+      return;
+    }
 
-  try {
-    if (platform === 'discord') {
-      if (!config?.webhook_url || !config.webhook_url.startsWith('http')) {
-        res.status(400).json({ success: false, error: 'Lütfen geçerli bir Discord Webhook URL adresi girin.' });
+    try {
+      if (platform === 'discord') {
+        if (!config.webhook_url) {
+          res.status(400).json({ success: false, error: 'Lütfen geçerli bir Discord Webhook URL adresi girin.' });
+          return;
+        }
+        await sendDiscordWebhook(config.webhook_url, message, config.bot_name, config.avatar_url);
+        res.json({ success: true, platform, message: 'Discord test mesajı başarıyla gönderildi!' });
         return;
       }
-      await sendDiscordWebhook(config.webhook_url, message, config.bot_name, config.avatar_url);
-      res.json({ success: true, platform, message: 'Discord test mesajı başarıyla gönderildi!' });
-      return;
-    }
 
-    if (platform === 'jubbio') {
-      await sendJubbioWebhook(config || {}, message);
-      res.json({ success: true, platform, message: 'Jubbio test mesajı başarıyla iletildi!' });
-      return;
-    }
-
-    if (platform === 'telegram') {
-      if (!config?.bot_token || !config?.chat_id) {
-        res.status(400).json({ success: false, error: 'Lütfen Telegram Bot Token ve Chat ID bilgilerini eksiksiz girin.' });
+      if (platform === 'jubbio') {
+        await sendJubbioWebhook(config, message);
+        res.json({ success: true, platform, message: 'Jubbio test mesajı başarıyla iletildi!' });
         return;
       }
-      await sendTelegramWebhook(config.bot_token, config.chat_id, message);
-      res.json({ success: true, platform, message: 'Telegram test bildirimi başarıyla gönderildi!' });
-      return;
-    }
 
-    res.status(400).json({ success: false, error: 'Desteklenmeyen platform tipi: ' + platform });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || 'Webhook gönderilirken beklenmeyen bir hata oluştu.' });
+      if (platform === 'telegram') {
+        if (!config.bot_token || !config.chat_id) {
+          res.status(400).json({ success: false, error: 'Lütfen Telegram Bot Token ve Chat ID bilgilerini eksiksiz girin.' });
+          return;
+        }
+        await sendTelegramWebhook(config.bot_token, config.chat_id, message);
+        res.json({ success: true, platform, message: 'Telegram test bildirimi başarıyla gönderildi!' });
+        return;
+      }
+
+      res.status(400).json({ success: false, error: 'Desteklenmeyen platform tipi.' });
+    } catch (err: any) {
+      res.status(502).json({ success: false, error: err?.message || 'Webhook gönderilirken beklenmeyen bir hata oluştu.' });
+    }
   }
-});
+);
 
 // Webhook Bulk Send for Job Applications
-app.post('/api/integrations/webhook/send', rateLimiterMiddleware, async (req: Request, res: Response) => {
-  const { settings, message } = req.body || {};
-  if (!settings || !message) {
-    res.status(400).json({ success: false, error: 'Eksik parametreler.' });
+app.post(
+  '/api/integrations/webhook/send',
+  requireAuth,
+  rateLimit({ scope: 'webhook-send', windowMs: 60000, max: 20, perUser: true }),
+  async (req: Request, res: Response) => {
+    const settings = isPlainObject(req.body?.settings) ? (req.body.settings as Record<string, any>) : null;
+    const message = asString(req.body?.message, MAX_WEBHOOK_MESSAGE_LENGTH);
+
+    if (!settings || !message) {
+      res.status(400).json({ success: false, error: 'Eksik parametreler.' });
+      return;
+    }
+
+    const results: Array<{ platform: string; success: boolean; error?: string }> = [];
+
+    if (settings.discord?.enabled && settings.discord?.webhook_url) {
+      try {
+        await sendDiscordWebhook(settings.discord.webhook_url, message, settings.discord.bot_name, settings.discord.avatar_url);
+        results.push({ platform: 'discord', success: true });
+      } catch (e: any) {
+        results.push({ platform: 'discord', success: false, error: e?.message });
+      }
+    }
+
+    if (settings.jubbio?.enabled && (settings.jubbio?.webhook_url || (settings.jubbio?.bot_token && settings.jubbio?.channel_id))) {
+      try {
+        await sendJubbioWebhook(settings.jubbio, message);
+        results.push({ platform: 'jubbio', success: true });
+      } catch (e: any) {
+        results.push({ platform: 'jubbio', success: false, error: e?.message });
+      }
+    }
+
+    if (settings.telegram?.enabled && settings.telegram?.bot_token && settings.telegram?.chat_id) {
+      try {
+        await sendTelegramWebhook(settings.telegram.bot_token, settings.telegram.chat_id, message);
+        results.push({ platform: 'telegram', success: true });
+      } catch (e: any) {
+        results.push({ platform: 'telegram', success: false, error: e?.message });
+      }
+    }
+
+    res.json({ success: true, results });
+  }
+);
+
+// -------------------------------------------------------------
+// GITHUB OAUTH
+// -------------------------------------------------------------
+
+function appOrigin(): string {
+  const configured = env('APP_URL');
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      /* fall through to the default below */
+    }
+  }
+  return `http://localhost:${PORT}`;
+}
+
+app.get('/api/auth/github/url', rateLimit({ scope: 'oauth-url', windowMs: 60000, max: 30 }), (_req: Request, res: Response) => {
+  const clientId = env('GITHUB_CLIENT_ID');
+  if (!clientId) {
+    res.status(503).json({ error: 'GitHub OAuth yapılandırılmamış (GITHUB_CLIENT_ID eksik).' });
     return;
   }
 
-  const results: any[] = [];
-
-  // 1. Discord
-  if (settings.discord?.enabled && settings.discord?.webhook_url) {
-    try {
-      await sendDiscordWebhook(settings.discord.webhook_url, message, settings.discord.bot_name, settings.discord.avatar_url);
-      results.push({ platform: 'discord', success: true });
-    } catch (e: any) {
-      results.push({ platform: 'discord', success: false, error: e?.message });
-    }
-  }
-
-  // 2. Jubbio
-  if (settings.jubbio?.enabled && (settings.jubbio?.webhook_url || (settings.jubbio?.bot_token && settings.jubbio?.channel_id))) {
-    try {
-      await sendJubbioWebhook(settings.jubbio, message);
-      results.push({ platform: 'jubbio', success: true });
-    } catch (e: any) {
-      results.push({ platform: 'jubbio', success: false, error: e?.message });
-    }
-  }
-
-  // 3. Telegram
-  if (settings.telegram?.enabled && settings.telegram?.bot_token && settings.telegram?.chat_id) {
-    try {
-      await sendTelegramWebhook(settings.telegram.bot_token, settings.telegram.chat_id, message);
-      results.push({ platform: 'telegram', success: true });
-    } catch (e: any) {
-      results.push({ platform: 'telegram', success: false, error: e?.message });
-    }
-  }
-
-  res.json({ success: true, results });
-});
-
-// GitHub OAuth URL Endpoint
-app.get('/api/auth/github/url', (req: Request, res: Response) => {
-  const clientId = process.env.GITHUB_CLIENT_ID || 'Ov23li4E4ExampleId';
-  const appUrl = process.env.APP_URL || 'https://ais-dev-ysbofutgtb2x4oupnkmwcm-375020542742.europe-west2.run.app';
-  const redirectUri = `${appUrl}/api/auth/github/callback`;
-
+  const redirectUri = `${appOrigin()}/api/auth/github/callback`;
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: 'read:user user:email repo',
-    state: 'c4e_oauth_state_' + Date.now()
+    // Least privilege: repository *write* access is never needed to list public repos.
+    scope: 'read:user user:email public_repo',
+    // Signed, expiring state so the callback can detect CSRF / replayed authorizations.
+    state: createSignedState()
   });
 
-  const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
-  res.json({ url: authUrl, redirect_uri: redirectUri });
+  res.json({ url: `https://github.com/login/oauth/authorize?${params.toString()}`, redirect_uri: redirectUri });
 });
 
-// GitHub OAuth Callback Route
-app.get(['/api/auth/github/callback', '/api/auth/github/callback/'], async (req: Request, res: Response) => {
-  const code = req.query.code as string;
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+app.get(
+  ['/api/auth/github/callback', '/api/auth/github/callback/'],
+  rateLimit({ scope: 'oauth-callback', windowMs: 60000, max: 30 }),
+  async (req: Request, res: Response) => {
+    const code = asString(req.query.code, 200);
+    const state = asString(req.query.state, 200);
+    const clientId = env('GITHUB_CLIENT_ID');
+    const clientSecret = env('GITHUB_CLIENT_SECRET');
 
-  let githubUser: any = {
-    login: 'github_developer',
-    name: 'GitHub Developer',
-    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    bio: 'Full-stack developer synced via GitHub OAuth.'
-  };
-
-  if (code && clientId && clientSecret) {
-    try {
-      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code
-        })
-      });
-      const tokenData = await tokenRes.json();
-      if (tokenData.access_token) {
-        const userRes = await fetch('https://api.github.com/user', {
-          headers: {
-            'Authorization': `Bearer ${tokenData.access_token}`,
-            'User-Agent': 'Code4Ever-Platform'
+    const renderBridge = (payload: { ok: boolean; user?: unknown; error?: string }) => {
+      const targetOrigin = appOrigin();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Code4Ever GitHub OAuth</title>
+    <style>
+      body { background: #09090b; color: #f4f4f5; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+      .card { background: #121215; padding: 24px; border-radius: 16px; border: 1px solid #27272a; text-align: center; max-width: 420px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>${payload.ok ? 'Code4Ever GitHub Eşleşmesi Başarılı!' : 'GitHub Bağlantısı Tamamlanamadı'}</h2>
+      <p>${escapeHtml(payload.ok ? 'Yönlendiriliyorsunuz...' : payload.error || 'Lütfen tekrar deneyin.')}</p>
+      <script>
+        (function () {
+          var payload = ${jsonForScript(payload)};
+          if (window.opener) {
+            // SECURITY: never postMessage to "*" — that hands the GitHub profile (and any
+            // future token) to whatever page happens to have opened this popup.
+            window.opener.postMessage(
+              { type: payload.ok ? 'OAUTH_AUTH_SUCCESS' : 'OAUTH_AUTH_ERROR', user: payload.user, error: payload.error },
+              ${jsonForScript(targetOrigin)}
+            );
+            window.close();
+          } else {
+            window.location.href = '/';
           }
-        });
-        githubUser = await userRes.json();
+        })();
+      </script>
+    </div>
+  </body>
+</html>`);
+    };
+
+    if (!verifySignedState(state)) {
+      renderBridge({ ok: false, error: 'Güvenlik doğrulaması başarısız (geçersiz veya süresi dolmuş state).' });
+      return;
+    }
+
+    if (!code || !clientId || !clientSecret) {
+      renderBridge({ ok: false, error: 'GitHub OAuth yapılandırması eksik.' });
+      return;
+    }
+
+    try {
+      const tokenRes = await safeFetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+        allowedHosts: ['github.com'],
+        timeoutMs: 10000
+      });
+
+      const tokenData = JSON.parse(tokenRes.text || '{}');
+      if (!tokenData.access_token) {
+        renderBridge({ ok: false, error: 'GitHub yetkilendirme kodu doğrulanamadı.' });
+        return;
       }
-    } catch (err) {
-      console.error('GitHub token exchange error:', err);
+
+      const userRes = await safeFetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          'User-Agent': 'Code4Ever-Platform',
+          Accept: 'application/vnd.github+json'
+        },
+        allowedHosts: ['api.github.com'],
+        timeoutMs: 10000
+      });
+
+      const githubUser = JSON.parse(userRes.text || '{}');
+
+      // Only the fields the client actually renders leave the server. The raw GitHub
+      // response carries e-mail addresses and account metadata that nothing here needs.
+      renderBridge({
+        ok: true,
+        user: {
+          login: asString(githubUser.login, 80),
+          name: asString(githubUser.name, 120),
+          avatar_url: asString(githubUser.avatar_url, 500),
+          bio: asString(githubUser.bio, 300),
+          html_url: asString(githubUser.html_url, 300)
+        }
+      });
+    } catch (err: any) {
+      console.error('GitHub token exchange error:', err?.message);
+      renderBridge({ ok: false, error: 'GitHub ile iletişim kurulamadı.' });
     }
   }
-
-  res.send(`
-    <!Process HTML>
-    <html>
-      <head>
-        <title>Code4Ever GitHub OAuth</title>
-        <style>
-          body { background: #09090b; color: #f4f4f5; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-          .card { background: #121215; padding: 24px; border-radius: 16px; border: 1px solid #27272a; text-align: center; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>Code4Ever GitHub Eşleşmesi Başarılı!</h2>
-          <p>Yönlendiriliyorsunuz...</p>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({
-                type: 'OAUTH_AUTH_SUCCESS',
-                user: ${JSON.stringify(githubUser)}
-              }, '*');
-              window.close();
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-        </div>
-      </body>
-    </html>
-  `);
-});
+);
 
 // Proxy GitHub user public repositories
-app.get('/api/github/repos', async (req: Request, res: Response) => {
-  const username = (req.query.username as string) || 'octocat';
+app.get('/api/github/repos', rateLimit({ scope: 'github-repos', windowMs: 60000, max: 30 }), async (req: Request, res: Response) => {
+  const username = asString(req.query.username, 40) || 'octocat';
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
+    res.status(400).json({ error: 'Geçersiz GitHub kullanıcı adı.' });
+    return;
+  }
+
   try {
-    const response = await fetch(`https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=15`, {
-      headers: {
-        'User-Agent': 'Code4Ever-Platform'
+    const response = await safeFetch(
+      `https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=15`,
+      {
+        headers: { 'User-Agent': 'Code4Ever-Platform', Accept: 'application/vnd.github+json' },
+        allowedHosts: ['api.github.com'],
+        timeoutMs: 10000,
+        maxResponseBytes: 512 * 1024
       }
-    });
+    );
     if (!response.ok) {
-      res.status(response.status).json({ error: 'GitHub kullanıcısı veya depoları bulunamadı.' });
+      res.status(response.status === 404 ? 404 : 502).json({ error: 'GitHub kullanıcısı veya depoları bulunamadı.' });
       return;
     }
-    const repos = await response.json();
-    res.json({ success: true, username, repos });
-  } catch (error) {
-    res.status(500).json({ error: 'GitHub sunucusuna bağlanırken hata oluştu.' });
+    res.json({ success: true, username, repos: JSON.parse(response.text || '[]') });
+  } catch {
+    res.status(502).json({ error: 'GitHub sunucusuna bağlanırken hata oluştu.' });
   }
 });
 
-app.post('/api/everychat', rateLimiterMiddleware, async (req: Request, res: Response) => {
-  const { messages } = req.body || {};
-  const groqKey = process.env.GROQ_API_KEY;
+// -------------------------------------------------------------
+// EVERYCHAT (LLM PROXY)
+// -------------------------------------------------------------
+// Authenticated + tightly rate limited: this endpoint spends money on every call, and an
+// open proxy in front of a paid LLM API is abused within hours of going live.
 
-  if (!groqKey) {
-    res.status(400).json({
-      error: 'Groq API Key henüz ayarlanmamış. Lütfen sunucunuza GROQ_API_KEY ekleyin.'
-    });
-    return;
-  }
+const MAX_CHAT_MESSAGES = 20;
+const MAX_CHAT_CHARS = 6000;
 
-  if (!Array.isArray(messages) || messages.length === 0) {
-    res.status(400).json({ error: 'Geçerli bir sohbet mesaj listesi gerekli.' });
-    return;
-  }
+app.post(
+  '/api/everychat',
+  requireAuth,
+  rateLimit({ scope: 'everychat', windowMs: 5 * 60000, max: 25, perUser: true }),
+  async (req: Request, res: Response) => {
+    const groqKey = env('GROQ_API_KEY');
+    if (!groqKey) {
+      res.status(503).json({ error: 'Groq API Key henüz ayarlanmamış. Lütfen sunucunuza GROQ_API_KEY ekleyin.' });
+      return;
+    }
 
-  try {
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${groqKey}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          {
-            role: 'system',
-            content: 'Sen Code4Ever platformunda sadece nylithra kişisine özel geliştirilmiş "EveryChat (Beta)" Llama 3.3 70B yapay zeka asistanısın. Yazılım, mimari, kodlama ve teknoloji alanlarında son derece uzman, nazik ve hızlı yanıtlar verirsin.'
-          },
-          ...messages
-        ],
-        temperature: 0.7,
-        max_tokens: 2048
-      })
-    });
+    const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    if (rawMessages.length === 0) {
+      res.status(400).json({ error: 'Geçerli bir sohbet mesaj listesi gerekli.' });
+      return;
+    }
 
-    if (!groqRes.ok) {
-      const errText = await groqRes.text();
-      res.status(groqRes.status).json({
-        error: `Groq API Hatası (${groqRes.status}): ${errText}`
+    const messages = rawMessages
+      .slice(-MAX_CHAT_MESSAGES)
+      .filter((entry: unknown) => isPlainObject(entry) && typeof entry.content === 'string')
+      .map((entry: any) => ({
+        role: ['user', 'assistant'].includes(entry.role) ? entry.role : 'user',
+        content: asString(entry.content, 4000)
+      }))
+      .filter((entry: { content: string }) => entry.content.length > 0);
+
+    const totalChars = messages.reduce((sum: number, entry: { content: string }) => sum + entry.content.length, 0);
+    if (messages.length === 0 || totalChars > MAX_CHAT_CHARS) {
+      res.status(400).json({ error: 'Sohbet içeriği çok uzun veya geçersiz.' });
+      return;
+    }
+
+    try {
+      const groqRes = await safeFetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${groqKey}` },
+        body: JSON.stringify({
+          model: env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Sen Code4Ever platformunun "EveryChat (Beta)" yapay zeka asistanısın. Yazılım, mimari, kodlama ve teknoloji alanlarında son derece uzman, nazik ve hızlı yanıtlar verirsin.'
+            },
+            ...messages
+          ],
+          temperature: 0.7,
+          max_tokens: 2048
+        }),
+        allowedHosts: ['api.groq.com'],
+        timeoutMs: 45000,
+        maxResponseBytes: 256 * 1024
       });
-      return;
+
+      if (!groqRes.ok) {
+        // Upstream error text can contain provider internals — log it, don't echo it.
+        console.warn('Groq API error:', groqRes.status, groqRes.text.slice(0, 300));
+        res.status(502).json({ error: `EveryChat sağlayıcısı yanıt veremedi (${groqRes.status}).` });
+        return;
+      }
+
+      const data = JSON.parse(groqRes.text || '{}');
+      res.json({ success: true, reply: data.choices?.[0]?.message?.content || 'Yanıt alınamadı.', model: data.model });
+    } catch (err: any) {
+      console.warn('EveryChat error:', err?.message);
+      res.status(502).json({ error: 'EveryChat sunucu hatası.' });
     }
-
-    const data = await groqRes.json();
-    const reply = data.choices?.[0]?.message?.content || 'Yanıt alınamadı.';
-    res.json({ success: true, reply, model: data.model });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'EveryChat sunucu hatası.' });
   }
+);
+
+app.post('/api/rate-limit-test', rateLimit({ scope: 'rate-limit-test', windowMs: 60000, max: 60 }), (req: Request, res: Response) => {
+  res.json({ status: 'allowed', timestamp: new Date().toISOString() });
 });
 
-app.post('/api/rate-limit-test', rateLimiterMiddleware, (req: Request, res: Response) => {
-  res.json({
-    status: 'allowed',
-    ip: req.ip || '127.0.0.1',
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.post('/api/license/validate', rateLimiterMiddleware, (req: Request, res: Response) => {
-  const { licenseKey } = req.body || {};
-  if (!licenseKey || typeof licenseKey !== 'string') {
+app.post('/api/license/validate', rateLimit({ scope: 'license', windowMs: 60000, max: 20 }), (req: Request, res: Response) => {
+  const licenseKey = asString(req.body?.licenseKey, 64);
+  if (!licenseKey) {
     res.status(400).json({ valid: false, error: 'License key string is required' });
     return;
   }
 
-  const isValidFormat = /^C4E-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(licenseKey.trim());
-  if (!isValidFormat) {
+  if (!/^C4E-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(licenseKey)) {
     res.status(400).json({ valid: false, error: 'Invalid license format' });
     return;
   }
 
   res.json({
     valid: true,
-    tier: licenseKey.includes('PRO') ? 'Pro' : 'Developer',
-    rate_limit: licenseKey.includes('PRO') ? 5000 : 1000,
+    tier: licenseKey.toUpperCase().includes('PRO') ? 'Pro' : 'Developer',
+    rate_limit: licenseKey.toUpperCase().includes('PRO') ? 5000 : 1000,
     expires_at: '2027-12-31T23:59:59Z'
   });
 });
@@ -674,14 +821,21 @@ app.post('/api/license/validate', rateLimiterMiddleware, (req: Request, res: Res
 // -------------------------------------------------------------
 // BYNOGAME STREAM DONATION INTEGRATION & VERIFICATION
 // -------------------------------------------------------------
-const BYNOGAME_STREAM_ID = '5595ad22-dd5a-47c2-93ba-d7bf9a3f85ed';
-const BYNOGAME_DONATE_URL = 'https://donate.bynogame.com/nylithra';
-const BYNOGAME_DONATIONS_FILE = path.join(process.cwd(), 'data', 'bynogame_donations.json');
+// Donations grant the paid "Spark" role, so every endpoint that can CREATE or VERIFY a
+// donation record is either administrator-only or protected by an HMAC signature.
+// Previously any anonymous caller could POST a username and receive the Spark perks.
+
+const BYNOGAME_STREAM_ID = env('BYNOGAME_STREAM_ID', '5595ad22-dd5a-47c2-93ba-d7bf9a3f85ed');
+const BYNOGAME_DONATE_URL = env('BYNOGAME_DONATE_URL', 'https://donate.bynogame.com/nylithra');
+const BYNOGAME_WEBHOOK_SECRET = env('BYNOGAME_WEBHOOK_SECRET');
+const DATA_DIR = env('DATA_DIR', path.join(process.cwd(), 'data'));
+const BYNOGAME_DONATIONS_FILE = path.join(DATA_DIR, 'bynogame_donations.json');
+const MAX_DONATION_RECORDS = 5000;
 
 interface ByNoGameDonationRecord {
   id: string;
   streamId: string;
-  username: string; // The username entered by donor on ByNoGame
+  username: string;
   usernameNormalized: string;
   amount?: number | string;
   currency?: string;
@@ -694,8 +848,8 @@ interface ByNoGameDonationRecord {
 function loadByNoGameDonations(): ByNoGameDonationRecord[] {
   try {
     if (fs.existsSync(BYNOGAME_DONATIONS_FILE)) {
-      const content = fs.readFileSync(BYNOGAME_DONATIONS_FILE, 'utf-8');
-      return JSON.parse(content);
+      const parsed = JSON.parse(fs.readFileSync(BYNOGAME_DONATIONS_FILE, 'utf-8'));
+      return Array.isArray(parsed) ? parsed : [];
     }
   } catch (e) {
     console.error('ByNoGame donations load error:', e);
@@ -705,18 +859,48 @@ function loadByNoGameDonations(): ByNoGameDonationRecord[] {
 
 function saveByNoGameDonations(donations: ByNoGameDonationRecord[]) {
   try {
-    const dir = path.dirname(BYNOGAME_DONATIONS_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(BYNOGAME_DONATIONS_FILE, JSON.stringify(donations, null, 2), 'utf-8');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const trimmed = donations.slice(0, MAX_DONATION_RECORDS);
+    // Write to a temporary file first so a crash mid-write cannot truncate the ledger.
+    const tempFile = `${BYNOGAME_DONATIONS_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(trimmed, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.renameSync(tempFile, BYNOGAME_DONATIONS_FILE);
   } catch (e) {
     console.error('ByNoGame donations save error:', e);
   }
 }
 
+function publicDonationView(record: ByNoGameDonationRecord) {
+  return {
+    id: record.id,
+    username: record.username,
+    amount: record.amount,
+    currency: record.currency,
+    timestamp: record.timestamp,
+    verified: record.verified,
+    claimedAt: record.claimedAt
+  };
+}
+
+/** The username a caller is allowed to act on: their own, unless they are an administrator. */
+function resolveActingUsername(req: Request, requested: unknown): string | null {
+  const sessionUsername = normalizeUsername(req.auth?.username);
+  const requestedUsername = normalizeUsername(requested);
+
+  if (req.auth?.isAdmin) {
+    return requestedUsername || sessionUsername || null;
+  }
+  if (sessionUsername) {
+    // Ignore whatever the body claims: a user may only act on their own account.
+    return sessionUsername;
+  }
+  // No profile lookup available (service role key not configured) — fall back to the
+  // requested username, which is still gated behind a valid session + rate limit.
+  return requestedUsername || null;
+}
+
 // 1. ByNoGame Public Configuration
-app.get('/api/bynogame/config', (req: Request, res: Response) => {
+app.get('/api/bynogame/config', (_req: Request, res: Response) => {
   res.json({
     streamId: BYNOGAME_STREAM_ID,
     donateUrl: BYNOGAME_DONATE_URL,
@@ -727,223 +911,341 @@ app.get('/api/bynogame/config', (req: Request, res: Response) => {
   });
 });
 
-// 2. Check ByNoGame Donations for a specific user and stream ID
-app.post('/api/bynogame/check-donation', async (req: Request, res: Response) => {
-  try {
-    const { username, streamId } = req.body || {};
-    if (!username || typeof username !== 'string') {
-      res.status(400).json({ success: false, error: 'Kullanıcı adı gereklidir.' });
+// 2. Check whether the signed-in user has a verified donation
+app.post(
+  '/api/bynogame/check-donation',
+  requireAuth,
+  rateLimit({ scope: 'donation-check', windowMs: 60000, max: 15, perUser: true }),
+  async (req: Request, res: Response) => {
+    const username = resolveActingUsername(req, req.body?.username);
+    if (!username) {
+      res.status(400).json({ success: false, error: 'Kullanıcı adı belirlenemedi.' });
       return;
     }
 
-    const targetStreamId = (streamId || BYNOGAME_STREAM_ID).trim();
-    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
-
-    // 1) Check local persisted donations database
     const donations = loadByNoGameDonations();
     const matched = donations.find(
       (d) =>
-        d.streamId.toLowerCase() === targetStreamId.toLowerCase() &&
-        (d.usernameNormalized === cleanUsername || d.username.trim().toLowerCase() === cleanUsername)
+        d.streamId.toLowerCase() === BYNOGAME_STREAM_ID.toLowerCase() &&
+        d.verified === true &&
+        (d.usernameNormalized === username || d.username.trim().toLowerCase() === username)
     );
 
     if (matched) {
-      // Mark as claimed if not already
       if (!matched.claimedAt) {
         matched.claimedAt = new Date().toISOString();
-        matched.verified = true;
         saveByNoGameDonations(donations);
       }
 
       res.json({
         success: true,
         hasDonation: true,
-        donation: matched,
-        streamId: targetStreamId,
+        donation: publicDonationView(matched),
+        streamId: BYNOGAME_STREAM_ID,
         message: 'Bağışınız doğrulandı! Spark Destekçisi rozetiniz ve 250MB yükleme yetkiniz tanımlandı.'
       });
       return;
     }
 
-    // Not found in verified registry yet
     res.json({
       success: true,
       hasDonation: false,
-      streamId: targetStreamId,
-      username: cleanUsername,
-      message:
-        `Henüz @${cleanUsername} adına kayıtlı bağış bulunamadı. Bağış yaptıysanız referans/işlem numaranızı girerek bildirimde bulunabilir veya yöneticiden onay talep edebilirsiniz.`
-    });
-  } catch (err: any) {
-    res.status(200).json({
-      success: false,
-      hasDonation: false,
-      message: 'Bağış kontrolü yapılırken servis yanıt veremedi. Lütfen referans kodunuzu girerek bildirimde bulunun.'
+      streamId: BYNOGAME_STREAM_ID,
+      username,
+      message: `Henüz @${username} adına doğrulanmış bir bağış bulunamadı. Bağış yaptıysanız referans/işlem numaranızı girerek bildirimde bulunabilirsiniz.`
     });
   }
-});
+);
 
-// 2.1 ByNoGame Claim Donation (User reports a donation)
-app.post('/api/bynogame/claim-donation', (req: Request, res: Response) => {
-  try {
-    const { username, amount, message, reference_code } = req.body || {};
+// 2.1 Claim: the user *reports* a donation. It stays unverified until an admin approves it.
+app.post(
+  '/api/bynogame/claim-donation',
+  requireAuth,
+  rateLimit({ scope: 'donation-claim', windowMs: 60 * 60000, max: 5, perUser: true }),
+  (req: Request, res: Response) => {
+    const username = resolveActingUsername(req, req.body?.username);
     if (!username) {
-      res.status(400).json({ error: 'Username is required' });
+      res.status(400).json({ success: false, error: 'Kullanıcı adı belirlenemedi.' });
       return;
     }
 
-    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
     const donations = loadByNoGameDonations();
-
+    const referenceCode = asString(req.body?.reference_code, 120);
     const newRecord: ByNoGameDonationRecord = {
-      id: 'bng_claim_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      id: `bng_claim_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
       streamId: BYNOGAME_STREAM_ID,
-      username: cleanUsername,
-      usernameNormalized: cleanUsername,
-      amount: amount || 'Destek',
+      username,
+      usernameNormalized: username,
+      amount: asString(req.body?.amount, 40) || 'Destek',
       currency: 'TL',
-      message: message || (reference_code ? `Referans: ${reference_code}` : 'Bağış Bildirimi'),
+      message: asString(req.body?.message, 400) || (referenceCode ? `Referans: ${referenceCode}` : 'Bağış Bildirimi'),
       timestamp: new Date().toISOString(),
+      // NEVER verified on creation: verification is an administrator decision.
       verified: false
     };
 
     donations.unshift(newRecord);
     saveByNoGameDonations(donations);
 
-    res.json({ success: true, recorded: newRecord });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Bağış bildirimi kaydedilemedi' });
+    res.json({ success: true, recorded: publicDonationView(newRecord) });
   }
-});
+);
 
-// 2.2 ByNoGame Admin Approve Donation
-app.post('/api/bynogame/approve-donation', (req: Request, res: Response) => {
-  try {
-    const { claimId, username, adminUsername } = req.body || {};
-    const donations = loadByNoGameDonations();
-    const cleanUsername = (username || '').replace(/^@/, '').trim().toLowerCase();
+// 2.2 Admin approval
+app.post('/api/bynogame/approve-donation', requireAdmin, async (req: Request, res: Response) => {
+  const claimId = asString(req.body?.claimId, 80);
+  const username = normalizeUsername(req.body?.username);
+  const adminUsername = normalizeUsername(req.auth?.username) || 'admin';
 
-    let matched = donations.find((d) => (claimId && d.id === claimId) || d.usernameNormalized === cleanUsername);
-    if (!matched && cleanUsername) {
-      matched = {
-        id: 'bng_manual_' + Date.now(),
-        streamId: BYNOGAME_STREAM_ID,
-        username: cleanUsername,
-        usernameNormalized: cleanUsername,
-        amount: 'Destek',
-        currency: 'TL',
-        message: `Yönetici (@${adminUsername || 'admin'}) tarafından onaylandı`,
-        timestamp: new Date().toISOString(),
-        verified: true,
-        claimedAt: new Date().toISOString()
-      };
-      donations.unshift(matched);
-    } else if (matched) {
-      matched.verified = true;
-      matched.claimedAt = new Date().toISOString();
-    }
-
-    saveByNoGameDonations(donations);
-    res.json({ success: true, approved: matched });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Onaylama başarısız' });
+  if (!claimId && !username) {
+    res.status(400).json({ success: false, error: 'claimId veya username gereklidir.' });
+    return;
   }
-});
 
-// 3. ByNoGame Webhook / External Notification Handler
-app.post('/api/bynogame/webhook', (req: Request, res: Response) => {
-  try {
-    const payload = req.body || {};
-    const streamId = (payload.streamId || payload.stream_id || BYNOGAME_STREAM_ID).toString();
-    const donor = (payload.username || payload.donor || payload.user_name || payload.name || '').toString().trim();
+  const donations = loadByNoGameDonations();
+  let matched = donations.find((d) => (claimId && d.id === claimId) || (username && d.usernameNormalized === username));
 
-    if (!donor) {
-      res.status(400).json({ error: 'Donor username is required' });
-      return;
-    }
-
-    const donations = loadByNoGameDonations();
-    const newDonation: ByNoGameDonationRecord = {
-      id: 'bng_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      streamId,
-      username: donor,
-      usernameNormalized: donor.replace(/^@/, '').toLowerCase(),
-      amount: payload.amount || payload.total || '0',
-      currency: payload.currency || 'TL',
-      message: payload.message || payload.note || '',
-      timestamp: new Date().toISOString(),
-      verified: true
-    };
-
-    donations.push(newDonation);
-    saveByNoGameDonations(donations);
-
-    res.json({ success: true, recorded: newDonation });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Webhook işlenemedi' });
-  }
-});
-
-// 4. Manual / Admin Verification or Simulation of ByNoGame Donation
-app.post('/api/bynogame/register-donation', (req: Request, res: Response) => {
-  try {
-    const { username, amount, message, secretKey } = req.body || {};
-    if (!username) {
-      res.status(400).json({ error: 'Username is required' });
-      return;
-    }
-
-    const donations = loadByNoGameDonations();
-    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
-
-    const record: ByNoGameDonationRecord = {
-      id: 'bng_reg_' + Date.now(),
+  if (!matched && username) {
+    matched = {
+      id: `bng_manual_${Date.now()}`,
       streamId: BYNOGAME_STREAM_ID,
-      username: cleanUsername,
-      usernameNormalized: cleanUsername,
-      amount: amount || 'Destek',
+      username,
+      usernameNormalized: username,
+      amount: 'Destek',
       currency: 'TL',
-      message: message || 'ByNoGame Bağışı',
+      message: `Yönetici (@${adminUsername}) tarafından onaylandı`,
       timestamp: new Date().toISOString(),
-      verified: true
+      verified: true,
+      claimedAt: new Date().toISOString()
     };
-
-    donations.push(record);
-    saveByNoGameDonations(donations);
-
-    res.json({ success: true, donation: record });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Kayıt başarısız' });
+    donations.unshift(matched);
+  } else if (matched) {
+    matched.verified = true;
+    matched.claimedAt = new Date().toISOString();
   }
+
+  if (!matched) {
+    res.status(404).json({ success: false, error: 'Bağış kaydı bulunamadı.' });
+    return;
+  }
+
+  saveByNoGameDonations(donations);
+
+  // Approving a donation immediately grants the protected supporter tier.
+  const tierApplied = await setSupporterTier(matched.usernameNormalized, 'spark');
+
+  res.json({ success: true, approved: publicDonationView(matched), supporter_tier_applied: tierApplied });
 });
 
-// 5. Get recent donations list for streamer
-app.get('/api/bynogame/donations', (req: Request, res: Response) => {
+// 3. External notification handler — must carry a valid HMAC signature.
+app.post('/api/bynogame/webhook', rateLimit({ scope: 'donation-webhook', windowMs: 60000, max: 60 }), (req: Request, res: Response) => {
+  if (!BYNOGAME_WEBHOOK_SECRET) {
+    res.status(503).json({ error: 'Webhook devre dışı: BYNOGAME_WEBHOOK_SECRET tanımlı değil.' });
+    return;
+  }
+
+  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+  const signature = String(req.headers['x-c4e-signature'] || req.headers['x-signature'] || '').replace(/^sha256=/i, '');
+  const expected = rawBody ? hmacHex(BYNOGAME_WEBHOOK_SECRET, rawBody.toString('utf8')) : '';
+
+  if (!rawBody || !signature || !safeEquals(signature, expected)) {
+    res.status(401).json({ error: 'Geçersiz webhook imzası.' });
+    return;
+  }
+
+  const payload = req.body || {};
+  const donor = normalizeUsername(payload.username || payload.donor || payload.user_name || payload.name);
+  if (!donor) {
+    res.status(400).json({ error: 'Donor username is required' });
+    return;
+  }
+
+  const donations = loadByNoGameDonations();
+  const newDonation: ByNoGameDonationRecord = {
+    id: `bng_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    streamId: asString(payload.streamId || payload.stream_id, 80) || BYNOGAME_STREAM_ID,
+    username: donor,
+    usernameNormalized: donor,
+    amount: asString(payload.amount ?? payload.total, 40) || '0',
+    currency: asString(payload.currency, 10) || 'TL',
+    message: asString(payload.message ?? payload.note, 400),
+    timestamp: new Date().toISOString(),
+    verified: true
+  };
+
+  donations.unshift(newDonation);
+  saveByNoGameDonations(donations);
+
+  res.json({ success: true, recorded: publicDonationView(newDonation) });
+});
+
+// 4. Manual administrator registration of a donation
+app.post('/api/bynogame/register-donation', requireAdmin, (req: Request, res: Response) => {
+  const username = normalizeUsername(req.body?.username);
+  if (!username) {
+    res.status(400).json({ error: 'Username is required' });
+    return;
+  }
+
+  const donations = loadByNoGameDonations();
+  const record: ByNoGameDonationRecord = {
+    id: `bng_reg_${Date.now()}`,
+    streamId: BYNOGAME_STREAM_ID,
+    username,
+    usernameNormalized: username,
+    amount: asString(req.body?.amount, 40) || 'Destek',
+    currency: 'TL',
+    message: asString(req.body?.message, 400) || 'ByNoGame Bağışı',
+    timestamp: new Date().toISOString(),
+    verified: true
+  };
+
+  donations.unshift(record);
+  saveByNoGameDonations(donations);
+
+  res.json({ success: true, donation: publicDonationView(record) });
+});
+
+// 5. Donation ledger (administrators only — it is a list of paying supporters)
+app.get('/api/bynogame/donations', requireAdmin, (_req: Request, res: Response) => {
   const donations = loadByNoGameDonations();
   res.json({
     streamId: BYNOGAME_STREAM_ID,
     total: donations.length,
-    donations: donations.slice(-50).reverse()
+    donations: donations.slice(0, 50).map(publicDonationView)
   });
 });
 
+/**
+ * Writes the protected `supporter_tier` column with the service role key.
+ * Returns false when the deployment has no service role key configured.
+ */
+async function setSupporterTier(username: string, tier: 'spark' | 'none'): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return false;
+  try {
+    const response = await safeFetch(
+      `${SUPABASE_URL}/rest/v1/profiles?username=eq.${encodeURIComponent(username)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify({ supporter_tier: tier, updated_at: new Date().toISOString() }),
+        timeoutMs: 10000
+      }
+    );
+    return response.ok;
+  } catch (err: any) {
+    console.warn('setSupporterTier error:', err?.message);
+    return false;
+  }
+}
+
+/**
+ * Grants the Spark perks to the signed-in user — but only when the donation ledger holds an
+ * administrator-verified donation for that account (administrators may grant directly).
+ * The browser can no longer award the paid tier to itself.
+ */
+app.post(
+  '/api/bynogame/claim-perks',
+  requireAuth,
+  rateLimit({ scope: 'donation-perks', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const username = resolveActingUsername(req, req.body?.username);
+    if (!username) {
+      res.status(400).json({ success: false, message: 'Kullanıcı adı belirlenemedi.' });
+      return;
+    }
+
+    const verified =
+      req.auth?.isAdmin === true ||
+      loadByNoGameDonations().some((donation) => donation.verified === true && donation.usernameNormalized === username);
+
+    if (!verified) {
+      res.status(403).json({
+        success: false,
+        message: 'Doğrulanmış bir bağış kaydı bulunamadı. Bağışınız yönetici onayından sonra otomatik tanımlanır.'
+      });
+      return;
+    }
+
+    const applied = await setSupporterTier(username, 'spark');
+    if (!applied) {
+      res.status(503).json({
+        success: false,
+        message: 'Spark ayrıcalıkları şu anda tanımlanamadı (SUPABASE_SERVICE_ROLE_KEY eksik). Lütfen yöneticiyle iletişime geçin.'
+      });
+      return;
+    }
+
+    res.json({ success: true, username, supporter_tier: 'spark', message: 'Spark Destekçi ayrıcalıkları tanımlandı!' });
+  }
+);
+
+// 5.1 The signed-in user's own donation records
+app.get('/api/bynogame/my-donations', requireAuth, (req: Request, res: Response) => {
+  const username = resolveActingUsername(req, undefined);
+  const donations = username
+    ? loadByNoGameDonations().filter((d) => d.usernameNormalized === username)
+    : [];
+  res.json({ success: true, total: donations.length, donations: donations.slice(0, 50).map(publicDonationView) });
+});
+
+// -------------------------------------------------------------
+// ERROR HANDLING & STATIC HOSTING
+// -------------------------------------------------------------
+
+app.use('/api', (_req: Request, res: Response) => {
+  res.status(404).json({ success: false, error: 'not_found' });
+});
+
+app.use('/api', (err: any, _req: Request, res: Response, _next: NextFunction) => {
+  if (err?.type === 'entity.too.large') {
+    res.status(413).json({ success: false, error: 'payload_too_large' });
+    return;
+  }
+  if (err?.type === 'entity.parse.failed') {
+    res.status(400).json({ success: false, error: 'invalid_json' });
+    return;
+  }
+  console.error('Unhandled API error:', err?.message || err);
+  // Never leak stack traces or internal messages to the client.
+  res.status(500).json({ success: false, error: 'internal_error' });
+});
+
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa'
-    });
+  if (!IS_PRODUCTION) {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
+    app.use(
+      express.static(distPath, {
+        index: false,
+        maxAge: '1h',
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('sw.js') || filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        }
+      })
+    );
+    app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Code4Ever server running on http://0.0.0.0:${PORT}`);
+    if (!supabaseConfigured()) {
+      console.warn('[c4e] SUPABASE_URL / SUPABASE_ANON_KEY missing: authenticated endpoints will return 503.');
+    }
+    if (!BYNOGAME_WEBHOOK_SECRET) {
+      console.warn('[c4e] BYNOGAME_WEBHOOK_SECRET missing: the donation webhook is disabled.');
+    }
   });
 }
 

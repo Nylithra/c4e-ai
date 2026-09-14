@@ -22,6 +22,7 @@ import {
 import { UserProfile, BadgeItem } from '../types';
 import { UserBadges } from './UserBadges';
 import { isUserSpark } from '../utils/fileUploadHelper';
+import { apiFetch } from '../services/apiClient';
 import {
   loadStoredDonations,
   submitDonationClaim,
@@ -110,7 +111,7 @@ export const SupportView: React.FC<SupportViewProps> = ({
                 : 'Your donation has been verified! Spark Supporter badge and 250MB upload perk activated.',
             donation: userClaim
           });
-          grantSparkBadgeAndRole();
+          void grantSparkBadgeAndRole();
           setIsCheckingDonation(false);
           return;
         } else if (userClaim.status === 'pending') {
@@ -130,17 +131,13 @@ export const SupportView: React.FC<SupportViewProps> = ({
     // 2) Try checking server-side endpoint with complete resilience
     let serverMatched = false;
     try {
-      const response = await fetch('/api/bynogame/check-donation', {
+      const response = await apiFetch('/api/bynogame/check-donation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          streamId: BYNOGAME_STREAM_ID,
-          username: cleanUsername
-        })
+        json: { streamId: BYNOGAME_STREAM_ID, username: cleanUsername }
       });
 
       if (response.ok) {
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
         if (data && data.success && data.hasDonation) {
           serverMatched = true;
           setCheckResult({
@@ -151,7 +148,7 @@ export const SupportView: React.FC<SupportViewProps> = ({
                 : 'Your donation has been verified! Spark Supporter badge and 250MB upload perk activated.',
             donation: data.donation
           });
-          grantSparkBadgeAndRole();
+          void grantSparkBadgeAndRole();
         }
       }
     } catch (err) {
@@ -212,8 +209,21 @@ export const SupportView: React.FC<SupportViewProps> = ({
     }
   };
 
-  // Grant the Spark Supporter badge and role
-  const grantSparkBadgeAndRole = () => {
+  /**
+   * Asks the backend to activate the Spark perks.
+   *
+   * SECURITY: the browser cannot award the paid tier any more. The server checks the
+   * donation ledger (an administrator must have verified the donation) and writes the
+   * protected `supporter_tier` column. Only after it confirms do we decorate the local
+   * profile with the badge, so an unverified user never sees a fake Spark state.
+   */
+  const grantSparkBadgeAndRole = async () => {
+    const result = await grantSparkPerksToUser(cleanUsername);
+    if (!result.success) {
+      setCheckResult({ status: 'pending', message: result.message });
+      return;
+    }
+
     const existingBadges = user.badges || [];
     const hasSpark = existingBadges.some(
       (b) => b.id === 'spark' || b.id === 'c4e_spark' || b.label?.toLowerCase().includes('spark')
@@ -224,16 +234,13 @@ export const SupportView: React.FC<SupportViewProps> = ({
       label: 'Spark Destekçi',
       color: '#f59e0b',
       icon: 'sparkles',
-      description:
-        'Code4Ever Bağışçısı özel Spark Destekçi rozetidir.'
+      description: 'Code4Ever Bağışçısı özel Spark Destekçi rozetidir.'
     };
-
-    const updatedBadges = hasSpark ? existingBadges : [...existingBadges, sparkBadge];
 
     if (onUpdateUser) {
       onUpdateUser({
-        role: user.role && user.role !== 'Geliştirici' && user.role !== 'Developer' ? user.role : 'Spark',
-        badges: updatedBadges,
+        supporter_tier: 'spark',
+        badges: hasSpark ? existingBadges : [...existingBadges, sparkBadge],
         subscription: {
           planId: 'spark',
           planName: 'Spark Destekçisi',
@@ -242,8 +249,6 @@ export const SupportView: React.FC<SupportViewProps> = ({
         }
       });
     }
-
-    grantSparkPerksToUser(cleanUsername);
   };
 
   return (
