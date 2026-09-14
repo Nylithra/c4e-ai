@@ -759,19 +759,27 @@ ALTER TABLE public.post_reports ENABLE ROW LEVEL SECURITY;
 -- API key material is unreachable from any browser session. Only the service role reads it.
 ALTER TABLE public.community_api_keys ENABLE ROW LEVEL SECURITY;
 
--- Remove every legacy "allow everything" policy.
+-- Drop every existing policy on the tables this script manages, so the CREATE POLICY
+-- statements below are re-runnable. Without this the script fails on a second run with
+-- "policy ... already exists" (42710).
+--
+-- IMPORTANT: a table added to this schema must also be added to the list below, otherwise
+-- its policies survive the cleanup and re-running the script breaks. Tables that are not
+-- listed are left completely untouched, so policies you created by hand are never dropped.
 DO $$
 DECLARE
   pol RECORD;
+  managed TEXT[] := ARRAY[
+    'profiles', 'posts', 'communities', 'community_api_keys', 'job_listings',
+    'job_applications', 'notifications', 'groups', 'messages', 'group_invites',
+    'system_error_reports', 'post_reports'
+  ];
 BEGIN
   FOR pol IN
     SELECT schemaname, tablename, policyname
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN (
-        'profiles', 'posts', 'communities', 'job_listings', 'job_applications', 'notifications',
-        'groups', 'messages', 'group_invites', 'system_error_reports', 'post_reports'
-      )
+      AND tablename = ANY (managed)
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
   END LOOP;
