@@ -75,7 +75,7 @@ export const CodeSnippetBlock: React.FC<CodeSnippetBlockProps> = ({ snippet, lan
             type="button"
             onClick={handleCopy}
             title={language === 'tr' ? 'Kodu Kopyala' : 'Copy Code'}
-            className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-900 transition-colors cursor-pointer"
+            className="h-7 w-7 flex items-center justify-center rounded-md text-zinc-400 hover:text-white hover:bg-zinc-900 transition-colors cursor-pointer"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
@@ -83,7 +83,7 @@ export const CodeSnippetBlock: React.FC<CodeSnippetBlockProps> = ({ snippet, lan
       </div>
 
       <div className="relative">
-        <pre className="text-xs text-emerald-400/95 overflow-x-auto p-1.5 leading-relaxed whitespace-pre font-mono select-text bg-[#09090b]/80 rounded-xl border border-zinc-900">
+        <pre className="text-xs text-emerald-400/95 overflow-x-auto no-scrollbar p-1.5 leading-relaxed whitespace-pre font-mono select-text bg-[#09090b]/80 rounded-xl border border-zinc-900 [-webkit-overflow-scrolling:touch]">
           <code>{displayedCode}</code>
         </pre>
       </div>

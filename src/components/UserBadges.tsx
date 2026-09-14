@@ -359,7 +359,7 @@ export const UserBadges: React.FC<UserBadgesProps> = ({
               borderColor: `${badge.color}45`,
               color: badge.color
             }}
-            className="inline-flex items-center justify-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold tracking-wide shadow-sm hover:scale-110 active:scale-95 transition-all cursor-pointer"
+            className="inline-flex items-center justify-center gap-1 px-2 min-h-6 rounded-full border text-[10px] font-semibold tracking-wide shadow-sm hover:scale-110 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {renderIcon(badge)}
             {showTextLabels && <span>{badge.label}</span>}

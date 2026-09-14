@@ -392,7 +392,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
 
         </div>
 
-        <p className="text-xs text-zinc-300 leading-relaxed bg-[#0c0c0e] p-3 rounded-xl border border-zinc-800/40">
+        <p className="text-xs text-zinc-300 leading-relaxed bg-[#0c0c0e] p-3 rounded-xl border border-zinc-800/40 user-text">
           {formData.bio || (language === 'tr' ? 'Code4Ever geliştirici üyesi.' : 'Code4Ever developer member.')}
         </p>
 
@@ -407,7 +407,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
               href={sanitizeUrl(formData.website || user.website || formData.custom_fields?.website || user.custom_fields?.website)}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-zinc-200 hover:text-white transition-colors"
+              className="flex items-center gap-1 py-1 -my-1 text-zinc-200 hover:text-white transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Globe className="w-3.5 h-3.5 text-zinc-400" />
               <span className="truncate max-w-[200px]">
@@ -421,7 +421,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
             href={`https://github.com/${formData.username}`}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex items-center gap-1 hover:text-white"
+            className="flex items-center gap-1 py-1 -my-1 hover:text-white rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Github className="w-3.5 h-3.5 text-zinc-500" />
             github.com/{formData.username}
@@ -603,11 +603,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
                       onClick={() => onSelectCommunity && onSelectCommunity(comm)}
                       className="p-2.5 bg-zinc-950/80 border border-zinc-800/60 hover:border-purple-500/50 rounded-xl flex items-center gap-3 transition-all cursor-pointer group"
                     >
-                      <img
-                        src={comm.avatar_url}
-                        alt={comm.name}
-                        className="w-8 h-8 rounded-xl object-cover ring-1 ring-zinc-800 flex-shrink-0"
-                      />
+                      <UserAvatar src={comm.avatar_url} name={comm.name} className="w-8 h-8 rounded-xl ring-1 ring-zinc-800 flex-shrink-0 text-[10px]" />
                       <div className="truncate">
                         <span className="text-xs font-bold text-white truncate block group-hover:text-purple-300">
                           {comm.name}
@@ -730,7 +726,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
                       )}
                     </div>
 
-                    {post.content && <p className="text-xs text-zinc-200 leading-relaxed font-sans">{post.content}</p>}
+                    {post.content && <p className="text-xs text-zinc-200 leading-relaxed font-sans user-text">{post.content}</p>}
 
                     {post.media_url && (
                       <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-black max-h-[480px] flex items-center justify-center">
@@ -899,7 +895,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
                                     {comment.created_at ? new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                                   </span>
                                 </div>
-                                <p className="text-xs text-zinc-300 pl-7 leading-relaxed font-sans">{comment.content}</p>
+                                <p className="text-xs text-zinc-300 pl-7 leading-relaxed font-sans user-text">{comment.content}</p>
                               </div>
                             ))}
                           </div>

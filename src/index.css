@@ -37,6 +37,9 @@
 
   --font-display: var(--font-display);
   --font-mono: var(--font-mono);
+
+  /* Ek kırılma noktası: 360-400px arası küçük telefonlar. */
+  --breakpoint-xs: 26rem;
 }
 
 :root {
@@ -125,6 +128,49 @@
     outline-offset: 2px;
   }
 }
+
+/* ================================================================
+   MOBİL DAYANIKLILIK (mobile robustness)
+   ================================================================ */
+
+/*
+ * Kullanıcı içeriği (gönderi, yorum, biyografi) uzun ve boşluksuz kelimeler ya da
+ * uzun bağlantılar içerebilir. Bunlar kırılmazsa sayfa yatayda taşar ve telefon
+ * tarayıcısı tüm arayüzü küçültür (360px ekran 551px gibi davranır).
+ */
+.user-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 9px her ekranda okunaksız; en küçük yazı boyutu 10px'e çekilir. */
+.text-\[9px\] { font-size: 10px; }
+
+@media (max-width: 640px) {
+  /* iOS Safari, 16px'ten küçük yazı tipli bir alana odaklanınca sayfayı
+     yakınlaştırır ve kullanıcı geri çıkamaz. Görsel boyut korunurken bu
+     davranışı engellemek için mobilde form alanları 16px'e sabitlenir. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  /* 10px metinler telefonda okunaksız kalıyordu. */
+  .text-\[10px\] { font-size: 11px; }
+}
+
+/* PWA kurulum şeridi açıkken alt gezinme + şerit yüksekliği kadar boşluk bırakılır,
+   aksi halde her sayfanın son kartı kalıcı olarak örtülü kalıyordu. */
+@media (max-width: 767px) {
+  body.has-pwa-banner main {
+    padding-bottom: 8.75rem;
+  }
+}
+
+/* Yatay kaydırma çubuklarını gizler (sekme/etiket şeritleri için). */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Özel yardımcı sınıflar (Special Utility Classes) */
 .grid-bg {

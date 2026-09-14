@@ -29,6 +29,7 @@ import {
 } from '../utils/notificationSound';
 import { IntegrationsSettings } from './IntegrationsSettings';
 import { ThemeStudio } from './ThemeStudio';
+import { UserAvatar } from './ui/avatar';
 import { ProfileTheme } from '../utils/themeHelper';
 import { isUserSpark } from '../utils/fileUploadHelper';
 import { sanitizeUrl } from '../utils/securityHelper';
@@ -237,10 +238,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Quick Profile Overview Card */}
             <div className="p-5 rounded-2xl bg-gradient-to-r from-zinc-900 to-zinc-950 border border-zinc-800/80 flex items-center justify-between">
               <div className="flex items-center gap-3.5">
-                <img
-                  src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                  alt={user.display_name}
-                  className="w-12 h-12 rounded-full object-cover ring-2 ring-zinc-700"
+                <UserAvatar
+                  src={user.avatar_url}
+                  name={user.display_name || user.username}
+                  className="w-12 h-12 ring-2 ring-zinc-700"
                 />
                 <div>
                   <div className="flex items-center gap-2">

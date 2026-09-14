@@ -25,13 +25,26 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
     }
   }, []);
 
+  const isVisible = !isStandalone && !isDismissed;
+
+  /**
+   * The banner floats above the mobile bottom navigation, so while it is on screen the
+   * scrollable column needs extra breathing room — otherwise it permanently covers the last
+   * card of every page (settings, feed, job listings...).
+   */
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('has-pwa-banner', isVisible);
+    return () => document.body.classList.remove('has-pwa-banner');
+  }, [isVisible]);
+
   const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDismissed(true);
     sessionStorage.setItem('c4e_pwa_banner_dismissed', 'true');
   };
 
-  if (isStandalone || isDismissed) {
+  if (!isVisible) {
     return null;
   }
 
@@ -68,7 +81,8 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
 
         <button
           onClick={handleDismiss}
-          className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-colors cursor-pointer"
+          aria-label={language === 'tr' ? 'Kapat' : 'Dismiss'}
+          className="h-8 w-8 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={language === 'tr' ? 'Kapat' : 'Dismiss'}
         >
           <X className="w-3.5 h-3.5" />

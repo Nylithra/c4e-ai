@@ -172,7 +172,7 @@ export const CommunityFeedHeader: React.FC<CommunityFeedHeaderProps> = ({
           </div>
 
           {community.description && (
-            <p className="text-xs text-zinc-300 leading-relaxed max-w-2xl">{community.description}</p>
+            <p className="text-xs text-zinc-300 leading-relaxed max-w-2xl user-text">{community.description}</p>
           )}
 
           <div className="flex items-center gap-4 flex-wrap text-[11px] text-zinc-400 font-mono pt-0.5">
@@ -190,7 +190,7 @@ export const CommunityFeedHeader: React.FC<CommunityFeedHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => onSelectUser?.(community.creator_username!)}
-                className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 py-1 -my-1 hover:text-white transition-colors cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Shield className="w-3.5 h-3.5 text-emerald-400" />
                 <span>@{community.creator_username}</span>

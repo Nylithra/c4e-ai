@@ -4,6 +4,7 @@ import { Community, UserProfile } from '../types';
 import { verifyAdminAccess } from '../utils/securityHelper';
 import { CommunitySettingsModal } from './CommunitySettingsModal';
 import { CommunityApiModal } from './CommunityApiModal';
+import { UserAvatar } from './ui/avatar';
 
 interface CommunitiesViewProps {
   communities: Community[];
@@ -176,11 +177,7 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
                       className="flex items-start sm:items-center gap-3.5 sm:gap-4 overflow-hidden cursor-pointer flex-1 min-w-0"
                     >
                       <div className="relative flex-shrink-0">
-                        <img
-                          src={comm.avatar_url}
-                          alt={comm.name}
-                          className="w-20 h-20 sm:w-16 sm:h-16 rounded-2xl object-cover ring-2 ring-zinc-800 shadow-xl group-hover:scale-105 transition-transform bg-zinc-900"
-                        />
+                        <UserAvatar src={comm.avatar_url} name={comm.name} className="w-20 h-20 sm:w-16 sm:h-16 rounded-2xl ring-2 ring-zinc-800 shadow-xl group-hover:scale-105 transition-transform bg-zinc-900 text-[10px]" />
                         <div className="absolute -bottom-1 -right-1 bg-purple-600/95 text-white p-1 rounded-lg border-2 border-[#0c0c0e] shadow-md">
                           <Users className="w-3 h-3" />
                         </div>

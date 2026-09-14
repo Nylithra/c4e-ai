@@ -111,7 +111,8 @@ export const CategorySelector: React.FC<CategorySelectorProps> = ({
                 e.stopPropagation();
                 onSelectCategory('genel', 'Genel & Sohbet');
               }}
-              className="p-1 rounded text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+              aria-label="Kategoriyi temizle"
+              className="h-6 w-6 flex items-center justify-center rounded text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={language === 'tr' ? 'Varsayılana sıfırla' : 'Reset to default'}
             >
               <X className="w-3 h-3" />

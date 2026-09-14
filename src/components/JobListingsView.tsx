@@ -226,7 +226,7 @@ export const JobListingsView: React.FC<JobListingsViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onSelectUser && onSelectUser(authorUsername)}
-                          className="font-bold text-white text-xs hover:underline cursor-pointer"
+                          className="font-bold text-white text-xs hover:underline cursor-pointer py-1 -my-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           {authorDisplayName}
                         </button>

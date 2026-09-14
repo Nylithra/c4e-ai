@@ -2,6 +2,7 @@ import React from 'react';
 import { Bookmark, Heart, Repeat, MessageSquare, Trash2 } from 'lucide-react';
 import { Post, UserProfile } from '../types';
 import { CodeSnippetBlock } from './CodeSnippetBlock';
+import { UserAvatar } from './ui/avatar';
 
 interface BookmarksViewProps {
   posts: Post[];
@@ -53,10 +54,10 @@ export const BookmarksView: React.FC<BookmarksViewProps> = ({
             <article key={post.id} className="p-4 hover:bg-zinc-900/30 transition-colors space-y-3">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <img
+                  <UserAvatar
                     src={post.author.avatar_url}
-                    alt={post.author.display_name}
-                    className="w-10 h-10 rounded-full object-cover ring-1 ring-zinc-800"
+                    name={post.author.display_name || post.author.username}
+                    className="w-10 h-10 ring-1 ring-zinc-800"
                   />
                   <div>
                     <div className="flex items-center gap-2">
@@ -87,7 +88,7 @@ export const BookmarksView: React.FC<BookmarksViewProps> = ({
                 </div>
               </div>
 
-              {post.content && <p className="text-xs text-zinc-200 leading-relaxed font-sans">{post.content}</p>}
+              {post.content && <p className="text-xs text-zinc-200 leading-relaxed font-sans user-text">{post.content}</p>}
 
               {post.media_url && (
                 <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-black max-h-[400px] flex items-center justify-center">

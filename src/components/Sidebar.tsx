@@ -172,16 +172,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
 
           {/* User Profile Avatar */}
-          <button
+          <UserAvatar
+            src={user.avatar_url}
+            name={user.display_name || user.username}
+            className="w-7 h-7 ring-1 ring-zinc-700/60 text-[10px]"
             onClick={() => setActiveTab('profile')}
-            className="ring-1 ring-zinc-700/60 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
-          >
-            <img
-              src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-              alt={user.display_name}
-              className="w-7 h-7 rounded-full object-cover"
-            />
-          </button>
+            title={language === 'tr' ? 'Profilim' : 'My profile'}
+          />
         </div>
       </header>
 
@@ -217,10 +214,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }}
                 className="flex items-center gap-3 p-3 rounded-2xl bg-[#0c0c0e] border border-zinc-800/80 hover:border-zinc-700 cursor-pointer transition-all"
               >
-                <img
-                  src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                  alt={user.display_name}
-                  className="w-10 h-10 rounded-full object-cover ring-2 ring-zinc-700/50 flex-shrink-0"
+                <UserAvatar
+                  src={user.avatar_url}
+                  name={user.display_name || user.username}
+                  className="w-10 h-10 ring-2 ring-zinc-700/50 flex-shrink-0"
                 />
                 <div className="truncate flex-1">
                   <div className="flex items-center gap-1">
@@ -544,10 +541,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="flex items-center justify-between p-2.5 rounded-2xl bg-[#0c0c0e] hover:bg-zinc-800/80 border border-zinc-800/80 cursor-pointer transition-all hover:border-zinc-700"
           >
             <div className="flex items-center gap-2.5 overflow-hidden">
-              <img
-                src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                alt={user.display_name}
-                className="w-9 h-9 rounded-full object-cover ring-2 ring-zinc-700/50 flex-shrink-0"
+              <UserAvatar
+                src={user.avatar_url}
+                name={user.display_name || user.username}
+                className="w-9 h-9 ring-2 ring-zinc-700/50 flex-shrink-0 text-[10px]"
               />
               <div className="truncate">
                 <div className="flex items-center gap-1 truncate">

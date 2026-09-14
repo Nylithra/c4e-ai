@@ -236,7 +236,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                 </div>
 
                 <div className="flex-1 min-w-0 space-y-1">
-                  <p className="text-xs text-zinc-200 leading-snug">
+                  <p className="text-xs text-zinc-200 leading-snug user-text">
                     {actorName && (
                       <span className="font-bold text-white mr-1.5">
                         {item.actor?.display_name || `@${item.actor?.username || (item as any).actor_username}`}
@@ -257,9 +257,10 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                       onMarkAsRead?.(item.id);
                     }}
                     title={language === 'tr' ? 'Okundu işaretle' : 'Mark as read'}
-                    className="flex-shrink-0 mt-2 p-1 rounded-full hover:bg-blue-500/20 transition-colors"
+                    aria-label={language === 'tr' ? 'Okundu işaretle' : 'Mark as read'}
+                    className="flex-shrink-0 mt-1 h-8 w-8 flex items-center justify-center rounded-full hover:bg-blue-500/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <div className="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-blue-500/30 animate-pulse" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-blue-500/30 animate-pulse" />
                   </button>
                 ) : null}
               </div>

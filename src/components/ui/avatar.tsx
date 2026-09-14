@@ -55,10 +55,13 @@ export const UserAvatar: React.FC<{
   const initials =
     words.length > 1 ? `${words[0][0]}${words[1][0]}` : cleanName.slice(0, 2);
   const interactive = typeof onClick === 'function';
+  // Never hand an empty string to <img src>: browsers re-request the whole page for it
+  // and React warns about it on every render.
+  const safeSrc = typeof src === 'string' && src.trim() ? src : null;
 
   const content = (
     <Avatar className={cn(interactive && 'cursor-pointer transition-transform hover:scale-[1.04]', className)}>
-      {src ? <AvatarImage src={src} alt={name || ''} /> : null}
+      {safeSrc ? <AvatarImage src={safeSrc} alt={name || ''} /> : null}
       <AvatarFallback>{initials}</AvatarFallback>
     </Avatar>
   );
@@ -66,7 +69,13 @@ export const UserAvatar: React.FC<{
   if (!interactive) return content;
 
   return (
-    <button type="button" onClick={onClick} title={title} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title || (name ? `${name} profilini aç` : 'Profili aç')}
+      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
+    >
       {content}
     </button>
   );

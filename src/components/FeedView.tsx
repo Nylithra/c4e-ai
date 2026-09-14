@@ -156,6 +156,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // On phones the composer opens compact (avatar + one line) and reveals the category /
+  // community selectors once it is in use — the full form used to eat ~70% of the screen.
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const mediaInputRef = useRef<HTMLInputElement>(null);
 
   const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(null);
@@ -422,6 +425,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
     return Array.from(map.values());
   })();
 
+  const isComposerExpanded = Boolean(
+    isComposerFocused || content.trim() || mediaUrl || selectedRepo || showCodeAttach || showRepoAttach
+  );
+
   const scopeHandle = (communityScope?.handle || '').replace(/^@/, '').toLowerCase();
 
   /** True when a post belongs to the community currently being viewed. */
@@ -672,9 +679,19 @@ export const FeedView: React.FC<FeedViewProps> = ({
               className="ring-2 ring-zinc-800 flex-shrink-0"
               onClick={() => onSelectUser(user.username)}
             />
-            <div className="flex-1 space-y-2.5">
+            <div className="flex-1 min-w-0 space-y-2.5">
               {/* Category & Community Target Selector Bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* Inside a community the target chip stays visible even in the compact state —
+                  the writer must always know where the post is going. */}
+              {communityScope && !isComposerExpanded && (
+                <div className="sm:hidden flex items-center gap-1.5 text-[11px] font-mono text-purple-300">
+                  <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">{communityScope.name}</span>
+                  <Lock className="w-3 h-3 flex-shrink-0 text-purple-300/70" />
+                </div>
+              )}
+
+              <div className={`${isComposerExpanded ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 gap-2`}>
                 {/* Dynamic Category Selector */}
                 <CategorySelector
                   selectedCategoryId={selectedCategoryId}
@@ -708,6 +725,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                     </span>
                     <select
                       value={selectedCommunityId || ''}
+                      aria-label={language === 'tr' ? 'Gönderinin paylaşılacağı topluluk' : 'Community to post in'}
                       onChange={(e) => setSelectedCommunityId(e.target.value || null)}
                       className="bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none font-mono cursor-pointer max-w-[130px]"
                     >
@@ -743,7 +761,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
                       ? 'Ne düşünüyorsun? Proje, soru veya kod parçacığı paylaş...'
                       : 'What are you working on? Share a project, question or snippet...'
                   }
-                  rows={3}
+                  rows={isComposerExpanded ? 3 : 1}
+                  onFocus={() => setIsComposerFocused(true)}
                   aria-label={language === 'tr' ? 'Gönderi içeriği' : 'Post content'}
                   className="border-transparent bg-transparent px-0 text-sm placeholder:text-zinc-500 focus-visible:border-transparent focus-visible:ring-0 pb-7"
                 />
@@ -893,9 +912,10 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 </div>
               )}
 
-              {/* Bottom Buttons Bar */}
-              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/40">
-                <div className="flex items-center gap-2">
+              {/* Bottom Buttons Bar — wraps on narrow phones so the submit button is
+                  never pushed off the screen. */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-zinc-800/40">
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <input
                     type="file"
                     ref={mediaInputRef}
@@ -906,37 +926,40 @@ export const FeedView: React.FC<FeedViewProps> = ({
                   <button
                     type="button"
                     onClick={() => mediaInputRef.current?.click()}
-                    className="text-xs font-mono flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-colors text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 cursor-pointer"
+                    aria-label={language === 'tr' ? 'Medya ekle' : 'Attach media'}
+                    className="text-xs font-mono flex items-center gap-1.5 px-2.5 h-8 rounded-lg transition-colors text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <ImageIcon className="w-3.5 h-3.5 text-zinc-300" />
                     <Video className="w-3.5 h-3.5 text-zinc-300" />
-                    <span>{language === 'tr' ? 'Medya' : 'Media'}</span>
+                    <span className="hidden xs:inline">{language === 'tr' ? 'Medya' : 'Media'}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setShowCodeAttach(!showCodeAttach)}
-                    className={`text-xs font-mono flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                    aria-label={language === 'tr' ? 'Kod ekle' : 'Attach code'}
+                    className={`text-xs font-mono flex items-center gap-1.5 px-2.5 h-8 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       showCodeAttach
                         ? 'bg-zinc-800 text-white border border-zinc-700'
                         : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
                     }`}
                   >
                     <Code className="w-3.5 h-3.5" />
-                    <span>{language === 'tr' ? 'Kod Ekle' : 'Add Snippet'}</span>
+                    <span className="hidden xs:inline">{language === 'tr' ? 'Kod Ekle' : 'Add Snippet'}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setShowRepoAttach(!showRepoAttach)}
-                    className={`text-xs font-mono flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                    aria-label={language === 'tr' ? 'Depo ekle' : 'Attach repository'}
+                    className={`text-xs font-mono flex items-center gap-1.5 px-2.5 h-8 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       showRepoAttach
                         ? 'bg-zinc-800 text-white border border-zinc-700'
                         : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
                     }`}
                   >
                     <GitBranch className="w-3.5 h-3.5" />
-                    <span>{language === 'tr' ? 'Depo Ekle' : 'Attach Repo'}</span>
+                    <span className="hidden xs:inline">{language === 'tr' ? 'Depo Ekle' : 'Attach Repo'}</span>
                   </button>
                 </div>
 
@@ -1066,8 +1089,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 } ${longPressingPostId === post.id ? 'bg-zinc-900/50 scale-[0.995] transition-transform' : ''}`}
               >
                 {/* Header */}
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
                     <UserAvatar
                       src={authorProfile.avatar_url}
                       name={authorProfile.display_name || authorProfile.username}
@@ -1143,7 +1166,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                       <Button
                         variant="ghost"
                         size="iconSm"
-                        className="text-zinc-600 hover:text-white"
+                        className="text-zinc-600 hover:text-white shrink-0"
                         aria-label={language === 'tr' ? 'Gönderi menüsü' : 'Post menu'}
                       >
                         <MoreHorizontal />
@@ -1182,7 +1205,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                 </div>
 
                 {/* Content */}
-                {post.content && <p className="text-xs text-zinc-200 leading-relaxed">{post.content}</p>}
+                {post.content && <p className="text-xs text-zinc-200 leading-relaxed user-text">{post.content}</p>}
 
                 {/* Media */}
                 {post.media_url && (
@@ -1416,7 +1439,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
                                   {formatTimeAgo(comment.created_at || 'Az önce', language)}
                                 </span>
                               </div>
-                              <p className="text-zinc-300 leading-relaxed">{comment.content}</p>
+                              <p className="text-zinc-300 leading-relaxed user-text">{comment.content}</p>
                             </div>
                           );
                         })}

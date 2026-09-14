@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Trend, Community, PlatformSettings } from '../types';
 import { TrendingUp, Users, Check, UserPlus, Sparkles } from 'lucide-react';
+import { UserAvatar } from './ui/avatar';
 
 interface RightPanelProps {
   trends: Trend[];
@@ -98,10 +99,10 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   onClick={() => onSelectCommunity && onSelectCommunity(comm)}
                   className="flex items-center gap-2.5 overflow-hidden cursor-pointer"
                 >
-                  <img
+                  <UserAvatar
                     src={comm.avatar_url}
-                    alt={comm.name}
-                    className="w-8 h-8 rounded-xl object-cover ring-1 ring-zinc-800 flex-shrink-0"
+                    name={comm.name}
+                    className="w-8 h-8 rounded-xl ring-1 ring-zinc-800 flex-shrink-0 text-[10px]"
                   />
                   <div className="truncate">
                     <span className="text-xs font-bold text-white truncate block hover:text-zinc-200">

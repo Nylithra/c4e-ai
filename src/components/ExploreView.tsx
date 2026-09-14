@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, TrendingUp, Code2, Users, ArrowUpRight } from 'lucide-react';
 import { Post, Community, Trend } from '../types';
+import { UserAvatar } from './ui/avatar';
 
 interface ExploreViewProps {
   posts: Post[];
@@ -134,11 +135,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                   className="p-3 bg-[#0c0c0e] border border-zinc-800/50 rounded-xl flex items-center justify-between hover:border-zinc-700 cursor-pointer transition-all"
                 >
                   <div className="flex items-center gap-3">
-                    <img
-                      src={comm.avatar_url}
-                      alt={comm.name}
-                      className="w-10 h-10 rounded-xl object-cover ring-1 ring-zinc-800"
-                    />
+                    <UserAvatar src={comm.avatar_url} name={comm.name} className="w-10 h-10 rounded-xl ring-1 ring-zinc-800 text-[10px]" />
                     <div>
                       <h4 className="text-xs font-bold text-white">{comm.name}</h4>
                       <span className="text-[10px] text-purple-400 font-mono">/c/@{comm.handle.replace(/^@/, '')}</span>
@@ -169,15 +166,15 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                 {filteredPosts.map((post) => (
                   <div key={post.id} className="p-4 bg-[#0c0c0e] border border-zinc-800/50 rounded-2xl space-y-2">
                     <div className="flex items-center gap-2">
-                      <img
+                      <UserAvatar
                         src={post.author.avatar_url}
-                        alt={post.author.display_name}
-                        className="w-7 h-7 rounded-full object-cover"
+                        name={post.author.display_name || post.author.username}
+                        className="w-7 h-7 text-[10px]"
                       />
                       <span className="text-xs font-bold text-white">{post.author.display_name}</span>
                       <span className="text-[10px] text-zinc-500 font-mono">@{post.author.username}</span>
                     </div>
-                    <p className="text-xs text-zinc-300">{post.content}</p>
+                    <p className="text-xs text-zinc-300 user-text">{post.content}</p>
                     {post.media_url && (
                       <div className="rounded-xl overflow-hidden border border-zinc-800 bg-black max-h-60 mt-1">
                         {post.media_type === 'video' || post.media_url.startsWith('data:video') ? (
