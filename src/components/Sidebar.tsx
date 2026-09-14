@@ -106,6 +106,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : [])
   ];
 
+  /**
+   * The four destinations of the mobile bottom bar. Deliberately short: a phone bar with
+   * five icons plus a floating button left no room for real tap targets, and "Keşfet" /
+   * "Topluluklar" are one tap away in the drawer.
+   */
+  const bottomNavItems: Array<{
+    id: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badge?: number;
+  }> = [
+    { id: 'feed', label: language === 'tr' ? 'Akış' : 'Feed', icon: Home },
+    { id: 'jobs', label: language === 'tr' ? 'İş İlanları' : 'Jobs', icon: Briefcase },
+    { id: 'messages', label: language === 'tr' ? 'Mesajlar' : 'Messages', icon: Mail },
+    {
+      id: 'profile',
+      label: language === 'tr' ? 'Hesabım' : 'Account',
+      icon: User
+    }
+  ];
+
   const handleNavClick = (id: string, isBetaModal?: boolean) => {
     if (isBetaModal) {
       onOpenBetaModal(id);
@@ -137,48 +158,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          {/* PWA Install Button on Mobile Header */}
-          {!isStandalone && onOpenInstallPWA && (
-            <button
-              onClick={onOpenInstallPWA}
-              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700/80 hover:bg-zinc-800 text-zinc-200 active:scale-95 transition-all text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-              aria-label="Install PWA App"
-            >
-              <Download className="w-3.5 h-3.5 text-zinc-300 stroke-[2.5px]" />
-              <span>{language === 'tr' ? 'İndir' : 'App'}</span>
-            </button>
-          )}
-
-          {/* Quick New Post Button */}
+        {/* The header keeps only what the bottom bar does not already offer: search,
+            notifications and composing. The avatar lives in the bottom bar ("Hesabım")
+            and PWA install lives in the drawer + install banner, so both were duplicates. */}
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={onOpenNewPost}
-            className="p-2 rounded-xl bg-zinc-100 text-zinc-950 hover:bg-white active:scale-95 transition-all shadow-sm font-bold flex items-center justify-center cursor-pointer"
-            aria-label="New Post"
+            onClick={() => setActiveTab('explore')}
+            className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800/60 active:bg-zinc-800 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={language === 'tr' ? 'Keşfet' : 'Explore'}
+            title={language === 'tr' ? 'Keşfet' : 'Explore'}
           >
-            <Plus className="w-4 h-4 text-zinc-950 stroke-[2.5px]" />
+            <Compass className="w-5 h-5" />
           </button>
 
-          {/* Quick Notifications Button */}
           <button
             onClick={() => setActiveTab('notifications')}
-            className="relative p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800/60 active:bg-zinc-800 transition-colors cursor-pointer"
-            aria-label="Notifications"
+            className="relative p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800/60 active:bg-zinc-800 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={
+              unreadCount > 0
+                ? (language === 'tr' ? `Bildirimler (${unreadCount} okunmamış)` : `Notifications (${unreadCount} unread)`)
+                : (language === 'tr' ? 'Bildirimler' : 'Notifications')
+            }
+            title={language === 'tr' ? 'Bildirimler' : 'Notifications'}
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[#09090b]" />
+              <span className="absolute top-1 right-1 min-w-[16px] rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white ring-2 ring-[#09090b]">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
             )}
           </button>
 
-          {/* User Profile Avatar */}
-          <UserAvatar
-            src={user.avatar_url}
-            name={user.display_name || user.username}
-            className="w-7 h-7 ring-1 ring-zinc-700/60 text-[10px]"
-            onClick={() => setActiveTab('profile')}
-            title={language === 'tr' ? 'Profilim' : 'My profile'}
-          />
+          <button
+            onClick={onOpenNewPost}
+            className="ml-1 h-9 px-3 rounded-full bg-zinc-100 text-zinc-950 hover:bg-white active:scale-95 transition-all shadow-sm font-bold text-xs flex items-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={language === 'tr' ? 'Yeni gönderi' : 'New post'}
+          >
+            <Plus className="w-4 h-4 text-zinc-950 stroke-[2.75px]" />
+            <span>{language === 'tr' ? 'Paylaş' : 'Post'}</span>
+          </button>
         </div>
       </header>
 
@@ -391,59 +409,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 3. MOBILE BOTTOM NAVIGATION BAR (Screens < md)            */}
       {/* ======================================================== */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#09090b]/95 backdrop-blur-xl border-t border-zinc-800/80 px-2 py-2 flex items-center justify-around select-none">
-        {/* Home */}
-        <button
-          onClick={() => setActiveTab('feed')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'feed' ? 'text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Home className={`w-5 h-5 ${activeTab === 'feed' ? 'stroke-[2.5px] text-white' : 'text-zinc-400'}`} />
-          <span className="text-[10px]">{language === 'tr' ? 'Akış' : 'Home'}</span>
-        </button>
+      {/* A floating pill instead of a full-width bar: four destinations, each a real
+          44px+ tap target, the active one carried by a lighter pill behind the icon. */}
+      <nav
+        aria-label={language === 'tr' ? 'Ana gezinme' : 'Primary navigation'}
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2 select-none pointer-events-none"
+      >
+        <div className="pointer-events-auto mx-auto flex max-w-md items-center justify-between gap-1 rounded-[26px] border border-zinc-800/80 bg-[#0c0c0e]/95 p-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+          {bottomNavItems.map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id)}
+                aria-label={item.label}
+                aria-current={isActive ? 'page' : undefined}
+                title={item.label}
+                className={`relative flex h-11 flex-1 items-center justify-center rounded-[20px] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  isActive
+                    ? 'bg-zinc-800/80 text-white'
+                    : 'text-zinc-500 hover:text-zinc-200 active:bg-zinc-900/70'
+                }`}
+              >
+                {item.id === 'profile' ? (
+                  <span className="relative">
+                    <UserAvatar
+                      src={user.avatar_url}
+                      name={user.display_name || user.username}
+                      className={`h-7 w-7 text-[10px] ring-2 transition-colors ${
+                        isActive ? 'ring-zinc-300' : 'ring-zinc-700/70'
+                      }`}
+                    />
+                    {/* Online indicator, mirroring the reference design. */}
+                    <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[#0c0c0e]" />
+                  </span>
+                ) : (
+                  <item.icon
+                    className={`h-[22px] w-[22px] ${isActive ? 'stroke-[2.25px]' : 'stroke-[1.75px]'}`}
+                  />
+                )}
 
-        {/* Explore */}
-        <button
-          onClick={() => setActiveTab('explore')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'explore' ? 'text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Compass className={`w-5 h-5 ${activeTab === 'explore' ? 'stroke-[2.5px] text-white' : 'text-zinc-400'}`} />
-          <span className="text-[10px]">{language === 'tr' ? 'Keşfet' : 'Explore'}</span>
-        </button>
-
-        {/* Center Floating Action Button (New Post) */}
-        <button
-          onClick={onOpenNewPost}
-          className="flex items-center justify-center w-11 h-11 -mt-3 rounded-full bg-zinc-100 hover:bg-white text-zinc-950 shadow-lg shadow-zinc-950/50 ring-4 ring-[#09090b] active:scale-95 transition-all cursor-pointer"
-          aria-label="New Post"
-        >
-          <Plus className="w-5 h-5 text-zinc-950 stroke-[3px]" />
-        </button>
-
-        {/* Messages */}
-        <button
-          onClick={() => setActiveTab('messages')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl transition-all relative cursor-pointer ${
-            activeTab === 'messages' ? 'text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Mail className={`w-5 h-5 ${activeTab === 'messages' ? 'stroke-[2.5px] text-white' : 'text-zinc-400'}`} />
-          <span className="text-[10px]">{language === 'tr' ? 'Mesajlar' : 'Messages'}</span>
-        </button>
-
-        {/* Communities */}
-        <button
-          onClick={() => setActiveTab('communities')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'communities' ? 'text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Users className={`w-5 h-5 ${activeTab === 'communities' ? 'stroke-[2.5px] text-white' : 'text-zinc-400'}`} />
-          <span className="text-[10px]">{language === 'tr' ? 'Topluluk' : 'Groups'}</span>
-        </button>
+                {/* Unread counters ride on the icon rather than adding a second row. */}
+                {item.badge ? (
+                  <span className="absolute right-[18%] top-1.5 min-w-[17px] rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-[17px] text-white ring-2 ring-[#0c0c0e]">
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
       {/* ======================================================== */}

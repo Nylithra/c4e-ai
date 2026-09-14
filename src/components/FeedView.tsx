@@ -63,7 +63,7 @@ import {
   Link2
 } from 'lucide-react';
 import { getGitHubToken } from '../services/supabaseClient';
-import { validateFileSize, notifyFileSizeExceeded, isUserSpark, getMaxPostLength } from '../utils/fileUploadHelper';
+import { validateFileSize, notifyFileSizeExceeded, getMaxPostLength } from '../utils/fileUploadHelper';
 import { formatTimeAgo } from '../utils/timeAgo';
 import { verifyAdminAccess } from '../utils/securityHelper';
 
@@ -325,7 +325,6 @@ export const FeedView: React.FC<FeedViewProps> = ({
     }
   }, [showRepoAttach]);
 
-  const isSpark = isUserSpark(user);
   const MAX_CONTENT_LENGTH = getMaxPostLength(user);
   const MAX_CODE_LENGTH = 5000;
 
@@ -757,40 +756,21 @@ export const FeedView: React.FC<FeedViewProps> = ({
                     }
                   }}
                   placeholder={
-                    language === 'tr'
-                      ? 'Ne düşünüyorsun? Proje, soru veya kod parçacığı paylaş...'
-                      : 'What are you working on? Share a project, question or snippet...'
+                    /* Collapsed (single-row) composer gets a short placeholder: the long one
+                       wrapped onto a second line that the one-row box then clipped. */
+                    isComposerExpanded
+                      ? language === 'tr'
+                        ? 'Ne düşünüyorsun? Proje, soru veya kod parçacığı paylaş...'
+                        : 'What are you working on? Share a project, question or snippet...'
+                      : language === 'tr'
+                      ? 'Ne düşünüyorsun?'
+                      : "What's happening?"
                   }
                   rows={isComposerExpanded ? 3 : 1}
                   onFocus={() => setIsComposerFocused(true)}
                   aria-label={language === 'tr' ? 'Gönderi içeriği' : 'Post content'}
-                  className="border-transparent bg-transparent px-0 text-sm placeholder:text-zinc-500 focus-visible:border-transparent focus-visible:ring-0 pb-7"
+                  className="border-transparent bg-transparent px-0 text-sm placeholder:text-zinc-500 focus-visible:border-transparent focus-visible:ring-0"
                 />
-
-                {/* Character Counter */}
-                <div className="absolute right-1 bottom-1 flex items-center gap-1.5">
-                  {isSpark && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1 shadow-sm">
-                      <Sparkles className="w-2.5 h-2.5" /> 1000 Spark
-                    </span>
-                  )}
-                  <span
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded-md transition-all shadow-sm ${
-                      content.length > MAX_CONTENT_LENGTH
-                        ? 'bg-red-500/20 text-red-400 border border-red-500/50 font-bold animate-pulse'
-                        : content.length >= MAX_CONTENT_LENGTH * 0.8
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 font-semibold'
-                        : 'bg-zinc-900/80 text-zinc-400 border border-zinc-800'
-                    }`}
-                    title={
-                      content.length > MAX_CONTENT_LENGTH
-                        ? (language === 'tr' ? `Karakter sınırı aşıldı! Maksimum ${MAX_CONTENT_LENGTH} karakter.` : `Character limit exceeded! Max ${MAX_CONTENT_LENGTH} chars.`)
-                        : undefined
-                    }
-                  >
-                    {content.length}/{MAX_CONTENT_LENGTH}
-                  </span>
-                </div>
               </div>
 
               {/* Media Preview */}
@@ -963,8 +943,29 @@ export const FeedView: React.FC<FeedViewProps> = ({
                   </button>
                 </div>
 
-                <HintTooltip label={language === 'tr' ? 'Ctrl + Enter ile de paylaşabilirsin' : 'You can also press Ctrl + Enter'}>
-                  <Button type="submit" size="sm" disabled={isSubmitDisabled}>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Character counter. It used to float on top of the textarea, where it
+                      covered the placeholder's second line; it now lives in the action row. */}
+                  <span
+                    aria-live="polite"
+                    className={`text-[11px] font-mono px-2 py-0.5 rounded-md transition-colors ${
+                      content.length > MAX_CONTENT_LENGTH
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/50 font-bold'
+                        : content.length >= MAX_CONTENT_LENGTH * 0.8
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 font-semibold'
+                        : 'text-zinc-500'
+                    }`}
+                    title={
+                      content.length > MAX_CONTENT_LENGTH
+                        ? (language === 'tr' ? `Karakter sınırı aşıldı! Maksimum ${MAX_CONTENT_LENGTH} karakter.` : `Character limit exceeded! Max ${MAX_CONTENT_LENGTH} chars.`)
+                        : undefined
+                    }
+                  >
+                    {content.length}/{MAX_CONTENT_LENGTH}
+                  </span>
+
+                  <HintTooltip label={language === 'tr' ? 'Ctrl + Enter ile de paylaşabilirsin' : 'You can also press Ctrl + Enter'}>
+                    <Button type="submit" size="sm" disabled={isSubmitDisabled}>
                     {isSubmitting ? (
                       <>
                         <Loader2 className="animate-spin" />
@@ -976,8 +977,9 @@ export const FeedView: React.FC<FeedViewProps> = ({
                         <span>{language === 'tr' ? 'Paylaş' : 'Post'}</span>
                       </>
                     )}
-                  </Button>
-                </HintTooltip>
+                    </Button>
+                  </HintTooltip>
+                </div>
               </div>
             </div>
           </div>

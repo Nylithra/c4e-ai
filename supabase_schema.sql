@@ -500,10 +500,27 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  reserved TEXT[] := ARRAY[
+    'admin', 'administrator', 'nylithra', 'c4e_admin', 'code4ever', 'system', 'root',
+    'support', 'staff', 'moderator', 'security', 'official', 'api', 'bot'
+  ];
 BEGIN
-  IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
+  -- auth.uid() IS NULL means there is no end-user session behind this insert: the SQL
+  -- editor, a migration or the service key. Those callers already had to get past the
+  -- profiles_insert_self policy, which a signed-out client cannot, so seeding the founder
+  -- account by hand stays possible while sign-up stays restricted.
+  IF auth.role() = 'service_role' OR auth.uid() IS NULL OR public.is_platform_admin() THEN
     RETURN NEW;
   END IF;
+
+  -- Reserved system usernames may not be claimed on sign-up either. The UPDATE trigger
+  -- already blocked renaming into one, but registering straight into one was open, and
+  -- the client grants the admin UI to a fixed list of these names.
+  IF lower(coalesce(NEW.username, '')) = ANY (reserved) THEN
+    RAISE EXCEPTION 'Bu kullanıcı adı sistem tarafından ayrılmıştır.';
+  END IF;
+
   NEW.is_admin := false;
   NEW.verified := false;
   NEW.supporter_tier := 'none';
@@ -1044,4 +1061,9 @@ CREATE INDEX IF NOT EXISTS idx_post_reports_created_at ON public.post_reports(cr
 -- 9. BOOTSTRAP THE PLATFORM ADMINISTRATOR
 -- ================================================================
 -- Grant the founder account the administrator flag (idempotent).
+--
+-- This is the ONLY way a profile becomes an administrator: is_platform_admin() reads this
+-- flag and nothing else, and both profile triggers refuse to let a member set it. Regular
+-- sign-up can no longer claim a reserved system username either, so if a new administrator
+-- account is ever needed it must be created with the service role key (or seeded here).
 UPDATE public.profiles SET is_admin = true WHERE lower(username) = 'nylithra';

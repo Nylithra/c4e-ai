@@ -139,17 +139,111 @@ Aynı otomatik denetim, aynı sayfalar ve aynı dört ekran boyutu:
 
 ---
 
-## 11. Hâlâ açık olan gözlemler (bilinçli olarak bırakıldı)
+## 11. İkinci tur — kullanıcı bildirimleri üzerine yapılanlar
 
-- **Mobil üst başlıkta iki ayrı "kur" çağrısı var**: başlıktaki "İndir" butonu ve alttaki
-  PWA şeridi aynı anda görünebiliyor. İşlevsel bir hata değil, ama tekrar.
-- **Alt gezinmede ve üst başlıkta iki ayrı "+" butonu** bulunuyor.
+### 11.1 Paylaşım kutusunda metnin üzerine binen sayaç (düzeltildi)
+
+**Bulgu.** "Ne düşünüyorsun? Proje, soru veya kod parçacığı paylaş..." yer tutucusu 390px'de
+iki satıra sarıyordu; ikinci satırın ("…parçacığı paylaş…") tam üzerinde mutlak konumlu
+"1000 Spark" rozeti ve karakter sayacı duruyordu. Harfler rozetin arkasında kalınca yazı
+bozuk görünüyordu.
+
+**Düzeltme.**
+- "1000 Spark" rozeti tamamen kaldırıldı.
+- Karakter sayacı metnin üzerinden alınıp alt aksiyon çubuğuna, "Paylaş" butonunun yanına
+  taşındı — görünür kalıyor ama hiçbir şeyin üstüne binmiyor.
+- Kutu kapalıyken (tek satır) kısa yer tutucu kullanılıyor: "Ne düşünüyorsun?". Uzun metin
+  yalnızca kutu açıldığında gösteriliyor.
+
+### 11.2 Alt gezinme çubuğu yeniden tasarlandı
+
+**Önce.** Tam genişlikte, üstte ince çizgili bir çubuk; 4 sekme + ortada taşan bir "+"
+düğmesi. Sekmeler ikon + etiket olduğu için her biri dar kalıyordu ve "+" hem burada hem
+üst başlıkta vardı.
+
+**Sonra.** Ekranın altında yüzen, yuvarlatılmış tek bir hap:
+
+| | Sekme | İkon |
+|---|---|---|
+| 1 | Akış | ev |
+| 2 | İş İlanları | çanta |
+| 3 | Mesajlar | zarf |
+| 4 | Hesabım | profil fotoğrafı + yeşil çevrimiçi noktası |
+
+- Her sekme **44×44px'in üzerinde** (360px'de 78×44, 390px'de 85×44).
+- Aktif sekme ikonun arkasındaki açık renkli hapla belirtiliyor.
+- Okunmamış sayaçları ikonun üzerinde rozet olarak duruyor, ikinci satır açmıyor.
+- iOS ana ekran çubuğu için `env(safe-area-inset-bottom)` kadar boşluk bırakılıyor.
+
+### 11.3 Mobil üst başlık sadeleşti (önceki turdaki iki açık gözlem kapandı)
+
+- Avatar kaldırıldı — artık alt çubuktaki "Hesabım".
+- "İndir" butonu kaldırıldı — PWA kurulumu zaten hem çekmecede hem kurulum şeridinde var.
+  Böylece **aynı anda iki "kur" çağrısı** sorunu ortadan kalktı.
+- Alt çubuktaki "+" kaldırıldığı için **iki ayrı "+" butonu** sorunu da kapandı; başlıktaki
+  tek düğme artık "+ Paylaş" olarak etiketli.
+- Yerine keşfet butonu geldi; bildirim rozeti nokta yerine sayı gösteriyor.
+
+### 11.4 Bildirimler ekranı sıfırdan yazıldı
+
+**Kaldırılanlar.** "Sesli (WhatsApp Tarzı)" etiketi, sahte test bildirimi ("Ahmet sana bir
+mesaj gönderdi: 'Harika proje! 🚀'"), ekranın üçte birini kaplayan tanıtım şeridi ve
+`notificationSound.ts` içindeki WhatsApp göndermeleri.
+
+**Yeni yapı.**
+- **Tarihe göre gruplama**: Bugün / Bu hafta / Daha önce.
+- **Dört filtre**: Tümü, Okunmamış, Etkileşim, İlanlar — her biri sayısıyla.
+- Her satırda **gönderenin avatarı** ve avatarın köşesinde **türe göre renkli rozet**
+  (beğeni kırmızı, yorum yeşil, yeniden paylaşım mavi, takip mor, ilan turkuaz).
+- Okunmamışlar için satır başında ince bir nokta; satırın tamamı `<button>` olduğu için
+  klavyeyle gezilebiliyor ve ekran okuyucuya tek bir eylem olarak sunuluyor.
+- Tarayıcı bildirim izni artık tek satırlık, kapatılabilir ve yalnızca izin sorulmamışsa
+  görünen sessiz bir öneri.
+- "Tümünü okundu" ve "Temizle" butonları boşken devre dışı (önce tıklanıp hiçbir şey
+  yapmıyorlardı).
+- Filtreye göre değişen boş durum metni.
+
+---
+
+## 12. Yetki denetimi — "başkalarının topluluk ayarlarını değiştirebiliyorum"
+
+Kısa cevap: **güvenlik açığı değil, yönetici yetkisi.** `nylithra` hesabı platform
+yöneticisi olarak tanımlı (`SYSTEM_ADMIN_USERNAMES` + `supabase_schema.sql` içindeki
+`is_admin = true` ataması), bu yüzden ayar düğmesi tüm topluluklarda görünüyor.
+
+Gerçek bir veritabanı üzerinde (PostgreSQL 16) doğrulandı:
+
+| Senaryo | Sonuç |
+|---|---|
+| Yabancı üye topluluğun adını/açıklamasını/gizliliğini değiştirir | ❌ değişmedi |
+| Yabancı üye topluluğa katılır (`members_count`) | ✅ izinli |
+| Yabancı üye topluluğu siler | ❌ `DELETE 0` |
+| Kurucu değiştirir | ✅ izinli |
+| Platform yöneticisi değiştirir | ✅ izinli |
+| Üye kendine `is_admin`/`verified`/`spark` verir | ❌ hepsi sıfırlandı |
+| Üye kullanıcı adını `c4e_admin` yapar | ❌ hata |
+| Gizli topluluk gönderisi üye olmayana görünür | ❌ görünmüyor |
+
+**Bu denetimde bulunan gerçek açık (kapatıldı).** İstemci `admin`, `administrator`,
+`c4e_admin`, `nylithra` adlarına yönetici arayüzünü açıyordu; veritabanı ise bu adlara
+kayıt olmayı yalnızca *ad değiştirirken* engelliyor, **ilk kayıtta engellemiyordu**. Yani
+uygulama dışından `c4e_admin` adıyla kayıt olan biri yönetici arayüzünü görebilirdi
+(veritabanı yazmalarını yine de geri alırdı). `protect_profile_insert` tetikleyicisine
+rezerve ad kontrolü eklendi; oturumsuz çağrılar (SQL editörü, servis anahtarı, göç
+betikleri) muaf tutulduğu için kurucu hesabını elle oluşturmak hâlâ mümkün.
+
+---
+
+## 13. Hâlâ açık olan gözlemler (bilinçli olarak bırakıldı)
+
 - **Kod bloğu yatayda kaydırılıyor** (doğru davranış) ama telefonda kaydırılabildiğine dair
   görsel bir ipucu yok.
 - **768px'de düzen sıkışık**: kenar çubuğu masaüstü genişliğine geçtiği için akış sütunu
   dar kalıyor. Taşma giderildi, ancak kenar çubuğunun bu aralıkta ikon moduna geçmesi daha
   ferah olurdu.
-- **Mesajlar (DM) ekranı** bu turda beta kilidi nedeniyle otomatik denetime dahil edilmedi.
+- **Mesajlar (DM) ekranı** beta kilidi nedeniyle otomatik denetime dahil edilmedi.
+- **Keşfet ve Topluluklar** alt çubukta değil; çekmecede ve üst başlıktaki keşfet
+  butonunda. Dört sekmeli çubuk okunaklılık için bilinçli bir tercih.
 
 ---
 

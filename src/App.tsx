@@ -1242,7 +1242,9 @@ export default function App() {
           }}
         />
 
-        <main className="flex-1 flex min-h-screen w-full pt-[52px] md:pt-0 pb-16 md:pb-0 min-w-0">
+        {/* Bottom padding comes from index.css so it can account for the floating
+            mobile nav bar, the iOS home indicator and the PWA install banner. */}
+        <main className="flex-1 flex min-h-screen w-full pt-[52px] md:pt-0 min-w-0">
           {activeTab === 'feed' && (
             <FeedView
               posts={posts}

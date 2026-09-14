@@ -1,4 +1,4 @@
-// WhatsApp-Style Notification Sound & Native Push/Desktop Notification Manager
+// Notification chime + native push / desktop notification manager.
 
 let audioCtx: AudioContext | null = null;
 
@@ -17,8 +17,8 @@ function getAudioContext(): AudioContext | null {
 }
 
 /**
- * Plays a pleasant WhatsApp / iOS style multi-tone chime using Web Audio API.
- * High fidelity, zero external network dependency, instant response offline or online.
+ * Plays a short two-tone chime through the Web Audio API.
+ * No external asset, so it works offline and costs no network request.
  */
 export function playNotificationSound() {
   try {
@@ -121,8 +121,8 @@ export interface NativeNotificationOptions {
 }
 
 /**
- * Sends a native system notification to Desktop (Windows/Mac/Linux) or Mobile (Android/PWA)
- * and plays the WhatsApp notification sound.
+ * Sends a native system notification on desktop (Windows/macOS/Linux) or mobile (Android/PWA)
+ * and plays the notification chime.
  */
 export async function sendNativeNotification(options: NativeNotificationOptions) {
   const {

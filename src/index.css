@@ -160,11 +160,16 @@
   .text-\[10px\] { font-size: 11px; }
 }
 
-/* PWA kurulum şeridi açıkken alt gezinme + şerit yüksekliği kadar boşluk bırakılır,
-   aksi halde her sayfanın son kartı kalıcı olarak örtülü kalıyordu. */
+/* Alt gezinme çubuğu yüzen (floating) bir hap olduğu için sayfanın son kartını
+   örtmemesi adına içerik sütununa çubuk + iOS ana ekran çubuğu kadar boşluk verilir.
+   PWA kurulum şeridi açıkken bu boşluk şerit yüksekliği kadar daha artar. */
 @media (max-width: 767px) {
+  main {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+
   body.has-pwa-banner main {
-    padding-bottom: 8.75rem;
+    padding-bottom: calc(10.5rem + env(safe-area-inset-bottom));
   }
 }
 
