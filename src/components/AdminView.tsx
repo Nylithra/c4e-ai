@@ -39,7 +39,8 @@ import {
   FileText,
   Flag,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Mail
 } from 'lucide-react';
 import {
   DEFAULT_BADGE_DEFINITIONS,
@@ -51,6 +52,7 @@ import {
 } from '../services/supabaseClient';
 import { verifyAdminAccess, sanitizeText } from '../utils/securityHelper';
 import { SupabaseDatabaseSettings } from './SupabaseDatabaseSettings';
+import { AdminMailSection } from './AdminMailSection';
 
 interface AdminViewProps {
   currentUser: UserProfile;
@@ -101,7 +103,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     return verifyAdminAccess(currentUser);
   }, [currentUser]);
 
-  const [activeTab, setActiveTab] = useState<'beta' | 'badges' | 'definitions' | 'platform' | 'subscriptions' | 'database' | 'errors' | 'post_reports'>('beta');
+  const [activeTab, setActiveTab] = useState<'beta' | 'badges' | 'definitions' | 'platform' | 'subscriptions' | 'database' | 'errors' | 'post_reports' | 'mail'>('beta');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserForBadges, setSelectedUserForBadges] = useState<UserProfile | null>(null);
 
@@ -967,7 +969,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </span>
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('mail')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'mail'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+              : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
+          }`}
+        >
+          <Mail className="w-4 h-4 text-sky-400" />
+          <span>E-postalar</span>
+        </button>
       </div>
+
+      {/* TAB: E-POSTA KONSOLU (IMAP okuma / SMTP gonderme) */}
+      {activeTab === 'mail' && <AdminMailSection language={language} />}
 
       {/* TAB 1: KAPALI BETA YÖNETİMİ */}
       {activeTab === 'beta' && (

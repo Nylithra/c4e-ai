@@ -1030,13 +1030,39 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
-GRANT SELECT ON public.profiles, public.posts, public.communities, public.job_listings TO anon;
+GRANT SELECT ON public.posts, public.communities, public.job_listings TO anon;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-  public.profiles, public.posts, public.communities, public.job_listings,
+  public.posts, public.communities, public.job_listings,
   public.job_applications, public.notifications, public.groups, public.messages,
   public.group_invites, public.system_error_reports, public.post_reports
 TO authenticated;
+
+-- profiles: everything EXCEPT the e-mail address is world-readable.
+--
+-- Row Level Security is row-scoped, not column-scoped, so the previous table-wide
+-- `GRANT SELECT ON public.profiles TO anon` let anybody holding the public anon key run
+-- `select=username,email` and harvest every address on the platform. Column-level grants
+-- are the only mechanism in PostgreSQL that closes this.
+--
+-- The column list is derived from the live table so a column added later is readable by
+-- default and only `email` stays withheld. Writes stay table-level: a member must be able to
+-- record their own address on sign-up, and RLS already confines that to their own row.
+DO $$
+DECLARE
+  readable TEXT;
+BEGIN
+  SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+    INTO readable
+    FROM information_schema.columns
+   WHERE table_schema = 'public'
+     AND table_name = 'profiles'
+     AND column_name <> 'email';
+
+  EXECUTE format('GRANT SELECT (%s) ON public.profiles TO anon, authenticated', readable);
+END $$;
+
+GRANT INSERT, UPDATE, DELETE ON public.profiles TO authenticated;
 
 -- public.community_api_keys is intentionally absent from both grant lists above: browsers
 -- never touch key material, the backend reaches it with the service role key only.

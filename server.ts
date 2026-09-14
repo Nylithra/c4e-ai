@@ -46,6 +46,18 @@ import {
   validatePostPayload,
   type CommunityRow
 } from './src/server/communityApi';
+import {
+  describeMailConfig,
+  fetchInbox,
+  fetchMessage,
+  getImapConfig,
+  getSmtpConfig,
+  resolveRecipientByUsername,
+  sendMail,
+  verifyImap,
+  verifySmtp
+} from './src/server/mail';
+import { renderMailHtml } from './src/server/mailTemplate';
 
 const app = express();
 const PORT = Number(env('PORT', '3000'));
@@ -1466,6 +1478,235 @@ app.get('/api/bynogame/my-donations', requireAuth, (req: Request, res: Response)
     : [];
   res.json({ success: true, total: donations.length, donations: donations.slice(0, 50).map(publicDonationView) });
 });
+
+// -------------------------------------------------------------
+// ADMIN MAIL CONSOLE (IMAP read / SMTP send)
+// -------------------------------------------------------------
+//
+// Every route here is behind requireAdmin. This is the most privileged surface in the app:
+// it reads the operator's mailbox and can send mail as the platform, so it is deliberately
+// unreachable by ordinary members even when they know the URL.
+//
+// Connection details are never accepted from the request — they come from environment
+// variables only (see src/server/mail.ts).
+
+/** Mailbox names are echoed into IMAP commands, so keep them to a boring character set. */
+function safeMailbox(value: unknown): string {
+  const raw = asString(value, 80);
+  return /^[A-Za-z0-9 _./-]{1,80}$/.test(raw) ? raw : 'INBOX';
+}
+
+app.get('/api/admin/mail/status', requireAdmin, (_req: Request, res: Response) => {
+  res.json({ success: true, ...describeMailConfig() });
+});
+
+/** Opens real SMTP/IMAP connections to prove the credentials work. */
+app.post(
+  '/api/admin/mail/verify',
+  requireAdmin,
+  rateLimit({ scope: 'mail-verify', windowMs: 60000, max: 6, perUser: true }),
+  async (_req: Request, res: Response) => {
+    const [smtp, imap] = await Promise.all([verifySmtp(), verifyImap()]);
+    res.json({ success: true, smtp, imap });
+  }
+);
+
+app.get(
+  '/api/admin/mail/inbox',
+  requireAdmin,
+  rateLimit({ scope: 'mail-inbox', windowMs: 60000, max: 30, perUser: true }),
+  async (req: Request, res: Response) => {
+    if (!getImapConfig()) {
+      res.status(503).json({
+        success: false,
+        error: 'IMAP yapılandırılmamış. MAIL_IMAP_HOST / MAIL_IMAP_USER / MAIL_IMAP_PASS tanımlayın.'
+      });
+      return;
+    }
+
+    try {
+      const messages = await fetchInbox({
+        mailbox: safeMailbox(req.query.mailbox),
+        limit: Number(req.query.limit) || 25
+      });
+      res.json({ success: true, count: messages.length, messages });
+    } catch (error: any) {
+      res.status(502).json({ success: false, error: `IMAP hatası: ${String(error?.message || error).slice(0, 300)}` });
+    }
+  }
+);
+
+app.get(
+  '/api/admin/mail/message/:uid',
+  requireAdmin,
+  rateLimit({ scope: 'mail-message', windowMs: 60000, max: 60, perUser: true }),
+  async (req: Request, res: Response) => {
+    if (!getImapConfig()) {
+      res.status(503).json({ success: false, error: 'IMAP yapılandırılmamış.' });
+      return;
+    }
+
+    const uid = Number(req.params.uid);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      res.status(400).json({ success: false, error: 'Geçersiz mesaj kimliği.' });
+      return;
+    }
+
+    try {
+      const message = await fetchMessage(uid, safeMailbox(req.query.mailbox));
+      if (!message) {
+        res.status(404).json({ success: false, error: 'Mesaj bulunamadı.' });
+        return;
+      }
+      res.json({ success: true, message });
+    } catch (error: any) {
+      res.status(502).json({ success: false, error: `IMAP hatası: ${String(error?.message || error).slice(0, 300)}` });
+    }
+  }
+);
+
+/** Looks up the address behind a username so the UI can confirm before sending. */
+app.get(
+  '/api/admin/mail/resolve/:username',
+  requireAdmin,
+  rateLimit({ scope: 'mail-resolve', windowMs: 60000, max: 60, perUser: true }),
+  async (req: Request, res: Response) => {
+    const recipient = await resolveRecipientByUsername(asString(req.params.username, 40));
+    if (!recipient) {
+      res.status(404).json({
+        success: false,
+        error: 'Bu kullanıcı adına ait bir e-posta adresi bulunamadı.'
+      });
+      return;
+    }
+    res.json({ success: true, recipient });
+  }
+);
+
+app.post(
+  '/api/admin/mail/send',
+  requireAdmin,
+  rateLimit({ scope: 'mail-send', windowMs: 60000, max: 20, perUser: true }),
+  async (req: Request, res: Response) => {
+    if (!getSmtpConfig()) {
+      res.status(503).json({
+        success: false,
+        error: 'SMTP yapılandırılmamış. MAIL_SMTP_HOST / MAIL_SMTP_USER / MAIL_SMTP_PASS tanımlayın.'
+      });
+      return;
+    }
+
+    const body = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
+
+    // Addressing by username is the primary path; a raw address is allowed as a fallback
+    // so the console can answer an inbound mail from a non-member.
+    let toAddress = '';
+    let recipientName = asString(body.recipient_name, 80);
+
+    const username = asString(body.username, 40);
+    if (username) {
+      const recipient = await resolveRecipientByUsername(username);
+      if (!recipient) {
+        res.status(404).json({
+          success: false,
+          error: `"${username}" kullanıcısına ait bir e-posta adresi bulunamadı.`
+        });
+        return;
+      }
+      toAddress = recipient.email;
+      recipientName = recipientName || recipient.displayName;
+    } else {
+      toAddress = asString(body.to, 254);
+    }
+
+    const subject = asString(body.subject, 180);
+    const message = asString(body.body ?? body.message, 20000);
+
+    if (!subject.trim()) {
+      res.status(422).json({ success: false, field: 'subject', error: 'Konu zorunludur.' });
+      return;
+    }
+    if (!message.trim()) {
+      res.status(422).json({ success: false, field: 'body', error: 'Mesaj gövdesi zorunludur.' });
+      return;
+    }
+
+    // A call to action is optional, but a malformed one must not silently produce a dead
+    // button, so reject it rather than dropping it.
+    let callToAction: { label: string; url: string } | undefined;
+    const ctaLabel = asString(body.cta_label, 60);
+    const ctaUrl = asString(body.cta_url, 500);
+    if (ctaLabel || ctaUrl) {
+      if (!ctaLabel || !ctaUrl) {
+        res.status(422).json({
+          success: false,
+          field: 'cta',
+          error: 'Buton için hem etiket hem bağlantı gereklidir.'
+        });
+        return;
+      }
+      if (!/^https?:\/\//i.test(ctaUrl)) {
+        res.status(422).json({
+          success: false,
+          field: 'cta_url',
+          error: 'Buton bağlantısı http:// veya https:// ile başlamalıdır.'
+        });
+        return;
+      }
+      callToAction = { label: ctaLabel, url: ctaUrl };
+    }
+
+    const result = await sendMail({
+      to: toAddress,
+      subject,
+      heading: asString(body.heading, 160) || subject,
+      body: message,
+      recipientName: recipientName || undefined,
+      callToAction,
+      footnote: asString(body.footnote, 300) || undefined
+    });
+
+    if (!result.ok) {
+      res.status(502).json({ success: false, error: result.error });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: `E-posta ${toAddress} adresine gönderildi.`,
+      to: toAddress,
+      messageId: result.messageId
+    });
+  }
+);
+
+/** Renders the template without sending, so the admin can see the design first. */
+app.post(
+  '/api/admin/mail/preview',
+  requireAdmin,
+  rateLimit({ scope: 'mail-preview', windowMs: 60000, max: 60, perUser: true }),
+  (req: Request, res: Response) => {
+    const body = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
+    const subject = asString(body.subject, 180) || 'Konu';
+    const text = asString(body.body ?? body.message, 20000) || 'Mesaj gövdesi burada görünür.';
+
+    const ctaLabel = asString(body.cta_label, 60);
+    const ctaUrl = asString(body.cta_url, 500);
+
+    const html = renderMailHtml({
+      heading: asString(body.heading, 160) || subject,
+      preheader: text.replace(/\s+/g, ' ').slice(0, 120),
+      paragraphs: text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean),
+      recipientName: asString(body.recipient_name, 80) || undefined,
+      callToAction: ctaLabel && /^https?:\/\//i.test(ctaUrl) ? { label: ctaLabel, url: ctaUrl } : undefined,
+      footnote: asString(body.footnote, 300) || undefined,
+      // The preview runs in the browser, where cid: cannot resolve; point at the served file.
+      logoCid: 'PREVIEW'
+    }).replace('src="cid:PREVIEW"', 'src="/email-logo.png"');
+
+    res.json({ success: true, html });
+  }
+);
 
 // -------------------------------------------------------------
 // ERROR HANDLING & STATIC HOSTING

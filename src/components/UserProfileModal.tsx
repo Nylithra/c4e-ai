@@ -24,7 +24,7 @@ import {
 import { UserProfile, Community } from '../types';
 import { UserBadges } from './UserBadges';
 import { sanitizeUrl } from '../utils/securityHelper';
-import { getSupabaseClient, loadStoredAllUsers, normalizeProfile } from '../services/supabaseClient';
+import { getSupabaseClient, loadStoredAllUsers, normalizeProfile, PUBLIC_PROFILE_COLUMNS } from '../services/supabaseClient';
 import { ensureThemeStylesheet, getVisibleProfileTheme, themeToStyle } from '../utils/themeHelper';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { UserAvatar } from './ui/avatar';
@@ -139,7 +139,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         if (!isExplicitCommunity && client) {
           const { data } = await client
             .from('profiles')
-            .select('*')
+            // Not `*`: the e-mail column is withheld from browser roles by column grants.
+            .select(PUBLIC_PROFILE_COLUMNS as '*')
             .ilike('username', cleanUsername)
             .limit(1)
             .maybeSingle();

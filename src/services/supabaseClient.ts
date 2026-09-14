@@ -334,6 +334,31 @@ setAccessTokenProvider(async () => {
   }
 });
 
+/**
+ * Every profile column a browser is allowed to read — deliberately NOT `*`.
+ *
+ * `profiles.email` is withheld from the anon and authenticated roles by column-level grants
+ * (see supabase_schema.sql), because row level security cannot restrict a single column and
+ * a table-wide read let anyone with the public anon key harvest addresses. PostgREST
+ * translates `select=*` into a read of every column, which that grant now refuses, so the
+ * columns are listed explicitly instead.
+ *
+ * The signed-in user's own address still comes from the auth session (`user.email`), so
+ * nothing in the UI needs it from here.
+ */
+export const PUBLIC_PROFILE_COLUMNS =
+  'id,username,display_name,avatar_url,banner_url,bio,role,verified,website,' +
+  'theme_color,accent_color,joined_communities,custom_fields,pinned_repos,badges,' +
+  'integrations,is_admin,supporter_tier,profile_theme,saved_post_ids,' +
+  'allow_group_invites,show_liked_posts,is_online,last_seen_at,created_at,updated_at';
+
+/**
+ * supabase-js infers the row shape from a STRING LITERAL select, so a runtime-built column
+ * list degrades to an error type. The cast tells it to type the result as a full row, which
+ * is accurate: this selects every column except `email`, and no caller reads `email` here.
+ */
+const PROFILE_SELECT = PUBLIC_PROFILE_COLUMNS as '*';
+
 export const DEFAULT_USER: UserProfile = {
   id: '',
   username: '',
@@ -431,7 +456,7 @@ export async function getOrFormatUserProfile(user: SupabaseUser): Promise<UserPr
     try {
       const { data, error } = await client
         .from('profiles')
-        .select('*')
+        .select(PROFILE_SELECT)
         .eq('id', user.id)
         .maybeSingle();
 
@@ -2689,7 +2714,7 @@ export function subscribeToAllUsers(onUpdate: (users: UserProfile[]) => void): (
     return () => {};
   }
 
-  client.from('profiles').select('*').then(({ data }) => {
+  client.from('profiles').select(PROFILE_SELECT).then(({ data }) => {
     if (data) {
       const normalized = data.map(normalizeProfile);
       saveStoredAllUsers(normalized);
@@ -2700,7 +2725,7 @@ export function subscribeToAllUsers(onUpdate: (users: UserProfile[]) => void): (
   const channel = client
     .channel('public:profiles')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
-      const { data } = await client.from('profiles').select('*');
+      const { data } = await client.from('profiles').select(PROFILE_SELECT);
       if (data) {
         const normalized = data.map(normalizeProfile);
         saveStoredAllUsers(normalized);

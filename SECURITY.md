@@ -164,6 +164,61 @@ Bu davranışların tamamı gerçek Express rotaları üzerinden uçtan uca test
 
 ---
 
+## 2.2 E-posta konsolu (IMAP / SMTP)
+
+Admin panelindeki **E-postalar** sekmesi; gelen kutusunu IMAP ile okur, kullanıcı adından
+adres çözerek SMTP ile e-posta gönderir. Yapılandırma `.env` içindeki `MAIL_*` değişkenleridir.
+
+- **Tüm uçlar `requireAdmin` arkasındadır.** Normal üye 403 alır; oturumsuz çağrı da 403 alır
+  (401 ile ayrılmaz, böylece ucun varlığı sızdırılmaz).
+- **Bağlantı hedefi istekten alınmaz.** Sunucu, port ve kimlik bilgileri yalnızca ortam
+  değişkenlerinden okunur. Aksi halde bu uç bir SSRF ve kimlik bilgisi sızdırma aracı olurdu.
+- **Başlık enjeksiyonu engellenir.** Konu, görünen ad ve alıcı alanlarındaki CR/LF karakterleri
+  temizlenir. Doğrulandı: konuya `\r\nBcc: ...` yazmak ek başlık üretmiyor, zarfta yalnızca
+  tek alıcı kalıyor.
+- **Gelen posta güvenilmez kabul edilir.** Sunucu tarafında `<script>`, `<iframe>`, olay
+  öznitelikleri (`onerror` vb.), `javascript:` bağları ve uzak görseller temizlenir; istemci
+  bunu ayrıca **`sandbox` özniteliği boş bir iframe** içinde gösterir (script çalıştırma ve
+  same-origin erişimi kapalı). İki bağımsız katman.
+- **Uzak görseller varsayılan olarak engellidir**; yüklemek açık bir tıklama ister, çünkü
+  uzak görsel yöneticinin IP adresini gönderene açar ve adresin canlı olduğunu doğrular.
+- **Parola hiçbir yanıtta, hiçbir logda geçmez.** Durum ucu yalnızca sunucu/port/güvenli mi
+  bilgisini döndürür.
+- Hız sınırları: gönderme dakikada 20, bağlantı testi 6, gelen kutusu 30 (yönetici başına).
+
+Logo, e-posta istemcileri SVG göstermediği için `public/logo.svg` dosyasından üretilmiş
+`public/email-logo.png` olarak CID ile gömülür (`node scripts/build-email-logo.mjs`).
+
+Bu davranışların tamamı gerçek bir SMTP ve IMAP sunucusuna karşı, gerçek Express rotaları
+üzerinden uçtan uca test edildi (68 doğrulama, tamamı geçti).
+
+---
+
+## 2.3 Kapatılan gizlilik açığı: e-posta adresleri herkese açıktı
+
+`profiles` tablosunda `GRANT SELECT` tablo genelindeydi ve `profiles_select_public` politikası
+`USING (true)` olduğundan, **herkese açık anon anahtarını** eline geçiren biri şunu çalıştırıp
+platformdaki tüm e-posta adreslerini toplayabiliyordu:
+
+```
+GET /rest/v1/profiles?select=username,email
+```
+
+RLS satır bazlıdır, sütun bazlı değildir; bu yüzden politika bunu engelleyemez. Çözüm sütun
+seviyesinde yetkilendirmedir: `email` dışındaki sütunlar `anon` ve `authenticated` rollerine
+açık, `email` hiçbirine açık değil. Sütun listesi canlı tablodan türetilir, böylece sonradan
+eklenen bir sütun otomatik okunabilir kalır ve yalnızca `email` kapalı olur.
+
+Yazma yetkisi tablo seviyesinde kalır (üye kendi adresini kaydedebilmeli); hangi satırı
+yazabileceğini RLS zaten sınırlıyor. İstemci, oturum sahibinin kendi adresini Supabase auth
+oturumundan (`user.email`) aldığı için hiçbir arayüz bu sütuna ihtiyaç duymuyor.
+
+Yerel PostgreSQL 16 üzerinde doğrulandı: `anon` ve `authenticated` için hem `SELECT email`
+hem `SELECT *` "permission denied" veriyor, diğer sütunlar okunabiliyor, servis rolü
+okuyabiliyor.
+
+---
+
 ## 3. Bilinen sınırlamalar
 
 - **Mesajlaşma gerçek anlamda E2EE değildir.** AES anahtarı, herkese açık istemci paketindeki
