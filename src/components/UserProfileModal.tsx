@@ -243,6 +243,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const cardTheme = profileData ? getVisibleProfileTheme(profileData, isOwnCard) : null;
   if (cardTheme) ensureThemeStylesheet();
 
+  // Uploaded banner wins unless the owner switched their theme banner to the gradient.
+  const showThemeBanner = Boolean(
+    cardTheme &&
+      cardTheme.banner.kind === 'gradient' &&
+      (!cardTheme.banner.useProfileImage || !(profileData?.banner_url || '').trim())
+  );
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div
@@ -412,8 +419,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <div>
             {/* Banner */}
             <div className="h-28 w-full relative bg-zinc-900 overflow-hidden">
-              {cardTheme && cardTheme.banner.kind === 'gradient' ? (
-                <div className={`c4e-theme-banner w-full h-full ${cardTheme.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
+              {showThemeBanner ? (
+                <div className={`c4e-theme-banner w-full h-full ${cardTheme!.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
               ) : (
                 <img
                   src={
@@ -426,7 +433,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               )}
               <div
                 className="absolute inset-0 bg-gradient-to-t from-[#121215] via-transparent to-black/30"
-                style={cardTheme ? { opacity: cardTheme.banner.overlayOpacity / 100 } : undefined}
+                style={showThemeBanner ? { opacity: cardTheme!.banner.overlayOpacity / 100 } : undefined}
               />
             </div>
 

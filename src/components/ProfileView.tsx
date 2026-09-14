@@ -126,6 +126,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     if (profileTheme) ensureThemeStylesheet();
   }, [profileTheme]);
 
+  /**
+   * The gradient replaces the banner photo only when the theme says so (or when there is no
+   * photo at all). Selecting a theme must never wipe out an uploaded banner.
+   */
+  const showThemeBanner = Boolean(
+    profileTheme &&
+      profileTheme.banner.kind === 'gradient' &&
+      (!profileTheme.banner.useProfileImage || !(user.banner_url || '').trim())
+  );
+
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
 
@@ -308,9 +318,9 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
     >
       <div className="relative group">
         <div className="h-44 w-full overflow-hidden bg-zinc-900 relative">
-          {profileTheme && profileTheme.banner.kind === 'gradient' ? (
-            /* Spark supporters can replace the banner image with their own gradient. */
-            <div className={`c4e-theme-banner w-full h-full ${profileTheme.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
+          {showThemeBanner ? (
+            /* The member explicitly chose the theme gradient for their banner. */
+            <div className={`c4e-theme-banner w-full h-full ${profileTheme!.banner.gradient.animate ? 'c4e-theme-animated' : ''}`} />
           ) : (
             <img
               src={formData.banner_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'}
@@ -320,7 +330,7 @@ const profileUrl = `app.lanux.online/@${formData.username || 'user'}`;
           )}
           <div
             className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-transparent to-black/30"
-            style={profileTheme ? { opacity: profileTheme.banner.overlayOpacity / 100 } : undefined}
+            style={showThemeBanner ? { opacity: profileTheme!.banner.overlayOpacity / 100 } : undefined}
           />
         </div>
 

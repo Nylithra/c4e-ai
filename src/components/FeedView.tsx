@@ -5,6 +5,7 @@ import { CodeSnippetBlock } from './CodeSnippetBlock';
 import { ReportPostModal } from './ReportPostModal';
 import { CategorySelector } from './CategorySelector';
 import { CommunityFeedHeader } from './CommunityFeedHeader';
+import { filterVisiblePosts } from '../utils/communityVisibility';
 import { getStoredCategories, DynamicCategory } from '../utils/categoryHelper';
 import {
   MessageSquare,
@@ -409,12 +410,22 @@ export const FeedView: React.FC<FeedViewProps> = ({
     );
   };
 
-  const scopedPosts = communityScope ? posts.filter(belongsToScope) : posts;
+  // Private communities: their posts never appear to non-members, not in the community feed
+  // and not in the global timeline. (The database enforces the same rule via RLS.)
+  const visiblePosts = filterVisiblePosts(posts, user, communities);
+  const scopedPosts = communityScope ? visiblePosts.filter(belongsToScope) : visiblePosts;
 
+  /** A private community the viewer has not joined: nothing from it may be rendered. */
   const isScopeMember = Boolean(
     communityScope &&
-      (communityScope.is_joined || (user.joined_communities || []).includes(communityScope.id))
+      (communityScope.is_joined ||
+        (user.joined_communities || []).includes(communityScope.id) ||
+        (communityScope.created_by && communityScope.created_by === user.id) ||
+        (communityScope.creator_username || '').toLowerCase() === (user.username || '').toLowerCase() ||
+        isNylithra)
   );
+
+  const isPrivateLocked = Boolean(communityScope?.is_private && !isScopeMember);
 
   // Filter posts by community scope, source, category and hashtag
   const filteredPosts = scopedPosts.filter((post) => {
@@ -561,8 +572,35 @@ export const FeedView: React.FC<FeedViewProps> = ({
         })}
       </div>
 
+      {/* Private community + non-member: the timeline itself is locked */}
+      {communityScope?.is_private && !isScopeMember && (
+        <div className="p-10 text-center space-y-3 border-b border-zinc-800/60">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center mx-auto text-amber-400">
+            <Lock className="w-7 h-7" />
+          </div>
+          <h3 className="text-sm font-bold text-white">
+            {language === 'tr' ? 'Bu Topluluk Gizli' : 'This Community Is Private'}
+          </h3>
+          <p className="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed">
+            {language === 'tr'
+              ? `${communityScope.name} topluluğunun gönderilerini yalnızca üyeler görebilir. Katıldığında akış hemen açılır.`
+              : `Only members can read posts in ${communityScope.name}. Join and the feed opens right away.`}
+          </p>
+          {onToggleJoinCommunity && (
+            <button
+              type="button"
+              onClick={() => onToggleJoinCommunity(communityScope.id)}
+              className="px-5 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black inline-flex items-center gap-2 shadow-lg shadow-purple-600/20 transition-all active:scale-95 cursor-pointer"
+            >
+              <Users className="w-4 h-4" />
+              {language === 'tr' ? 'Topluluğa Katıl' : 'Join community'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Non-members see a join prompt instead of the composer */}
-      {communityScope && !isScopeMember && (
+      {communityScope && !isScopeMember && !communityScope.is_private && (
         <div className="p-5 border-b border-zinc-800/60 bg-[#0c0c0e] flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div className="flex items-start gap-3 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/25 text-purple-300 flex items-center justify-center flex-shrink-0">
@@ -889,8 +927,8 @@ export const FeedView: React.FC<FeedViewProps> = ({
         </form>
       </div>
 
-      {/* Post List */}
-      <div className="divide-y divide-zinc-800/40">
+      {/* Post List (hidden entirely while a private community is locked) */}
+      <div className={`divide-y divide-zinc-800/40 ${isPrivateLocked ? 'hidden' : ''}`}>
         {filteredPosts.length === 0 ? (
           <div className="p-12 text-center space-y-3">
             <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-300">

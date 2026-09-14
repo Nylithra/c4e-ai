@@ -11,7 +11,9 @@ import {
   Upload,
   Crop,
   Shield,
-  Users
+  Users,
+  Lock,
+  Globe
 } from 'lucide-react';
 import { Community, UserProfile } from '../types';
 import { ImageCropperModal } from './ImageCropperModal';
@@ -50,6 +52,7 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
   const [description, setDescription] = useState(community?.description || '');
   const [avatarUrl, setAvatarUrl] = useState(community?.avatar_url || '');
   const [bannerUrl, setBannerUrl] = useState(community?.banner_url || '');
+  const [isPrivate, setIsPrivate] = useState(community?.is_private === true);
 
   // Transfer ownership state
   const [transferTargetUsername, setTransferTargetUsername] = useState('');
@@ -77,6 +80,7 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
     setDescription(community.description || '');
     setAvatarUrl(community.avatar_url || '');
     setBannerUrl(community.banner_url || '');
+    setIsPrivate(community.is_private === true);
     setErrorMessage(null);
     setSuccessMessage(null);
     setShowTransferConfirm(false);
@@ -150,6 +154,7 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
       description: description ? sanitizeText(description, 300) : '',
       avatar_url: sanitizeUrl(avatarUrl) || community.avatar_url,
       banner_url: bannerUrl ? sanitizeUrl(bannerUrl) : undefined,
+      is_private: isPrivate,
       updated_at: new Date().toISOString()
     };
 
@@ -410,6 +415,58 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
                 }
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-500 disabled:opacity-50"
               />
+            </div>
+
+            {/* Privacy */}
+            <div className="p-4 bg-zinc-950/80 border border-zinc-800/80 rounded-2xl space-y-3">
+              <label className="text-xs font-bold text-zinc-300 font-mono block">
+                {language === 'tr' ? 'Gizlilik:' : 'Privacy:'}
+              </label>
+              <button
+                type="button"
+                disabled={!isOwner}
+                onClick={() => setIsPrivate((prev) => !prev)}
+                className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isPrivate ? 'bg-amber-500/10 border-amber-500/30' : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
+                } ${isOwner ? 'cursor-pointer' : ''}`}
+              >
+                <span className="flex items-start gap-2.5 min-w-0">
+                  <span
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      isPrivate ? 'bg-amber-500/15 text-amber-400' : 'bg-zinc-900 text-zinc-400'
+                    }`}
+                  >
+                    {isPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold text-white">
+                      {isPrivate
+                        ? (language === 'tr' ? 'Gizli Topluluk' : 'Private community')
+                        : (language === 'tr' ? 'Herkese Açık Topluluk' : 'Public community')}
+                    </span>
+                    <span className="block text-[10px] text-zinc-400 leading-relaxed">
+                      {isPrivate
+                        ? (language === 'tr'
+                            ? 'Gönderileri yalnızca üyeler görebilir; topluluk keşfedilebilir kalır.'
+                            : 'Only members can read the posts; the community stays discoverable.')
+                        : (language === 'tr'
+                            ? 'Gönderiler herkese açıktır ve genel akışta görünür.'
+                            : 'Posts are public and appear in the global feed.')}
+                    </span>
+                  </span>
+                </span>
+                <span
+                  className={`w-10 h-5 rounded-full flex-shrink-0 relative transition-colors ${
+                    isPrivate ? 'bg-amber-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                      isPrivate ? 'left-[22px]' : 'left-0.5'
+                    }`}
+                  />
+                </span>
+              </button>
             </div>
 
             {/* Save Button */}

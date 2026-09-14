@@ -94,13 +94,25 @@ kendi oturum belirteciyle** yapılır, yetkiyi RLS verir.
 - `sanitizeUrl()`: kontrol karakteriyle gizlenmiş `java\nscript:` şemaları, `data:image/svg+xml`
   (script taşıyabilir), protokole bağlı `//evil.tld` adresleri ve bilinmeyen şemalar reddedilir.
 
-### 1.7 Hata düzeltmeleri
+### 1.7 Gizli topluluklar (özel gönderi görünürlüğü)
+
+`communities.is_private` işaretli bir topluluğun gönderileri yalnızca üyelerine gösterilir.
+Zorlama veritabanı seviyesindedir: `posts` SELECT politikası
+`is_hidden_community_post(community_id)` fonksiyonuyla, üyeliği `profiles.joined_communities`
+üzerinden kontrol eder — yani anon anahtarla doğrudan PostgREST'e gidilse bile satırlar
+dönmez. Arayüz tarafında `utils/communityVisibility.ts` aynı kuralı uygular (akış, keşfet,
+yer imleri, profil). Topluluğun kendisi keşfedilebilir kalır; herkes katılabilir.
+`is_private` alanını yalnızca topluluk sahibi/yöneticisi değiştirebilir (tetikleyici korur).
+
+### 1.8 Hata düzeltmeleri
 
 - **`index.html` mevcut olmayan `/src/bakim.tsx` dosyasını yüklüyordu** → uygulama hiç
   açılmıyordu (beyaz ekran). `/src/main.tsx` geri getirildi.
 - `CommunitySettingsModal` hook'ları erken `return null`'dan sonra çağırıyordu ve farklı bir
   topluluk açıldığında form eski değerlerde kalıyordu.
 - Mobilde yakınlaştırmayı engelleyen `user-scalable=no` kaldırıldı (erişilebilirlik).
+- Spark teması seçildiğinde profil banner görselinin kaybolması düzeltildi: gradyan banner
+  artık yalnızca kullanıcı açıkça istediğinde (veya yüklü banner yoksa) kullanılır.
 
 ---
 

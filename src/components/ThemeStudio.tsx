@@ -406,14 +406,25 @@ const FillSection: React.FC<{
 // LIVE PREVIEW
 // -------------------------------------------------------------
 
-const ThemePreview: React.FC<{ theme: ProfileTheme; user: UserProfile; language: 'tr' | 'en' }> = ({ theme, user, language }) => (
+const ThemePreview: React.FC<{ theme: ProfileTheme; user: UserProfile; language: 'tr' | 'en' }> = ({ theme, user, language }) => {
+  // Mirrors the rule used on the real profile: the uploaded photo wins unless the member
+  // switched the banner over to the gradient (or has no photo at all).
+  const usesGradientBanner =
+    theme.banner.kind === 'gradient' && (!theme.banner.useProfileImage || !(user.banner_url || '').trim());
+
+  return (
   <div
     className="c4e-theme-scope rounded-2xl overflow-hidden border"
     style={{ ...themeToStyle(theme), borderColor: theme.border.color }}
   >
     <div
-      className={`c4e-theme-banner h-20 w-full relative ${theme.banner.gradient.animate ? 'c4e-theme-animated' : ''}`}
+      className={`h-20 w-full relative overflow-hidden ${
+        usesGradientBanner ? `c4e-theme-banner ${theme.banner.gradient.animate ? 'c4e-theme-animated' : ''}` : 'bg-zinc-900'
+      }`}
     >
+      {!usesGradientBanner && user.banner_url && (
+        <img src={user.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+      )}
       <div
         className="absolute inset-0"
         style={{ background: `linear-gradient(to top, var(--c4e-bg), transparent)`, opacity: theme.banner.overlayOpacity / 100 }}
@@ -459,9 +470,10 @@ const ThemePreview: React.FC<{ theme: ProfileTheme; user: UserProfile; language:
         </p>
         <p className="text-[11px] mt-1.5 c4e-theme-link underline">{t(language, 'Bağlantı rengi', 'Link colour')}</p>
       </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // -------------------------------------------------------------
 // MAIN COMPONENT
@@ -677,6 +689,16 @@ export const ThemeStudio: React.FC<ThemeStudioProps> = ({ user, language, onSave
             fill={draft.banner}
             onChange={(fill) => updateFill('banner', fill)}
           >
+            <ToggleField
+              label={t(language, 'Yüklediğim banner görselini koru', 'Keep my uploaded banner photo')}
+              description={t(
+                language,
+                'Açıkken profilindeki banner fotoğrafın olduğu gibi kalır; kapatırsan yukarıdaki gradyan banner olarak kullanılır.',
+                'When on, your uploaded banner photo stays as it is; turn it off to use the gradient above as the banner.'
+              )}
+              checked={draft.banner.useProfileImage}
+              onChange={(useProfileImage) => patchDraft({ banner: { ...draft.banner, useProfileImage } })}
+            />
             <SliderField
               label={t(language, 'Banner karartma', 'Banner overlay')}
               value={draft.banner.overlayOpacity}

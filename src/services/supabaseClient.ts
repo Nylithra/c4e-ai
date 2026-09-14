@@ -1298,6 +1298,7 @@ export function subscribeToCommunities(onUpdate: (communities: Community[]) => v
 
 export const ALLOWED_COMMUNITY_COLUMNS = new Set([
   'id',
+  'is_private',
   'name',
   'handle',
   'avatar_url',

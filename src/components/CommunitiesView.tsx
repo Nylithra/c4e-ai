@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, Plus, Check, UserPlus, AlertTriangle, Settings, Shield, Crown, Code2, Terminal, Share2, Link2 } from 'lucide-react';
+import { Users, Plus, Check, UserPlus, AlertTriangle, Settings, Shield, Crown, Code2, Terminal, Share2, Link2, Lock, Globe } from 'lucide-react';
 import { Community, UserProfile } from '../types';
 import { verifyAdminAccess } from '../utils/securityHelper';
 import { CommunitySettingsModal } from './CommunitySettingsModal';
@@ -11,7 +11,7 @@ interface CommunitiesViewProps {
   allUsers?: UserProfile[];
   language: 'tr' | 'en';
   onToggleJoin: (id: string) => void;
-  onCreateCommunity: (newComm: { name: string; handle: string; description?: string; avatar_url: string; banner_url?: string }) => void;
+  onCreateCommunity: (newComm: { name: string; handle: string; description?: string; avatar_url: string; banner_url?: string; is_private?: boolean }) => void;
   onUpdateCommunity?: (updated: Community) => void;
   onDeleteCommunity?: (communityId: string) => void;
   onSelectCommunity?: (comm: Community) => void;
@@ -39,6 +39,7 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
   const [bannerUrl, setBannerUrl] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pendingJoinIds, setPendingJoinIds] = useState<Set<string>>(new Set());
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const handleCopyLink = (e: React.MouseEvent, comm: Community) => {
     e.stopPropagation();
@@ -111,7 +112,8 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
       handle: formattedHandle,
       description: description.trim(),
       avatar_url: avatarUrl.trim() || 'https://images.unsplash.com/photo-1618401471353-b98afee0b2eb?w=100&auto=format&fit=crop&q=80',
-      banner_url: bannerUrl.trim() || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80'
+      banner_url: bannerUrl.trim() || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80',
+      is_private: isPrivate
     });
 
     setName('');
@@ -119,6 +121,7 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
     setDescription('');
     setAvatarUrl('');
     setBannerUrl('');
+    setIsPrivate(false);
     setErrorMessage(null);
     setShowCreateModal(false);
   };
@@ -192,6 +195,12 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
                             <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 font-mono flex items-center gap-1">
                               <Crown className="w-2.5 h-2.5 text-amber-400" />
                               {language === 'tr' ? 'Kurucu' : 'Founder'}
+                            </span>
+                          )}
+                          {comm.is_private && (
+                            <span className="px-1.5 py-0.5 rounded bg-zinc-100/10 border border-zinc-500/30 text-[10px] text-zinc-200 font-mono flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" />
+                              {language === 'tr' ? 'Gizli' : 'Private'}
                             </span>
                           )}
                         </div>
@@ -398,6 +407,52 @@ export const CommunitiesView: React.FC<CommunitiesViewProps> = ({
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none resize-none"
                 />
               </div>
+
+              {/* Privacy */}
+              <button
+                type="button"
+                onClick={() => setIsPrivate((prev) => !prev)}
+                className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                  isPrivate ? 'bg-amber-500/10 border-amber-500/30' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <span className="flex items-start gap-2.5 min-w-0">
+                  <span
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      isPrivate ? 'bg-amber-500/15 text-amber-400' : 'bg-zinc-900 text-zinc-400'
+                    }`}
+                  >
+                    {isPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold text-white">
+                      {isPrivate
+                        ? (language === 'tr' ? 'Gizli Topluluk' : 'Private community')
+                        : (language === 'tr' ? 'Herkese Açık Topluluk' : 'Public community')}
+                    </span>
+                    <span className="block text-[10px] text-zinc-400 leading-relaxed">
+                      {isPrivate
+                        ? (language === 'tr'
+                            ? 'Gönderileri yalnızca üyeler görebilir. Topluluk keşfedilebilir kalır, herkes katılabilir.'
+                            : 'Only members can read the posts. The community stays discoverable and anyone may join.')
+                        : (language === 'tr'
+                            ? 'Gönderiler genel akışta ve herkes tarafından görülebilir.'
+                            : 'Posts are visible to everyone and appear in the global feed.')}
+                    </span>
+                  </span>
+                </span>
+                <span
+                  className={`w-10 h-5 rounded-full flex-shrink-0 relative transition-colors ${
+                    isPrivate ? 'bg-amber-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                      isPrivate ? 'left-[22px]' : 'left-0.5'
+                    }`}
+                  />
+                </span>
+              </button>
 
               <div className="flex gap-3 pt-2">
                 <button

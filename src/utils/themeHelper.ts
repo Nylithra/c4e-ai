@@ -57,7 +57,12 @@ export interface ProfileTheme {
   background: ThemeFill;
   surface: ThemeFill;
   accent: ThemeFill;
-  banner: ThemeFill & { overlayOpacity: number };
+  /**
+   * Profile banner. `useProfileImage` keeps the member's uploaded banner photo and only uses
+   * the gradient as a fallback — selecting a theme must never silently delete a banner the
+   * user uploaded.
+   */
+  banner: ThemeFill & { overlayOpacity: number; useProfileImage: boolean };
   text: {
     primary: string;
     muted: string;
@@ -211,7 +216,8 @@ export const DEFAULT_PROFILE_THEME: ProfileTheme = {
       ['#1e3a8a', 0],
       ['#7c3aed', 100]
     ]),
-    overlayOpacity: 55
+    overlayOpacity: 55,
+    useProfileImage: true
   },
   text: {
     primary: '#f4f4f5',
@@ -286,7 +292,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#78350f', 0],
         ['#f59e0b', 100]
       ]),
-      overlayOpacity: 45
+      overlayOpacity: 45,
+      useProfileImage: true
     },
     text: { primary: '#fef3c7', muted: '#d6b98c', onAccent: '#1c1207', code: '#fbbf24', link: '#fbbf24' },
     border: { color: '#4d3a12', radius: 18, width: 1 },
@@ -327,7 +334,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#8b5cf6', 50],
         ['#22d3ee', 100]
       ], { centerX: 50, centerY: 50 }),
-      overlayOpacity: 40
+      overlayOpacity: 40,
+      useProfileImage: true
     },
     text: { primary: '#f5f3ff', muted: '#b8a9d9', onAccent: '#ffffff', code: '#67e8f9', link: '#e879f9' },
     border: { color: '#3b2a63', radius: 20, width: 1 },
@@ -367,7 +375,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#155e75', 60],
         ['#22d3ee', 100]
       ]),
-      overlayOpacity: 50
+      overlayOpacity: 50,
+      useProfileImage: true
     },
     text: { primary: '#ecfeff', muted: '#93b8c4', onAccent: '#03212b', code: '#5eead4', link: '#22d3ee' },
     border: { color: '#155e75', radius: 16, width: 1 },
@@ -407,7 +416,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#9f1239', 0],
         ['#f97316', 100]
       ]),
-      overlayOpacity: 45
+      overlayOpacity: 45,
+      useProfileImage: true
     },
     text: { primary: '#fff7ed', muted: '#d8b4a0', onAccent: '#1a0b05', code: '#fdba74', link: '#fb923c' },
     border: { color: '#5b2420', radius: 18, width: 1 },
@@ -446,7 +456,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#052e16', 0],
         ['#22c55e', 100]
       ]),
-      overlayOpacity: 55
+      overlayOpacity: 55,
+      useProfileImage: true
     },
     text: { primary: '#dcfce7', muted: '#86b39a', onAccent: '#04180d', code: '#4ade80', link: '#4ade80' },
     border: { color: '#14532d', radius: 10, width: 1 },
@@ -489,7 +500,8 @@ export const THEME_PRESETS: ThemePreset[] = [
         ['#38bdf8', 55],
         ['#a78bfa', 100]
       ]),
-      overlayOpacity: 42
+      overlayOpacity: 42,
+      useProfileImage: true
     },
     text: { primary: '#eef2ff', muted: '#a5b0d6', onAccent: '#05122a', code: '#5eead4', link: '#7dd3fc' },
     border: { color: '#25305c', radius: 22, width: 1 },
@@ -521,7 +533,9 @@ export function sanitizeProfileTheme(raw: unknown): ProfileTheme {
     accent: sanitizeFill(source.accent, fallback.accent),
     banner: {
       ...sanitizeFill(bannerSource, bannerFallback),
-      overlayOpacity: clampNumber(bannerSource.overlayOpacity, 0, 100, bannerFallback.overlayOpacity)
+      overlayOpacity: clampNumber(bannerSource.overlayOpacity, 0, 100, bannerFallback.overlayOpacity),
+      // Defaults to true, so themes saved before this option existed keep the uploaded banner.
+      useProfileImage: bannerSource.useProfileImage !== false
     },
     text: {
       primary: sanitizeColor(source.text?.primary, fallback.text.primary),

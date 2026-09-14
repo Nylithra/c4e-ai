@@ -9,7 +9,8 @@ import {
   MessageSquare,
   Settings,
   Globe,
-  Shield
+  Shield,
+  Lock
 } from 'lucide-react';
 import { Community, UserProfile } from '../types';
 import { sanitizeUrl, verifyAdminAccess } from '../utils/securityHelper';
@@ -89,9 +90,17 @@ export const CommunityFeedHeader: React.FC<CommunityFeedHeaderProps> = ({
           </button>
         )}
 
-        <span className="absolute top-3 right-3 px-2.5 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-md text-[10px] font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
-          <Users className="w-3 h-3" />
-          {language === 'tr' ? 'Topluluk Akışı' : 'Community feed'}
+        <span className="absolute top-3 right-3 flex items-center gap-1.5">
+          {community.is_private && (
+            <span className="px-2.5 py-1 rounded-xl bg-amber-500/20 border border-amber-400/30 backdrop-blur-md text-[10px] font-black uppercase tracking-wider text-amber-200 flex items-center gap-1.5">
+              <Lock className="w-3 h-3" />
+              {language === 'tr' ? 'Gizli' : 'Private'}
+            </span>
+          )}
+          <span className="px-2.5 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-md text-[10px] font-black uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+            <Users className="w-3 h-3" />
+            {language === 'tr' ? 'Topluluk Akışı' : 'Community feed'}
+          </span>
         </span>
       </div>
 
@@ -194,8 +203,10 @@ export const CommunityFeedHeader: React.FC<CommunityFeedHeaderProps> = ({
               </span>
             )}
             <span className="flex items-center gap-1.5">
-              <Globe className="w-3.5 h-3.5" />
-              /c/@{handle}
+              {community.is_private ? <Lock className="w-3.5 h-3.5 text-amber-400" /> : <Globe className="w-3.5 h-3.5" />}
+              {community.is_private
+                ? (language === 'tr' ? 'gönderiler üyelere özel' : 'posts are members-only')
+                : `/c/@${handle}`}
             </span>
           </div>
         </div>

@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS public.communities (
   banner_url TEXT,
   description VARCHAR(500),
   members_count INTEGER DEFAULT 0,
+  is_private BOOLEAN DEFAULT false,
   created_by TEXT,
   creator_username TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -230,6 +231,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS show_liked_posts BOOLEAN DE
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
+ALTER TABLE public.communities ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false;
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS author_id TEXT;
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS bookmarked_by JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS reposted_by JSONB DEFAULT '[]'::jsonb;
@@ -307,6 +309,49 @@ LANGUAGE sql
 STABLE
 AS $$
   SELECT auth.uid() IS NOT NULL AND profile_id = auth.uid()::text;
+$$;
+
+-- Membership in a community is stored on the member's own profile
+-- (profiles.joined_communities is a JSONB array of community ids).
+CREATE OR REPLACE FUNCTION public.is_community_member(community_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT coalesce(
+    (
+      SELECT
+        (CASE WHEN jsonb_typeof(p.joined_communities) = 'array' THEN p.joined_communities ELSE '[]'::jsonb END) ? community_id
+        OR EXISTS (
+          SELECT 1 FROM public.communities c
+          WHERE c.id = community_id
+            AND (c.created_by = p.id OR lower(coalesce(c.creator_username, '')) = lower(p.username))
+        )
+      FROM public.profiles p
+      WHERE p.id::text = auth.uid()::text
+      LIMIT 1
+    ),
+    false
+  );
+$$;
+
+-- True when a post belongs to a private ("gizli") community the caller has not joined.
+CREATE OR REPLACE FUNCTION public.is_hidden_community_post(community_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN community_id IS NULL THEN false
+    WHEN NOT EXISTS (
+      SELECT 1 FROM public.communities c WHERE c.id = community_id AND c.is_private = true
+    ) THEN false
+    ELSE NOT public.is_community_member(community_id)
+  END;
 $$;
 
 -- Direct-message conversation ids are built as `dm_<userA>_<userB>` with both usernames
@@ -548,6 +593,7 @@ BEGIN
   NEW.description := OLD.description;
   NEW.created_by := OLD.created_by;
   NEW.creator_username := OLD.creator_username;
+  NEW.is_private := OLD.is_private;
   NEW.created_at := OLD.created_at;
   RETURN NEW;
 END;
@@ -696,8 +742,15 @@ CREATE POLICY "profiles_delete_self" ON public.profiles
   FOR DELETE USING (public.owns_profile(id::text) OR public.is_platform_admin());
 
 -- 5.2 Posts ------------------------------------------------------
+-- Private communities: their posts are only selectable by members (or administrators).
 CREATE POLICY "posts_select_public" ON public.posts
-  FOR SELECT USING (coalesce(is_deleted, false) = false OR public.is_platform_admin());
+  FOR SELECT USING (
+    public.is_platform_admin()
+    OR (
+      coalesce(is_deleted, false) = false
+      AND NOT public.is_hidden_community_post(community_id)
+    )
+  );
 CREATE POLICY "posts_insert_own" ON public.posts
   FOR INSERT WITH CHECK (
     auth.uid() IS NOT NULL
@@ -937,6 +990,8 @@ GRANT EXECUTE ON FUNCTION public.current_username() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_platform_admin() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.owns_profile(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_conversation_participant(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_community_member(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_hidden_community_post(TEXT) TO anon, authenticated;
 
 -- ================================================================
 -- 7. REALTIME
@@ -971,6 +1026,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_created_at ON public.posts(created_at DESC)
 CREATE INDEX IF NOT EXISTS idx_posts_category ON public.posts(category);
 CREATE INDEX IF NOT EXISTS idx_posts_is_deleted ON public.posts(is_deleted);
 CREATE INDEX IF NOT EXISTS idx_posts_author_id ON public.posts(author_id);
+CREATE INDEX IF NOT EXISTS idx_posts_community_id ON public.posts(community_id);
+CREATE INDEX IF NOT EXISTS idx_communities_private ON public.communities(is_private);
 CREATE INDEX IF NOT EXISTS idx_job_listings_created_at ON public.job_listings(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_profiles_username_lower ON public.profiles(lower(username));
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON public.messages(conversation_id, created_at ASC);

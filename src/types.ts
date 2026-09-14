@@ -388,6 +388,12 @@ export interface Community {
   description?: string;
   members_count: number;
   is_joined: boolean;
+  /**
+   * Private ("gizli") community: the community itself stays discoverable, but only members
+   * may read its posts. Enforced by RLS in supabase_schema.sql and mirrored client-side by
+   * utils/communityVisibility.ts.
+   */
+  is_private?: boolean;
   created_by?: string;
   creator_username?: string;
   api_key?: string;

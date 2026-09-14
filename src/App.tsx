@@ -70,6 +70,7 @@ import {
 } from './services/supabaseClient';
 import { decryptE2EEMessage } from './utils/e2eeHelper';
 import { applyGlobalProfileTheme, ensureThemeStylesheet, getProfileTheme } from './utils/themeHelper';
+import { filterVisiblePosts } from './utils/communityVisibility';
 import {
   checkPersistentRateLimit,
   checkDuplicatePost,
@@ -1000,7 +1001,7 @@ export default function App() {
     }
   };
 
-  const handleCreateCommunity = (newComm: { name: string; handle: string; description?: string; avatar_url: string; banner_url?: string }) => {
+  const handleCreateCommunity = (newComm: { name: string; handle: string; description?: string; avatar_url: string; banner_url?: string; is_private?: boolean }) => {
     const cleanHandle = newComm.handle.replace(/^@/, '').toLowerCase().trim().replace(/[^a-z0-9_]/g, '');
     const newCommId = `comm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const created: Community = {
@@ -1012,6 +1013,7 @@ export default function App() {
       banner_url: sanitizeUrl(newComm.banner_url) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80',
       members_count: 1,
       is_joined: true,
+      is_private: newComm.is_private === true,
       created_by: user.id,
       creator_username: user.username,
       created_at: new Date().toISOString()
@@ -1050,6 +1052,16 @@ export default function App() {
     saveStoredCommunities(updated);
     await deleteCommunityFromSupabase(commId);
   };
+
+  /**
+   * Posts the signed-in member is allowed to see: posts of private ("gizli") communities are
+   * removed for non-members. The database enforces the same rule; this keeps the locally
+   * cached timeline consistent with it.
+   */
+  const visiblePosts = useMemo(
+    () => filterVisiblePosts(posts, user, displayCommunities),
+    [posts, user, displayCommunities]
+  );
 
   /** The community whose dedicated feed is currently open, resolved from the URL handle. */
   const activeCommunity = useMemo(() => {
@@ -1287,7 +1299,7 @@ export default function App() {
 
           {activeTab === 'explore' && (
             <ExploreView
-              posts={posts}
+              posts={visiblePosts}
               communities={displayCommunities}
               trends={dynamicTrends}
               language={language}
@@ -1365,7 +1377,7 @@ export default function App() {
 
           {activeTab === 'bookmarks' && (
             <BookmarksView
-              posts={posts}
+              posts={visiblePosts}
               user={user}
               language={language}
               onLikePost={handleLikePost}
@@ -1380,7 +1392,7 @@ export default function App() {
               user={viewingUser || user}
               currentUser={user}
               allUsers={allUsers}
-              posts={posts}
+              posts={visiblePosts}
               theme={theme}
               language={language}
               communities={displayCommunities}
