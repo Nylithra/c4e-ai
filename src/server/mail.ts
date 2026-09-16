@@ -47,6 +47,12 @@ function toPort(value: string, fallback: number): number {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
 }
 
+/** Any positive whole number — unlike toPort, not bounded by the port range. */
+function toPositiveInt(value: string, fallback: number): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 /**
  * Parses a "is this connection implicitly TLS?" flag.
  *
@@ -84,12 +90,14 @@ export function getSmtpConfig(): SmtpConfig | null {
 }
 
 /**
- * Why IMAP may be unavailable even when the variables are set. `null` means "it works".
+ * Why IMAP may be unavailable. `null` means "it works".
+ *
+ * Being serverless is deliberately NOT a reason. What a frozen function cannot do is hold a
+ * socket open *between* requests — an IDLE connection waiting to be pushed new mail. A single
+ * connect → fetch → logout that begins and ends inside one request is ordinary outbound I/O
+ * and works fine, which is exactly what `syncInbox()` does.
  */
 export function imapUnavailableReason(): string | null {
-  if (isServerless()) {
-    return 'IMAP, sunucusuz (serverless) ortamda kullanılamaz: gelen kutusu okumak açık ve sürekli bir TCP bağlantısı gerektirir, sunucusuz fonksiyonlar ise istekler arasında donar. Gönderme (SMTP) çalışır. Gelen kutusu için arka ucu kalıcı bir Node sürecinde çalıştırın (Railway, Render, Fly.io veya bir VPS).';
-  }
   if (!env('MAIL_IMAP_HOST') || !env('MAIL_IMAP_USER', env('MAIL_SMTP_USER')) || !env('MAIL_IMAP_PASS', env('MAIL_SMTP_PASS'))) {
     return 'IMAP yapılandırılmamış (MAIL_IMAP_HOST / MAIL_IMAP_USER / MAIL_IMAP_PASS eksik).';
   }
@@ -97,10 +105,6 @@ export function imapUnavailableReason(): string | null {
 }
 
 export function getImapConfig(): ImapConfig | null {
-  // Returning null on serverless keeps every caller on the same honest path: the feature
-  // reports itself unavailable immediately instead of opening a socket that will be frozen.
-  if (isServerless()) return null;
-
   const host = env('MAIL_IMAP_HOST');
   const user = env('MAIL_IMAP_USER', env('MAIL_SMTP_USER'));
   const pass = env('MAIL_IMAP_PASS', env('MAIL_SMTP_PASS'));
@@ -108,6 +112,23 @@ export function getImapConfig(): ImapConfig | null {
 
   const port = toPort(env('MAIL_IMAP_PORT'), 993);
   return { host, port, secure: toSecureFlag(env('MAIL_IMAP_SECURE'), port === 993), user, pass };
+}
+
+/**
+ * Whether opening IMAP on *every* inbox load is acceptable.
+ *
+ * On a persistent server it is: the connection is cheap and the process is not racing a
+ * timeout. In a serverless function each load would pay a fresh TLS handshake and login
+ * against the function's time limit, so there the inbox is served from the cache and IMAP is
+ * touched only when the admin explicitly syncs.
+ */
+export function supportsLiveImap(): boolean {
+  return !isServerless();
+}
+
+/** 'live' = read straight from IMAP on demand. 'sync' = read the cache, refresh on request. */
+export function imapMode(): 'live' | 'sync' {
+  return supportsLiveImap() ? 'live' : 'sync';
 }
 
 /** Safe to hand to the admin UI: describes the setup without revealing any secret. */
@@ -119,9 +140,20 @@ export function describeMailConfig() {
       ? { configured: true, host: smtp.host, port: smtp.port, secure: smtp.secure, from: smtp.fromAddress }
       : { configured: false },
     imap: imap
-      ? { configured: true, host: imap.host, port: imap.port, secure: imap.secure, user: imap.user }
-      : { configured: false, reason: imapUnavailableReason() },
-    // Lets the admin UI tell "not set up yet" apart from "cannot work on this host".
+      ? {
+          configured: true,
+          host: imap.host,
+          port: imap.port,
+          secure: imap.secure,
+          user: imap.user,
+          mode: imapMode(),
+          note:
+            imapMode() === 'sync'
+              ? 'Bu ortamda gelen kutusu isteğe bağlı eşitlenir: "Gelen kutusunu eşitle" dediğinizde mesajlar bir kerede çekilip saklanır, sonraki görüntülemeler posta sunucusuna hiç bağlanmaz.'
+              : null
+        }
+      : { configured: false, reason: imapUnavailableReason(), mode: imapMode() },
+    // Lets the admin UI tell "not set up yet" apart from "reads from the cache here".
     serverless: isServerless()
   };
 }
@@ -511,109 +543,246 @@ function addressOf(source: any): { name: string; address: string } {
   };
 }
 
-/** Most recent messages first. */
+/** Mailbox names are echoed into IMAP commands, so keep them to a boring character set. */
+export function safeMailboxName(value: unknown): string {
+  const raw = String(value || '');
+  return /^[A-Za-z0-9 _./-]{1,80}$/.test(raw) ? raw : 'INBOX';
+}
+
+/** Reads the headers of the newest `limit` messages on an open, locked client. */
+async function readHeaders(client: any, limit: number): Promise<InboxMessage[]> {
+  const total = client.mailbox?.exists || 0;
+  if (total === 0) return [];
+
+  const start = Math.max(1, total - limit + 1);
+  const messages: InboxMessage[] = [];
+
+  for await (const msg of client.fetch(`${start}:*`, {
+    uid: true,
+    envelope: true,
+    flags: true,
+    bodyStructure: true,
+    // Enough of the body for a preview without pulling whole attachments.
+    bodyParts: ['1']
+  })) {
+    const env_ = msg.envelope || {};
+    const from = addressOf(env_.from);
+    const to = addressOf(env_.to);
+    const flags: Set<string> = msg.flags || new Set();
+
+    let preview = '';
+    try {
+      const part = msg.bodyParts?.get('1');
+      if (part) preview = part.toString('utf8').replace(/\s+/g, ' ').slice(0, 200);
+    } catch {
+      /* preview is optional */
+    }
+
+    messages.push({
+      uid: Number(msg.uid),
+      seq: Number(msg.seq),
+      subject: headerSafe(env_.subject || '(konu yok)', 250),
+      fromName: from.name,
+      fromAddress: from.address,
+      to: to.address,
+      date: env_.date ? new Date(env_.date).toISOString() : null,
+      seen: flags.has('\\Seen'),
+      flagged: flags.has('\\Flagged'),
+      hasAttachments: Boolean(msg.bodyStructure?.childNodes?.some((n: any) => n.disposition === 'attachment')),
+      preview
+    });
+  }
+
+  return messages.reverse();
+}
+
+/** Most recent messages first. Opens a connection, so only used where IMAP is live. */
 export async function fetchInbox(options: { mailbox?: string; limit?: number } = {}): Promise<InboxMessage[]> {
-  const mailbox = /^[A-Za-z0-9 _./-]{1,80}$/.test(options.mailbox || '') ? options.mailbox! : 'INBOX';
+  const mailbox = safeMailboxName(options.mailbox);
   const limit = Math.min(Math.max(Number(options.limit) || 25, 1), 100);
 
   return withImap(async (client) => {
     const lock = await client.getMailboxLock(mailbox);
     try {
-      const total = client.mailbox?.exists || 0;
-      if (total === 0) return [];
-
-      const start = Math.max(1, total - limit + 1);
-      const messages: InboxMessage[] = [];
-
-      for await (const msg of client.fetch(`${start}:*`, {
-        uid: true,
-        envelope: true,
-        flags: true,
-        bodyStructure: true,
-        // Enough of the body for a preview without pulling whole attachments.
-        bodyParts: ['1']
-      })) {
-        const env_ = msg.envelope || {};
-        const from = addressOf(env_.from);
-        const to = addressOf(env_.to);
-        const flags: Set<string> = msg.flags || new Set();
-
-        let preview = '';
-        try {
-          const part = msg.bodyParts?.get('1');
-          if (part) preview = part.toString('utf8').replace(/\s+/g, ' ').slice(0, 200);
-        } catch {
-          /* preview is optional */
-        }
-
-        messages.push({
-          uid: Number(msg.uid),
-          seq: Number(msg.seq),
-          subject: headerSafe(env_.subject || '(konu yok)', 250),
-          fromName: from.name,
-          fromAddress: from.address,
-          to: to.address,
-          date: env_.date ? new Date(env_.date).toISOString() : null,
-          seen: flags.has('\\Seen'),
-          flagged: flags.has('\\Flagged'),
-          hasAttachments: Boolean(msg.bodyStructure?.childNodes?.some((n: any) => n.disposition === 'attachment')),
-          preview
-        });
-      }
-
-      return messages.reverse();
+      return await readHeaders(client, limit);
     } finally {
       lock.release();
     }
   });
 }
 
+/**
+ * Downloads and parses one message on an already-open, already-locked client.
+ *
+ * Taking the client as an argument is what lets a sync pull many bodies over a single
+ * connection instead of paying a TLS handshake and a LOGIN per message.
+ */
+async function downloadDetail(client: any, uid: number): Promise<InboxMessageDetail | null> {
+  const raw = await client.download(String(uid), undefined, { uid: true });
+  if (!raw?.content) return null;
+
+  const { simpleParser } = await import('mailparser');
+  const parsed: any = await simpleParser(raw.content);
+
+  const from = {
+    name: headerSafe(parsed.from?.value?.[0]?.name || '', 120),
+    address: headerSafe(parsed.from?.value?.[0]?.address || '', 254)
+  };
+
+  const originalHtml = String(parsed.html || '');
+  const sanitized = sanitizeIncomingHtml(originalHtml);
+
+  return {
+    uid,
+    seq: 0,
+    subject: headerSafe(parsed.subject || '(konu yok)', 250),
+    fromName: from.name,
+    fromAddress: from.address,
+    to: headerSafe(parsed.to?.value?.[0]?.address || '', 254),
+    date: parsed.date ? new Date(parsed.date).toISOString() : null,
+    seen: true,
+    flagged: false,
+    hasAttachments: Array.isArray(parsed.attachments) && parsed.attachments.length > 0,
+    preview: '',
+    text: String(parsed.text || '').slice(0, 200000),
+    html: sanitized.slice(0, 400000),
+    imagesBlocked: sanitized.includes('data-blocked-src'),
+    attachments: (parsed.attachments || []).map((a: any) => ({
+      filename: headerSafe(a.filename || 'ek', 200),
+      contentType: headerSafe(a.contentType || 'application/octet-stream', 100),
+      size: Number(a.size) || 0
+    }))
+  };
+}
+
 export async function fetchMessage(uid: number, mailboxName = 'INBOX'): Promise<InboxMessageDetail | null> {
-  const mailbox = /^[A-Za-z0-9 _./-]{1,80}$/.test(mailboxName) ? mailboxName : 'INBOX';
+  const mailbox = safeMailboxName(mailboxName);
   if (!Number.isInteger(uid) || uid <= 0) return null;
 
   return withImap(async (client) => {
     const lock = await client.getMailboxLock(mailbox);
     try {
-      const raw = await client.download(String(uid), undefined, { uid: true });
-      if (!raw?.content) return null;
-
-      const { simpleParser } = await import('mailparser');
-      const parsed: any = await simpleParser(raw.content);
-
-      const from = {
-        name: headerSafe(parsed.from?.value?.[0]?.name || '', 120),
-        address: headerSafe(parsed.from?.value?.[0]?.address || '', 254)
-      };
-
-      const originalHtml = String(parsed.html || '');
-      const sanitized = sanitizeIncomingHtml(originalHtml);
-
-      return {
-        uid,
-        seq: 0,
-        subject: headerSafe(parsed.subject || '(konu yok)', 250),
-        fromName: from.name,
-        fromAddress: from.address,
-        to: headerSafe(parsed.to?.value?.[0]?.address || '', 254),
-        date: parsed.date ? new Date(parsed.date).toISOString() : null,
-        seen: true,
-        flagged: false,
-        hasAttachments: Array.isArray(parsed.attachments) && parsed.attachments.length > 0,
-        preview: '',
-        text: String(parsed.text || '').slice(0, 200000),
-        html: sanitized.slice(0, 400000),
-        imagesBlocked: sanitized.includes('data-blocked-src'),
-        attachments: (parsed.attachments || []).map((a: any) => ({
-          filename: headerSafe(a.filename || 'ek', 200),
-          contentType: headerSafe(a.contentType || 'application/octet-stream', 100),
-          size: Number(a.size) || 0
-        }))
-      };
+      return await downloadDetail(client, uid);
     } finally {
       lock.release();
     }
   });
+}
+
+// -------------------------------------------------------------
+// SYNC — the one moment the mail server is contacted
+// -------------------------------------------------------------
+
+export interface SyncResult {
+  mailbox: string;
+  syncedAt: string;
+  /** Headers written to the cache. */
+  messageCount: number;
+  /** Of those, how many also have their body cached and open instantly. */
+  bodiesCached: number;
+  /** True when the time budget ran out before every body was downloaded. */
+  truncated: boolean;
+  durationMs: number;
+  /** Set when the cache is only in memory. */
+  warning: string | null;
+}
+
+/**
+ * Pulls the mailbox in one pass and stores it, so every later view is served from the cache.
+ *
+ * ONE CONNECTION, ONE REQUEST. Headers come first because they are what the list view needs
+ * and they arrive in a single FETCH. Bodies are then downloaded over the *same* connection
+ * until the time budget runs out.
+ *
+ * WHY A TIME BUDGET. A serverless function is killed at its time limit with no chance to save
+ * what it had; a sync that overran would store nothing at all and look simply broken. Stopping
+ * early instead means the headers and as many bodies as fit are always safely written, and the
+ * few remaining messages download when they are opened (and are cached from then on). The
+ * budget defaults to a value comfortably under Vercel's 60s function limit and is overridable
+ * with MAIL_SYNC_BUDGET_MS.
+ */
+export async function syncInbox(
+  options: { mailbox?: string; limit?: number; budgetMs?: number } = {}
+): Promise<SyncResult> {
+  const mailbox = safeMailboxName(options.mailbox);
+  const limit = Math.min(Math.max(Number(options.limit) || 40, 1), 200);
+  // An explicit budget is honoured exactly as given — including 0, which is why this cannot
+  // use `||` (0 is falsy and would silently become the default). The floor and ceiling apply
+  // only to the configured default, where they guard against a value that would make every
+  // sync useless or overrun the platform's function limit.
+  const budgetMs =
+    options.budgetMs === undefined
+      ? Math.min(Math.max(toPositiveInt(env('MAIL_SYNC_BUDGET_MS'), 45000), 3000), 280000)
+      : Math.max(Number(options.budgetMs) || 0, 0);
+
+  const startedAt = Date.now();
+  const { saveInboxSnapshot, storeWarning } = await import('./mailStore');
+
+  const { headers, details, truncated } = await withImap(async (client) => {
+    const lock = await client.getMailboxLock(mailbox);
+    try {
+      const fetched = await readHeaders(client, limit);
+      const bodies = new Map<number, InboxMessageDetail>();
+      let ranOut = false;
+
+      // Newest first: if the budget runs out, the messages most likely to be opened are the
+      // ones already cached.
+      for (const message of fetched) {
+        if (Date.now() - startedAt > budgetMs) {
+          ranOut = true;
+          break;
+        }
+        try {
+          const detail = await downloadDetail(client, message.uid);
+          if (detail) bodies.set(message.uid, detail);
+        } catch {
+          // One unreadable message must not cost the whole sync; it is simply left
+          // header-only and downloaded again when opened.
+        }
+      }
+
+      return { headers: fetched, details: bodies, truncated: ranOut };
+    } finally {
+      lock.release();
+    }
+  });
+
+  const state = await saveInboxSnapshot(mailbox, headers, details, { truncated });
+
+  return {
+    mailbox,
+    syncedAt: state.lastSyncedAt || new Date().toISOString(),
+    messageCount: state.messageCount,
+    bodiesCached: state.bodiesCached,
+    truncated,
+    durationMs: Date.now() - startedAt,
+    warning: storeWarning()
+  };
+}
+
+/**
+ * Opens a message: from the cache when the sync already stored it, otherwise one short IMAP
+ * download that is then cached so it never has to happen twice.
+ */
+export async function readMessage(
+  uid: number,
+  mailboxName = 'INBOX'
+): Promise<{ message: InboxMessageDetail | null; source: 'cache' | 'imap' }> {
+  const mailbox = safeMailboxName(mailboxName);
+  const { readCachedMessage, saveMessageBody } = await import('./mailStore');
+
+  const cached = await readCachedMessage(mailbox, uid);
+  if (cached) return { message: cached, source: 'cache' };
+
+  const fresh = await fetchMessage(uid, mailbox);
+  if (fresh) {
+    try {
+      await saveMessageBody(mailbox, fresh);
+    } catch {
+      // Failing to cache is not a reason to withhold a message the admin can already read.
+    }
+  }
+  return { message: fresh, source: 'imap' };
 }
 
 /** Connects and lists mailboxes, to prove the IMAP credentials work. */

@@ -4,7 +4,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/index.js": {
-      "includeFiles": "public/email-logo.png"
+      "includeFiles": "public/email-logo.png",
+      "maxDuration": 60
     }
   },
   "rewrites": [

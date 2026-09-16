@@ -173,14 +173,49 @@ Proje iki şekilde çalışabilir ve **yetenekleri farklıdır**:
 | Frontend | ✅ | ✅ |
 | Topluluk API, OAuth, admin uçları | ✅ | ✅ |
 | E-posta **gönderme** (SMTP) | ✅ | ✅ |
-| E-posta **okuma** (IMAP) | ❌ | ✅ |
+| E-posta **okuma** (IMAP) | ✅ isteğe bağlı eşitleme | ✅ anlık |
 | Kalıcı yerel dosya (bağış defteri) | ❌ geçici | ✅ |
 
-**Vercel'de IMAP neden çalışmaz?** Gelen kutusu okumak, açık tutulan bir TCP oturumu
-gerektirir. Sunucusuz fonksiyonlar istekler arasında dondurulur ve birkaç saniyelik süre
-sınırı vardır; bağlantı ayakta kalamaz. Bu yüzden `getImapConfig()` sunucusuz ortamda
-bilinçli olarak `null` döner ve arayüz sebebini açıkça yazar — zaman aşımına kadar bekleyip
-belirsiz bir hata vermek yerine.
+**Gelen kutusu sunucusuz ortamda nasıl çalışıyor?** Dondurulmuş bir fonksiyonun yapamadığı
+şey, bir soketi **istekler arasında** açık tutmaktır — yani yeni posta beklemek için IDLE'da
+bekleyen bir bağlantı. Tek bir istek içinde başlayıp biten `bağlan → çek → çık` turu ise
+sıradan bir dışa bağlantıdır ve sorunsuz çalışır.
+
+Bu yüzden posta sunucusuna giden **tek** uç `POST /api/admin/mail/sync`'tir. Yönetici
+"Gelen kutusunu eşitle" dediğinde tek bir bağlantı açılır, başlıklar ve gövdeler çekilir,
+bağlantı kapatılır ve her şey `admin_mail_cache` tablosuna yazılır. Sonraki her listeleme ve
+okuma bu tablodan gelir; posta sunucusuna **hiç** bağlanılmaz. (Bu, testlerde varsayılmaz:
+sahte IMAP sunucusu bağlantılarını sayar ve takım eşitleme sonrası okumaların bağlantı
+sayısını artırmadığını doğrular.)
+
+İki kip arasındaki fark bilinçlidir ve `imapMode()` ile ayrılır:
+
+- **`sync` (sunucusuz).** Boş önbellek boş kalır; IMAP yalnızca eşitleme ile açılır. Aksi
+  hâlde her sayfa yüklemesi fonksiyonun süre sınırına karşı yeni bir TLS el sıkışması ve
+  LOGIN öderdi.
+- **`live` (kalıcı sunucu).** Bağlantı ucuz olduğundan boş önbellek anlık okumaya düşer,
+  böylece gelen kutusu ilk ziyarette boş görünmez. Eşitleme yine de çalışır ve önbelleği
+  doldurur.
+
+**Süre bütçesi.** Sunucusuz bir fonksiyon süre sınırında öldürülür ve elindekini kaydetme
+şansı bulamaz; taşan bir eşitleme **hiçbir şey** saklamaz ve dışarıdan bozuk görünür. Bu
+yüzden `syncInbox()` önce başlıkları yazar, sonra bütçesi (varsayılan 45 sn,
+`MAIL_SYNC_BUDGET_MS` ile değişir) tükenene kadar gövdeleri indirir. Bütçe dolarsa
+`truncated: true` döner, başlıklar yine de saklanmıştır ve kalan gövdeler açıldıkları anda
+tek seferlik indirilip önbelleğe alınır. Gövdeler **en yeniden eskiye** indirilir: bütçe
+biterse açılma olasılığı en yüksek mesajlar zaten saklanmış olur.
+
+**Önbellek gizliliği.** `admin_mail_cache` ve `admin_mail_sync_state`, `community_api_keys`
+gibi davranır: RLS açık, yalnızca `service_role` politikası var ve `anon`/`authenticated`
+rollerine **hiçbir** GRANT verilmemiştir. Yani yöneticinin yazışmaları tarayıcıya yalnızca
+`requireAdmin` korumalı `/api/admin/mail/*` uçlarından ulaşır, anon anahtarıyla asla. Bu,
+gerçek PostgreSQL üzerinde doğrulanmıştır: her iki rol de `permission denied` alır.
+`body_html` sütunu **zaten temizlenmiş** olarak saklanır (`sanitizeIncomingHtml`), böylece
+düşmanca bir e-posta kalıcı XSS'e dönüşemez; arayüz yine de sandbox'lı iframe kullanır.
+Eklerin **baytları hiç saklanmaz**, yalnızca ad/tür/boyut bilgisi tutulur.
+
+`SUPABASE_SERVICE_ROLE_KEY` tanımlı değilse önbellek belleğe düşer; bu durumda arayüz
+"sunucu yeniden başlarsa yeniden eşitlemeniz gerekir" uyarısını gösterir.
 
 **Vercel kurulumu.** `vercel.json` içinde `/api/*` istekleri `api/index.js` fonksiyonuna,
 diğer her şey `index.html`'e yönlenir. Yapı komutu `npm run build:vercel`'dir: Vite
@@ -212,9 +247,9 @@ engeller. `server.ts` ise sunucusuz ortamı algılayınca kendi `app.listen()` �
 > OAuth geri dönüşü ve bağış webhook'u da etkileniyordu.
 
 > Paketlenmiş `api/index.js`, Vercel'in `/var/task` yerleşimi birebir taklit edilerek ve
-> gerçek SMTP/IMAP sunucularına karşı doğrulandı: her iki gerileme takımı da (Topluluk API
-> 35 doğrulama, e-posta konsolu 68 doğrulama) hatasız geçti, `VERCEL=1` ile IMAP bilinçli
-> olarak kapandı, SMTP gönderimi çalıştı ve fonksiyon hiçbir port dinlemedi.
+> gerçek SMTP/IMAP sunucularına karşı doğrulandı: üç gerileme takımı da (Topluluk API 35,
+> e-posta konsolu 68, eşitleme 52 doğrulama) hem `live` hem `sync` kipinde hatasız geçti,
+> SMTP gönderimi çalıştı ve fonksiyon hiçbir port dinlemedi.
 
 Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && npm start`.
 
@@ -222,8 +257,19 @@ Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && np
 
 ## 2.2 E-posta konsolu (IMAP / SMTP)
 
-Admin panelindeki **E-postalar** sekmesi; gelen kutusunu IMAP ile okur, kullanıcı adından
-adres çözerek SMTP ile e-posta gönderir. Yapılandırma `.env` içindeki `MAIL_*` değişkenleridir.
+Admin panelindeki **E-postalar** sekmesi; gelen kutusunu IMAP ile eşitleyip okur, kullanıcı
+adından adres çözerek SMTP ile e-posta gönderir. Yapılandırma `.env` içindeki `MAIL_*`
+değişkenleridir.
+
+Uçlar:
+
+| Uç | Ne yapar | Posta sunucusuna bağlanır mı? |
+|---|---|---|
+| `POST /api/admin/mail/sync` | Gelen kutusunu bir kerede çekip önbelleğe yazar | **Evet** — tek bağlantı |
+| `GET /api/admin/mail/inbox` | Önbellekteki listeyi döner | Hayır (`live` kipinde boş önbellekte evet) |
+| `GET /api/admin/mail/message/:uid` | Mesajı açar | Yalnızca gövde önbellekte yoksa |
+| `DELETE /api/admin/mail/cache` | Eşitlenen kopyayı unutur (postaya dokunmaz) | Hayır |
+| `POST /api/admin/mail/send` | Kullanıcı adına e-posta gönderir | Evet (SMTP) |
 
 - **Tüm uçlar `requireAdmin` arkasındadır.** Normal üye 403 alır; oturumsuz çağrı da 403 alır
   (401 ile ayrılmaz, böylece ucun varlığı sızdırılmaz).
@@ -240,13 +286,19 @@ adres çözerek SMTP ile e-posta gönderir. Yapılandırma `.env` içindeki `MAI
   uzak görsel yöneticinin IP adresini gönderene açar ve adresin canlı olduğunu doğrular.
 - **Parola hiçbir yanıtta, hiçbir logda geçmez.** Durum ucu yalnızca sunucu/port/güvenli mi
   bilgisini döndürür.
-- Hız sınırları: gönderme dakikada 20, bağlantı testi 6, gelen kutusu 30 (yönetici başına).
+- **Eşitleme sıkı sınırlıdır: dakikada 6.** Her çağrı posta sağlayıcısına gerçek bir dış
+  LOGIN'dir ve sağlayıcılar döngüye giren hesapları kısıtlar veya kilitler.
+- Diğer hız sınırları: gönderme dakikada 20, bağlantı testi 6, gelen kutusu 30, mesaj açma 60,
+  önbellek temizleme 10 (yönetici başına).
+- **Posta kutusu adı komuta gömülür**, bu yüzden `safeMailboxName()` ile sıkı bir karakter
+  kümesine indirgenir; tanınmayan her değer `INBOX`'a düşer.
 
 Logo, e-posta istemcileri SVG göstermediği için `public/logo.svg` dosyasından üretilmiş
 `public/email-logo.png` olarak CID ile gömülür (`node scripts/build-email-logo.mjs`).
 
 Bu davranışların tamamı gerçek bir SMTP ve IMAP sunucusuna karşı, gerçek Express rotaları
-üzerinden uçtan uca test edildi (68 doğrulama, tamamı geçti).
+üzerinden uçtan uca test edildi: posta konsolu 68 doğrulama, eşitleme akışı 52 doğrulama
+(hem `live` hem `sync` kipinde), süre bütçesi 11 doğrulama — tamamı geçti.
 
 ---
 

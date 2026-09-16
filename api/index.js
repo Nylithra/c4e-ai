@@ -5,6 +5,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -27,24 +30,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/server/vercelEntry.ts
-var vercelEntry_exports = {};
-__export(vercelEntry_exports, {
-  default: () => handler
-});
-module.exports = __toCommonJS(vercelEntry_exports);
-
-// server.ts
-var import_express = __toESM(require("express"), 1);
-var import_path = __toESM(require("path"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_node_os = __toESM(require("node:os"), 1);
-var import_node_crypto3 = __toESM(require("node:crypto"), 1);
-
 // src/server/security.ts
-var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_promises = __toESM(require("node:dns/promises"), 1);
-var import_node_net = __toESM(require("node:net"), 1);
 function env(name, fallback = "") {
   const value = process.env[name];
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -54,10 +40,6 @@ function isServerless() {
     process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.FUNCTION_TARGET
   );
 }
-var SUPABASE_URL = env("SUPABASE_URL", env("VITE_SUPABASE_URL")).replace(/\/+$/, "");
-var SUPABASE_ANON_KEY = env("SUPABASE_ANON_KEY", env("VITE_SUPABASE_ANON_KEY"));
-var SUPABASE_SERVICE_ROLE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
-var OAUTH_STATE_SECRET = env("OAUTH_STATE_SECRET") || import_node_crypto.default.randomBytes(32).toString("hex");
 function safeEquals(a, b) {
   const bufA = Buffer.from(String(a ?? ""), "utf8");
   const bufB = Buffer.from(String(b ?? ""), "utf8");
@@ -89,20 +71,6 @@ function escapeHtml(value) {
 function jsonForScript(value) {
   return JSON.stringify(value ?? null).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
-var PRIVATE_IPV4_PATTERNS = [
-  (p) => p[0] === 0,
-  (p) => p[0] === 10,
-  (p) => p[0] === 127,
-  (p) => p[0] === 169 && p[1] === 254,
-  // link-local + cloud metadata (169.254.169.254)
-  (p) => p[0] === 172 && p[1] >= 16 && p[1] <= 31,
-  (p) => p[0] === 192 && p[1] === 168,
-  (p) => p[0] === 192 && p[1] === 0 && p[2] === 0,
-  (p) => p[0] === 100 && p[1] >= 64 && p[1] <= 127,
-  // CGNAT
-  (p) => p[0] >= 224
-  // multicast + reserved
-];
 function isPrivateAddress(address) {
   const version = import_node_net.default.isIP(address);
   if (version === 4) {
@@ -198,8 +166,6 @@ async function safeFetch(rawUrl, options = {}) {
     clearTimeout(timeout);
   }
 }
-var rateLimitBuckets = /* @__PURE__ */ new Map();
-var MAX_TRACKED_KEYS = 2e4;
 function pruneRateLimitBuckets(now, windowMs) {
   for (const [key, bucket] of rateLimitBuckets) {
     if (now - bucket.lastSeen > windowMs * 4) {
@@ -215,7 +181,6 @@ function pruneRateLimitBuckets(now, windowMs) {
     }
   }
 }
-var lastPrune = Date.now();
 function clientIp(req) {
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
@@ -254,8 +219,6 @@ function rateLimit(options = {}) {
     next();
   };
 }
-var sessionCache = /* @__PURE__ */ new Map();
-var SESSION_CACHE_TTL_MS = 3e4;
 function bearerToken(req) {
   const header = req.headers.authorization || "";
   const match = /^Bearer\s+(.+)$/i.exec(String(header).trim());
@@ -380,9 +343,322 @@ function normalizeUsername(value) {
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+var import_node_crypto, import_promises, import_node_net, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, OAUTH_STATE_SECRET, PRIVATE_IPV4_PATTERNS, rateLimitBuckets, MAX_TRACKED_KEYS, lastPrune, sessionCache, SESSION_CACHE_TTL_MS;
+var init_security = __esm({
+  "src/server/security.ts"() {
+    import_node_crypto = __toESM(require("node:crypto"), 1);
+    import_promises = __toESM(require("node:dns/promises"), 1);
+    import_node_net = __toESM(require("node:net"), 1);
+    SUPABASE_URL = env("SUPABASE_URL", env("VITE_SUPABASE_URL")).replace(/\/+$/, "");
+    SUPABASE_ANON_KEY = env("SUPABASE_ANON_KEY", env("VITE_SUPABASE_ANON_KEY"));
+    SUPABASE_SERVICE_ROLE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
+    OAUTH_STATE_SECRET = env("OAUTH_STATE_SECRET") || import_node_crypto.default.randomBytes(32).toString("hex");
+    PRIVATE_IPV4_PATTERNS = [
+      (p) => p[0] === 0,
+      (p) => p[0] === 10,
+      (p) => p[0] === 127,
+      (p) => p[0] === 169 && p[1] === 254,
+      // link-local + cloud metadata (169.254.169.254)
+      (p) => p[0] === 172 && p[1] >= 16 && p[1] <= 31,
+      (p) => p[0] === 192 && p[1] === 168,
+      (p) => p[0] === 192 && p[1] === 0 && p[2] === 0,
+      (p) => p[0] === 100 && p[1] >= 64 && p[1] <= 127,
+      // CGNAT
+      (p) => p[0] >= 224
+      // multicast + reserved
+    ];
+    rateLimitBuckets = /* @__PURE__ */ new Map();
+    MAX_TRACKED_KEYS = 2e4;
+    lastPrune = Date.now();
+    sessionCache = /* @__PURE__ */ new Map();
+    SESSION_CACHE_TTL_MS = 3e4;
+  }
+});
+
+// src/server/mailStore.ts
+var mailStore_exports = {};
+__export(mailStore_exports, {
+  clearMailbox: () => clearMailbox,
+  readCachedMessage: () => readCachedMessage,
+  readInboxSnapshot: () => readInboxSnapshot,
+  readSyncState: () => readSyncState,
+  saveInboxSnapshot: () => saveInboxSnapshot,
+  saveMessageBody: () => saveMessageBody,
+  storeIsDurable: () => storeIsDurable,
+  storeWarning: () => storeWarning
+});
+function storeIsDurable() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+}
+function storeWarning() {
+  if (storeIsDurable()) return null;
+  return "E\u015Fitlenen mesajlar yaln\u0131zca bellekte tutuluyor (SUPABASE_SERVICE_ROLE_KEY tan\u0131ml\u0131 de\u011Fil). Sunucu yeniden ba\u015Flarsa yeniden e\u015Fitlemeniz gerekir.";
+}
+function adminHeaders2(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+async function rest(pathAndQuery, init = {}) {
+  const response = await safeFetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+    method: init.method || "GET",
+    headers: adminHeaders2(init.headers),
+    body: init.body,
+    timeoutMs: 15e3,
+    // Bodies are capped per message, but a whole page of them still adds up.
+    maxResponseBytes: 8 * 1024 * 1024
+  });
+  let rows = [];
+  if (response.text) {
+    try {
+      const parsed = JSON.parse(response.text);
+      rows = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      rows = [];
+    }
+  }
+  return { ok: response.ok, status: response.status, rows };
+}
+function memoryBox(mailbox) {
+  let box = memoryMessages.get(mailbox);
+  if (!box) {
+    box = /* @__PURE__ */ new Map();
+    memoryMessages.set(mailbox, box);
+  }
+  return box;
+}
+function clip(value, max) {
+  return String(value || "").slice(0, max);
+}
+function rowFromHeader(mailbox, message, syncedAt) {
+  return {
+    mailbox,
+    uid: message.uid,
+    subject: clip(message.subject, 250),
+    from_name: clip(message.fromName, 120),
+    from_address: clip(message.fromAddress, 254),
+    to_address: clip(message.to, 254),
+    sent_at: message.date,
+    seen: Boolean(message.seen),
+    flagged: Boolean(message.flagged),
+    has_attachments: Boolean(message.hasAttachments),
+    preview: clip(message.preview, 400),
+    synced_at: syncedAt
+  };
+}
+function bodyFields(detail) {
+  return {
+    body_text: clip(detail.text, MAX_TEXT_BYTES),
+    body_html: clip(detail.html, MAX_HTML_BYTES),
+    images_blocked: Boolean(detail.imagesBlocked),
+    attachments: detail.attachments || [],
+    body_synced_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function headerFromRow(row) {
+  return {
+    uid: Number(row.uid),
+    seq: 0,
+    subject: String(row.subject || "(konu yok)"),
+    fromName: String(row.from_name || ""),
+    fromAddress: String(row.from_address || ""),
+    to: String(row.to_address || ""),
+    date: row.sent_at ? new Date(row.sent_at).toISOString() : null,
+    seen: Boolean(row.seen),
+    flagged: Boolean(row.flagged),
+    hasAttachments: Boolean(row.has_attachments),
+    preview: String(row.preview || "")
+  };
+}
+function detailFromRow(row) {
+  if (!row.body_synced_at) return null;
+  return {
+    ...headerFromRow(row),
+    text: String(row.body_text || ""),
+    html: String(row.body_html || ""),
+    imagesBlocked: Boolean(row.images_blocked),
+    attachments: Array.isArray(row.attachments) ? row.attachments : []
+  };
+}
+async function saveInboxSnapshot(mailbox, messages, details, meta) {
+  const syncedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const keptUids = messages.map((m) => m.uid);
+  const state = {
+    mailbox,
+    lastSyncedAt: syncedAt,
+    messageCount: messages.length,
+    bodiesCached: details.size,
+    truncated: meta.truncated
+  };
+  if (!storeIsDurable()) {
+    const box = memoryBox(mailbox);
+    const keep = new Set(keptUids);
+    for (const uid of [...box.keys()]) if (!keep.has(uid)) box.delete(uid);
+    for (const message of messages) {
+      const existing = box.get(message.uid);
+      box.set(message.uid, {
+        header: message,
+        // A sync that ran out of time leaves older bodies alone rather than dropping them.
+        detail: details.get(message.uid) || existing?.detail || null
+      });
+    }
+    memoryState.set(mailbox, state);
+    return state;
+  }
+  const rows = messages.map((message) => {
+    const row = rowFromHeader(mailbox, message, syncedAt);
+    const detail = details.get(message.uid);
+    return detail ? { ...row, ...bodyFields(detail) } : row;
+  });
+  if (rows.length > 0) {
+    await rest(`${CACHE_TABLE}?on_conflict=mailbox,uid`, {
+      method: "POST",
+      body: JSON.stringify(rows),
+      // merge-duplicates keeps a body cached by an earlier sync when this row carries none.
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" }
+    });
+  }
+  const gone = keptUids.length > 0 ? `uid=not.in.(${keptUids.join(",")})` : (
+    // An empty mailbox clears every row rather than matching nothing.
+    "uid=gt.0"
+  );
+  await rest(`${CACHE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&${gone}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" }
+  });
+  await rest(`${STATE_TABLE}?on_conflict=mailbox`, {
+    method: "POST",
+    body: JSON.stringify([
+      {
+        mailbox,
+        last_synced_at: syncedAt,
+        message_count: state.messageCount,
+        bodies_cached: state.bodiesCached,
+        truncated: state.truncated
+      }
+    ]),
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" }
+  });
+  return state;
+}
+async function saveMessageBody(mailbox, detail) {
+  if (!storeIsDurable()) {
+    const box = memoryBox(mailbox);
+    const existing = box.get(detail.uid);
+    box.set(detail.uid, { header: existing?.header || detail, detail });
+    return;
+  }
+  await rest(`${CACHE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&uid=eq.${detail.uid}`, {
+    method: "PATCH",
+    body: JSON.stringify(bodyFields(detail)),
+    headers: { Prefer: "return=minimal" }
+  });
+}
+function emptyState(mailbox) {
+  return { mailbox, lastSyncedAt: null, messageCount: 0, bodiesCached: 0, truncated: false };
+}
+async function readInboxSnapshot(mailbox, limit = 50) {
+  const capped = Math.min(Math.max(limit, 1), 200);
+  if (!storeIsDurable()) {
+    const box = memoryBox(mailbox);
+    const messages = [...box.values()].map((e) => e.header).sort((a, b) => b.uid - a.uid).slice(0, capped);
+    return { messages, state: memoryState.get(mailbox) || emptyState(mailbox) };
+  }
+  const columns = "uid,subject,from_name,from_address,to_address,sent_at,seen,flagged,has_attachments,preview";
+  const [cache, state] = await Promise.all([
+    rest(
+      `${CACHE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&select=${columns}&order=uid.desc&limit=${capped}`
+    ),
+    rest(`${STATE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&select=*&limit=1`)
+  ]);
+  const row = state.rows[0];
+  return {
+    messages: cache.ok ? cache.rows.map(headerFromRow) : [],
+    state: row ? {
+      mailbox,
+      lastSyncedAt: row.last_synced_at || null,
+      messageCount: Number(row.message_count || 0),
+      bodiesCached: Number(row.bodies_cached || 0),
+      truncated: Boolean(row.truncated)
+    } : emptyState(mailbox)
+  };
+}
+async function readCachedMessage(mailbox, uid) {
+  if (!storeIsDurable()) {
+    return memoryBox(mailbox).get(uid)?.detail || null;
+  }
+  const { ok, rows } = await rest(
+    `${CACHE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&uid=eq.${uid}&select=*&limit=1`
+  );
+  if (!ok || rows.length === 0) return null;
+  return detailFromRow(rows[0]);
+}
+async function readSyncState(mailbox) {
+  if (!storeIsDurable()) return memoryState.get(mailbox) || emptyState(mailbox);
+  const { ok, rows } = await rest(
+    `${STATE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}&select=*&limit=1`
+  );
+  if (!ok || rows.length === 0) return emptyState(mailbox);
+  const row = rows[0];
+  return {
+    mailbox,
+    lastSyncedAt: row.last_synced_at || null,
+    messageCount: Number(row.message_count || 0),
+    bodiesCached: Number(row.bodies_cached || 0),
+    truncated: Boolean(row.truncated)
+  };
+}
+async function clearMailbox(mailbox) {
+  if (!storeIsDurable()) {
+    memoryMessages.delete(mailbox);
+    memoryState.delete(mailbox);
+    return;
+  }
+  await Promise.all([
+    rest(`${CACHE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    }),
+    rest(`${STATE_TABLE}?mailbox=eq.${encodeURIComponent(mailbox)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    })
+  ]);
+}
+var CACHE_TABLE, STATE_TABLE, MAX_TEXT_BYTES, MAX_HTML_BYTES, memoryMessages, memoryState;
+var init_mailStore = __esm({
+  "src/server/mailStore.ts"() {
+    init_security();
+    CACHE_TABLE = "admin_mail_cache";
+    STATE_TABLE = "admin_mail_sync_state";
+    MAX_TEXT_BYTES = 2e5;
+    MAX_HTML_BYTES = 4e5;
+    memoryMessages = /* @__PURE__ */ new Map();
+    memoryState = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/server/vercelEntry.ts
+var vercelEntry_exports = {};
+__export(vercelEntry_exports, {
+  default: () => handler
+});
+module.exports = __toCommonJS(vercelEntry_exports);
+
+// server.ts
+var import_express = __toESM(require("express"), 1);
+var import_path = __toESM(require("path"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_node_os = __toESM(require("node:os"), 1);
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+init_security();
 
 // src/server/communityApi.ts
 var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+init_security();
 var API_KEY_PREFIX = "lnx_live_";
 function toPublicKey(row) {
   return {
@@ -662,6 +938,7 @@ function extractApiKey(req) {
 // src/server/mail.ts
 var import_node_fs = __toESM(require("node:fs"), 1);
 var import_node_path = __toESM(require("node:path"), 1);
+init_security();
 
 // src/server/mailTemplate.ts
 var COLORS = {
@@ -839,6 +1116,10 @@ function toPort(value, fallback) {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
 }
+function toPositiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
 function toSecureFlag(value, fallback) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return fallback;
@@ -864,16 +1145,12 @@ function getSmtpConfig() {
   };
 }
 function imapUnavailableReason() {
-  if (isServerless()) {
-    return "IMAP, sunucusuz (serverless) ortamda kullan\u0131lamaz: gelen kutusu okumak a\xE7\u0131k ve s\xFCrekli bir TCP ba\u011Flant\u0131s\u0131 gerektirir, sunucusuz fonksiyonlar ise istekler aras\u0131nda donar. G\xF6nderme (SMTP) \xE7al\u0131\u015F\u0131r. Gelen kutusu i\xE7in arka ucu kal\u0131c\u0131 bir Node s\xFCrecinde \xE7al\u0131\u015Ft\u0131r\u0131n (Railway, Render, Fly.io veya bir VPS).";
-  }
   if (!env("MAIL_IMAP_HOST") || !env("MAIL_IMAP_USER", env("MAIL_SMTP_USER")) || !env("MAIL_IMAP_PASS", env("MAIL_SMTP_PASS"))) {
     return "IMAP yap\u0131land\u0131r\u0131lmam\u0131\u015F (MAIL_IMAP_HOST / MAIL_IMAP_USER / MAIL_IMAP_PASS eksik).";
   }
   return null;
 }
 function getImapConfig() {
-  if (isServerless()) return null;
   const host = env("MAIL_IMAP_HOST");
   const user = env("MAIL_IMAP_USER", env("MAIL_SMTP_USER"));
   const pass = env("MAIL_IMAP_PASS", env("MAIL_SMTP_PASS"));
@@ -881,13 +1158,27 @@ function getImapConfig() {
   const port = toPort(env("MAIL_IMAP_PORT"), 993);
   return { host, port, secure: toSecureFlag(env("MAIL_IMAP_SECURE"), port === 993), user, pass };
 }
+function supportsLiveImap() {
+  return !isServerless();
+}
+function imapMode() {
+  return supportsLiveImap() ? "live" : "sync";
+}
 function describeMailConfig() {
   const smtp = getSmtpConfig();
   const imap = getImapConfig();
   return {
     smtp: smtp ? { configured: true, host: smtp.host, port: smtp.port, secure: smtp.secure, from: smtp.fromAddress } : { configured: false },
-    imap: imap ? { configured: true, host: imap.host, port: imap.port, secure: imap.secure, user: imap.user } : { configured: false, reason: imapUnavailableReason() },
-    // Lets the admin UI tell "not set up yet" apart from "cannot work on this host".
+    imap: imap ? {
+      configured: true,
+      host: imap.host,
+      port: imap.port,
+      secure: imap.secure,
+      user: imap.user,
+      mode: imapMode(),
+      note: imapMode() === "sync" ? 'Bu ortamda gelen kutusu iste\u011Fe ba\u011Fl\u0131 e\u015Fitlenir: "Gelen kutusunu e\u015Fitle" dedi\u011Finizde mesajlar bir kerede \xE7ekilip saklan\u0131r, sonraki g\xF6r\xFCnt\xFClemeler posta sunucusuna hi\xE7 ba\u011Flanmaz.' : null
+    } : { configured: false, reason: imapUnavailableReason(), mode: imapMode() },
+    // Lets the admin UI tell "not set up yet" apart from "reads from the cache here".
     serverless: isServerless()
   };
 }
@@ -1118,95 +1409,158 @@ function addressOf(source) {
     address: headerSafe(first.address || "", 254)
   };
 }
+function safeMailboxName(value) {
+  const raw = String(value || "");
+  return /^[A-Za-z0-9 _./-]{1,80}$/.test(raw) ? raw : "INBOX";
+}
+async function readHeaders(client, limit) {
+  const total = client.mailbox?.exists || 0;
+  if (total === 0) return [];
+  const start = Math.max(1, total - limit + 1);
+  const messages = [];
+  for await (const msg of client.fetch(`${start}:*`, {
+    uid: true,
+    envelope: true,
+    flags: true,
+    bodyStructure: true,
+    // Enough of the body for a preview without pulling whole attachments.
+    bodyParts: ["1"]
+  })) {
+    const env_ = msg.envelope || {};
+    const from = addressOf(env_.from);
+    const to = addressOf(env_.to);
+    const flags = msg.flags || /* @__PURE__ */ new Set();
+    let preview = "";
+    try {
+      const part = msg.bodyParts?.get("1");
+      if (part) preview = part.toString("utf8").replace(/\s+/g, " ").slice(0, 200);
+    } catch {
+    }
+    messages.push({
+      uid: Number(msg.uid),
+      seq: Number(msg.seq),
+      subject: headerSafe(env_.subject || "(konu yok)", 250),
+      fromName: from.name,
+      fromAddress: from.address,
+      to: to.address,
+      date: env_.date ? new Date(env_.date).toISOString() : null,
+      seen: flags.has("\\Seen"),
+      flagged: flags.has("\\Flagged"),
+      hasAttachments: Boolean(msg.bodyStructure?.childNodes?.some((n) => n.disposition === "attachment")),
+      preview
+    });
+  }
+  return messages.reverse();
+}
 async function fetchInbox(options = {}) {
-  const mailbox = /^[A-Za-z0-9 _./-]{1,80}$/.test(options.mailbox || "") ? options.mailbox : "INBOX";
+  const mailbox = safeMailboxName(options.mailbox);
   const limit = Math.min(Math.max(Number(options.limit) || 25, 1), 100);
   return withImap(async (client) => {
     const lock = await client.getMailboxLock(mailbox);
     try {
-      const total = client.mailbox?.exists || 0;
-      if (total === 0) return [];
-      const start = Math.max(1, total - limit + 1);
-      const messages = [];
-      for await (const msg of client.fetch(`${start}:*`, {
-        uid: true,
-        envelope: true,
-        flags: true,
-        bodyStructure: true,
-        // Enough of the body for a preview without pulling whole attachments.
-        bodyParts: ["1"]
-      })) {
-        const env_ = msg.envelope || {};
-        const from = addressOf(env_.from);
-        const to = addressOf(env_.to);
-        const flags = msg.flags || /* @__PURE__ */ new Set();
-        let preview = "";
-        try {
-          const part = msg.bodyParts?.get("1");
-          if (part) preview = part.toString("utf8").replace(/\s+/g, " ").slice(0, 200);
-        } catch {
-        }
-        messages.push({
-          uid: Number(msg.uid),
-          seq: Number(msg.seq),
-          subject: headerSafe(env_.subject || "(konu yok)", 250),
-          fromName: from.name,
-          fromAddress: from.address,
-          to: to.address,
-          date: env_.date ? new Date(env_.date).toISOString() : null,
-          seen: flags.has("\\Seen"),
-          flagged: flags.has("\\Flagged"),
-          hasAttachments: Boolean(msg.bodyStructure?.childNodes?.some((n) => n.disposition === "attachment")),
-          preview
-        });
-      }
-      return messages.reverse();
+      return await readHeaders(client, limit);
     } finally {
       lock.release();
     }
   });
 }
+async function downloadDetail(client, uid) {
+  const raw = await client.download(String(uid), void 0, { uid: true });
+  if (!raw?.content) return null;
+  const { simpleParser } = await import("mailparser");
+  const parsed = await simpleParser(raw.content);
+  const from = {
+    name: headerSafe(parsed.from?.value?.[0]?.name || "", 120),
+    address: headerSafe(parsed.from?.value?.[0]?.address || "", 254)
+  };
+  const originalHtml = String(parsed.html || "");
+  const sanitized = sanitizeIncomingHtml(originalHtml);
+  return {
+    uid,
+    seq: 0,
+    subject: headerSafe(parsed.subject || "(konu yok)", 250),
+    fromName: from.name,
+    fromAddress: from.address,
+    to: headerSafe(parsed.to?.value?.[0]?.address || "", 254),
+    date: parsed.date ? new Date(parsed.date).toISOString() : null,
+    seen: true,
+    flagged: false,
+    hasAttachments: Array.isArray(parsed.attachments) && parsed.attachments.length > 0,
+    preview: "",
+    text: String(parsed.text || "").slice(0, 2e5),
+    html: sanitized.slice(0, 4e5),
+    imagesBlocked: sanitized.includes("data-blocked-src"),
+    attachments: (parsed.attachments || []).map((a) => ({
+      filename: headerSafe(a.filename || "ek", 200),
+      contentType: headerSafe(a.contentType || "application/octet-stream", 100),
+      size: Number(a.size) || 0
+    }))
+  };
+}
 async function fetchMessage(uid, mailboxName = "INBOX") {
-  const mailbox = /^[A-Za-z0-9 _./-]{1,80}$/.test(mailboxName) ? mailboxName : "INBOX";
+  const mailbox = safeMailboxName(mailboxName);
   if (!Number.isInteger(uid) || uid <= 0) return null;
   return withImap(async (client) => {
     const lock = await client.getMailboxLock(mailbox);
     try {
-      const raw = await client.download(String(uid), void 0, { uid: true });
-      if (!raw?.content) return null;
-      const { simpleParser } = await import("mailparser");
-      const parsed = await simpleParser(raw.content);
-      const from = {
-        name: headerSafe(parsed.from?.value?.[0]?.name || "", 120),
-        address: headerSafe(parsed.from?.value?.[0]?.address || "", 254)
-      };
-      const originalHtml = String(parsed.html || "");
-      const sanitized = sanitizeIncomingHtml(originalHtml);
-      return {
-        uid,
-        seq: 0,
-        subject: headerSafe(parsed.subject || "(konu yok)", 250),
-        fromName: from.name,
-        fromAddress: from.address,
-        to: headerSafe(parsed.to?.value?.[0]?.address || "", 254),
-        date: parsed.date ? new Date(parsed.date).toISOString() : null,
-        seen: true,
-        flagged: false,
-        hasAttachments: Array.isArray(parsed.attachments) && parsed.attachments.length > 0,
-        preview: "",
-        text: String(parsed.text || "").slice(0, 2e5),
-        html: sanitized.slice(0, 4e5),
-        imagesBlocked: sanitized.includes("data-blocked-src"),
-        attachments: (parsed.attachments || []).map((a) => ({
-          filename: headerSafe(a.filename || "ek", 200),
-          contentType: headerSafe(a.contentType || "application/octet-stream", 100),
-          size: Number(a.size) || 0
-        }))
-      };
+      return await downloadDetail(client, uid);
     } finally {
       lock.release();
     }
   });
+}
+async function syncInbox(options = {}) {
+  const mailbox = safeMailboxName(options.mailbox);
+  const limit = Math.min(Math.max(Number(options.limit) || 40, 1), 200);
+  const budgetMs = options.budgetMs === void 0 ? Math.min(Math.max(toPositiveInt(env("MAIL_SYNC_BUDGET_MS"), 45e3), 3e3), 28e4) : Math.max(Number(options.budgetMs) || 0, 0);
+  const startedAt = Date.now();
+  const { saveInboxSnapshot: saveInboxSnapshot2, storeWarning: storeWarning2 } = await Promise.resolve().then(() => (init_mailStore(), mailStore_exports));
+  const { headers, details, truncated } = await withImap(async (client) => {
+    const lock = await client.getMailboxLock(mailbox);
+    try {
+      const fetched = await readHeaders(client, limit);
+      const bodies = /* @__PURE__ */ new Map();
+      let ranOut = false;
+      for (const message of fetched) {
+        if (Date.now() - startedAt > budgetMs) {
+          ranOut = true;
+          break;
+        }
+        try {
+          const detail = await downloadDetail(client, message.uid);
+          if (detail) bodies.set(message.uid, detail);
+        } catch {
+        }
+      }
+      return { headers: fetched, details: bodies, truncated: ranOut };
+    } finally {
+      lock.release();
+    }
+  });
+  const state = await saveInboxSnapshot2(mailbox, headers, details, { truncated });
+  return {
+    mailbox,
+    syncedAt: state.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+    messageCount: state.messageCount,
+    bodiesCached: state.bodiesCached,
+    truncated,
+    durationMs: Date.now() - startedAt,
+    warning: storeWarning2()
+  };
+}
+async function readMessage(uid, mailboxName = "INBOX") {
+  const mailbox = safeMailboxName(mailboxName);
+  const { readCachedMessage: readCachedMessage2, saveMessageBody: saveMessageBody2 } = await Promise.resolve().then(() => (init_mailStore(), mailStore_exports));
+  const cached = await readCachedMessage2(mailbox, uid);
+  if (cached) return { message: cached, source: "cache" };
+  const fresh = await fetchMessage(uid, mailbox);
+  if (fresh) {
+    try {
+      await saveMessageBody2(mailbox, fresh);
+    } catch {
+    }
+  }
+  return { message: fresh, source: "imap" };
 }
 async function verifyImap() {
   try {
@@ -1221,6 +1575,7 @@ async function verifyImap() {
 }
 
 // server.ts
+init_mailStore();
 var app = (0, import_express.default)();
 var PORT = Number(env("PORT", "3000"));
 var IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -2357,6 +2712,43 @@ app.post(
     res.json({ success: true, smtp, imap });
   }
 );
+app.post(
+  "/api/admin/mail/sync",
+  requireAdmin,
+  rateLimit({ scope: "mail-sync", windowMs: 6e4, max: 6, perUser: true }),
+  async (req, res) => {
+    if (!getImapConfig()) {
+      res.status(503).json({
+        success: false,
+        error: imapUnavailableReason() || "IMAP kullan\u0131lam\u0131yor.",
+        serverless: isServerless()
+      });
+      return;
+    }
+    try {
+      const result = await syncInbox({
+        mailbox: safeMailbox(req.body?.mailbox ?? req.query.mailbox),
+        limit: Number(req.body?.limit ?? req.query.limit) || 40
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(502).json({
+        success: false,
+        error: `IMAP hatas\u0131: ${String(error?.message || error).slice(0, 300)}`
+      });
+    }
+  }
+);
+app.delete(
+  "/api/admin/mail/cache",
+  requireAdmin,
+  rateLimit({ scope: "mail-cache-clear", windowMs: 6e4, max: 10, perUser: true }),
+  async (req, res) => {
+    const mailbox = safeMailbox(req.query.mailbox);
+    await clearMailbox(mailbox);
+    res.json({ success: true, mailbox });
+  }
+);
 app.get(
   "/api/admin/mail/inbox",
   requireAdmin,
@@ -2370,12 +2762,34 @@ app.get(
       });
       return;
     }
+    const mailbox = safeMailbox(req.query.mailbox);
+    const limit = Number(req.query.limit) || 25;
     try {
-      const messages = await fetchInbox({
-        mailbox: safeMailbox(req.query.mailbox),
-        limit: Number(req.query.limit) || 25
+      const cached = await readInboxSnapshot(mailbox, limit);
+      if (cached.messages.length > 0 || !supportsLiveImap()) {
+        res.json({
+          success: true,
+          source: "cache",
+          mode: imapMode(),
+          count: cached.messages.length,
+          messages: cached.messages,
+          lastSyncedAt: cached.state.lastSyncedAt,
+          bodiesCached: cached.state.bodiesCached,
+          truncated: cached.state.truncated,
+          warning: storeWarning()
+        });
+        return;
+      }
+      const messages = await fetchInbox({ mailbox, limit });
+      res.json({
+        success: true,
+        source: "live",
+        mode: imapMode(),
+        count: messages.length,
+        messages,
+        lastSyncedAt: null,
+        warning: storeWarning()
       });
-      res.json({ success: true, count: messages.length, messages });
     } catch (error) {
       res.status(502).json({ success: false, error: `IMAP hatas\u0131: ${String(error?.message || error).slice(0, 300)}` });
     }
@@ -2400,12 +2814,12 @@ app.get(
       return;
     }
     try {
-      const message = await fetchMessage(uid, safeMailbox(req.query.mailbox));
+      const { message, source } = await readMessage(uid, safeMailbox(req.query.mailbox));
       if (!message) {
         res.status(404).json({ success: false, error: "Mesaj bulunamad\u0131." });
         return;
       }
-      res.json({ success: true, message });
+      res.json({ success: true, source, message });
     } catch (error) {
       res.status(502).json({ success: false, error: `IMAP hatas\u0131: ${String(error?.message || error).slice(0, 300)}` });
     }

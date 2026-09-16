@@ -118,6 +118,54 @@ CREATE TABLE IF NOT EXISTS public.community_api_keys (
   revoked_at TIMESTAMPTZ
 );
 
+-- Cached copy of the admin mailbox, written by the "sync inbox" action.
+--
+-- WHY A CACHE EXISTS AT ALL. Reading mail used to need a live IMAP connection on every page
+-- load, which ruled the inbox out in a serverless deployment. A frozen function cannot hold a
+-- socket open BETWEEN requests, but a single connect → fetch → logout inside one request is
+-- ordinary outbound I/O. So one sync pulls the messages here and every later view reads this
+-- table without touching the mail server.
+--
+-- This holds the administrator's private correspondence, so like community_api_keys it
+-- carries no client-facing policy and no anon/authenticated grant (section 6): it is reached
+-- only by the backend with the service role key, behind requireAdmin.
+--
+-- body_html is stored ALREADY SANITISED by sanitizeIncomingHtml() — scripts, event handlers
+-- and remote image sources are stripped before the row is written, so a hostile email cannot
+-- become stored XSS. The UI still renders it inside a sandboxed iframe.
+-- Attachment BYTES are never stored, only their names, types and sizes.
+CREATE TABLE IF NOT EXISTS public.admin_mail_cache (
+  mailbox VARCHAR(80) NOT NULL DEFAULT 'INBOX',
+  uid BIGINT NOT NULL,
+  subject VARCHAR(250),
+  from_name VARCHAR(120),
+  from_address VARCHAR(254),
+  to_address VARCHAR(254),
+  sent_at TIMESTAMPTZ,
+  seen BOOLEAN NOT NULL DEFAULT FALSE,
+  flagged BOOLEAN NOT NULL DEFAULT FALSE,
+  has_attachments BOOLEAN NOT NULL DEFAULT FALSE,
+  preview VARCHAR(400),
+  -- NULL until the body is downloaded: the sync stores headers first and fills these in
+  -- while its time budget lasts, so a large mailbox is never lost to a function timeout.
+  body_text TEXT,
+  body_html TEXT,
+  images_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+  attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+  body_synced_at TIMESTAMPTZ,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (mailbox, uid)
+);
+
+-- One row per mailbox: when it was last synced and how complete that sync was.
+CREATE TABLE IF NOT EXISTS public.admin_mail_sync_state (
+  mailbox VARCHAR(80) PRIMARY KEY,
+  last_synced_at TIMESTAMPTZ,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  bodies_cached INTEGER NOT NULL DEFAULT 0,
+  truncated BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 CREATE TABLE IF NOT EXISTS public.job_listings (
   id TEXT PRIMARY KEY,
   type VARCHAR(10) NOT NULL CHECK (type IN ('job', 'team')),
@@ -758,6 +806,9 @@ ALTER TABLE public.post_reports ENABLE ROW LEVEL SECURITY;
 -- RLS on, and deliberately no policy: with the anon/authenticated grants withheld below,
 -- API key material is unreachable from any browser session. Only the service role reads it.
 ALTER TABLE public.community_api_keys ENABLE ROW LEVEL SECURITY;
+-- Same reasoning: the admin's cached mail is backend-only, reachable by no browser session.
+ALTER TABLE public.admin_mail_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_mail_sync_state ENABLE ROW LEVEL SECURITY;
 
 -- Drop every existing policy on the tables this script manages, so the CREATE POLICY
 -- statements below are re-runnable. Without this the script fails on a second run with
@@ -772,7 +823,7 @@ DECLARE
   managed TEXT[] := ARRAY[
     'profiles', 'posts', 'communities', 'community_api_keys', 'job_listings',
     'job_applications', 'notifications', 'groups', 'messages', 'group_invites',
-    'system_error_reports', 'post_reports'
+    'system_error_reports', 'post_reports', 'admin_mail_cache', 'admin_mail_sync_state'
   ];
 BEGIN
   FOR pol IN
@@ -1026,6 +1077,14 @@ CREATE POLICY "post_reports_delete_admin" ON public.post_reports
 CREATE POLICY "community_api_keys_service_role" ON public.community_api_keys
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- 5.13 Cached admin mail -----------------------------------------
+-- Identical reasoning to 5.12: stated explicitly so the console keeps working on a cluster
+-- where service_role is not BYPASSRLS, while anon and authenticated hold no grant at all.
+CREATE POLICY "admin_mail_cache_service_role" ON public.admin_mail_cache
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "admin_mail_sync_state_service_role" ON public.admin_mail_sync_state
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 -- ================================================================
 -- 6. GRANTS
 -- ================================================================
@@ -1074,6 +1133,10 @@ GRANT INSERT, UPDATE, DELETE ON public.profiles TO authenticated;
 
 -- public.community_api_keys is intentionally absent from both grant lists above: browsers
 -- never touch key material, the backend reaches it with the service role key only.
+--
+-- public.admin_mail_cache and public.admin_mail_sync_state are absent for the same reason.
+-- They hold the administrator's private correspondence; it reaches the browser only through
+-- the requireAdmin-protected /api/admin/mail/* endpoints, never through the anon key.
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
@@ -1129,6 +1192,8 @@ CREATE INDEX IF NOT EXISTS idx_system_error_reports_created_at ON public.system_
 CREATE INDEX IF NOT EXISTS idx_post_reports_created_at ON public.post_reports(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_community_api_keys_hash ON public.community_api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_api_keys(community_id, revoked_at);
+-- The inbox list is always "this mailbox, newest UID first", which is exactly this index.
+CREATE INDEX IF NOT EXISTS idx_admin_mail_cache_mailbox ON public.admin_mail_cache(mailbox, uid DESC);
 
 -- ================================================================
 -- 9. BOOTSTRAP THE PLATFORM ADMINISTRATOR

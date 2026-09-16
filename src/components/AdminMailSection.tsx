@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  Clock,
+  DownloadCloud,
   Inbox,
   Loader2,
   Mail,
@@ -20,9 +22,28 @@ import { UserAvatar } from './ui/avatar';
 
 interface MailStatus {
   smtp: { configured: boolean; host?: string; port?: number; secure?: boolean; from?: string };
-  imap: { configured: boolean; host?: string; port?: number; secure?: boolean; user?: string; reason?: string | null };
-  /** True on Vercel/Lambda, where IMAP cannot work at all. */
+  imap: {
+    configured: boolean;
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    user?: string;
+    reason?: string | null;
+    /** 'live' reads IMAP on every load; 'sync' reads the cache and refreshes on request. */
+    mode?: 'live' | 'sync';
+    note?: string | null;
+  };
+  /** True on Vercel/Lambda, where the inbox is served from the last sync. */
   serverless?: boolean;
+}
+
+interface SyncResult {
+  syncedAt: string;
+  messageCount: number;
+  bodiesCached: number;
+  truncated: boolean;
+  durationMs: number;
+  warning: string | null;
 }
 
 interface InboxMessage {
@@ -63,6 +84,25 @@ function formatDate(iso: string | null): string {
     : d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 
+/** Relative for anything recent, absolute once "3 hours ago" stops being useful. */
+function formatSyncTime(iso: string, tr: boolean): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const minutes = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (minutes < 1) return tr ? 'az önce' : 'just now';
+  if (minutes < 60) return tr ? `${minutes} dk önce` : `${minutes} min ago`;
+  if (minutes < 240) {
+    const hours = Math.floor(minutes / 60);
+    return tr ? `${hours} sa önce` : `${hours} h ago`;
+  }
+  return d.toLocaleString(tr ? 'tr-TR' : 'en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 function errorText(data: { error?: string; message?: string } | null, fallback: string): string {
   if (data?.message) return data.message;
   if (data?.error && /\s/.test(data.error)) return data.error;
@@ -95,6 +135,12 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
   const [showRemoteImages, setShowRemoteImages] = useState(false);
   const [filter, setFilter] = useState('');
 
+  // Sync
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+  const [storeWarning, setStoreWarning] = useState<string | null>(null);
+
   // Compose
   const [username, setUsername] = useState('');
   const [resolved, setResolved] = useState<ResolvedRecipient | null>(null);
@@ -118,26 +164,69 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
     if (ok && data) setStatus({ smtp: data.smtp, imap: data.imap, serverless: data.serverless });
   }, []);
 
+  /** Reads the stored copy. Never contacts the mail server — only `runSync` does that. */
   const loadInbox = useCallback(async () => {
     setInboxLoading(true);
     setInboxError(null);
-    const { ok, data } = await apiFetchJson<{ messages: InboxMessage[]; error?: string; message?: string }>(
-      '/api/admin/mail/inbox?limit=40'
-    );
+    const { ok, data } = await apiFetchJson<{
+      messages: InboxMessage[];
+      lastSyncedAt?: string | null;
+      warning?: string | null;
+      error?: string;
+      message?: string;
+    }>('/api/admin/mail/inbox?limit=40');
     if (ok && data?.messages) {
       setMessages(data.messages);
+      setLastSyncedAt(data.lastSyncedAt || null);
+      setStoreWarning(data.warning || null);
     } else {
       setInboxError(errorText(data, tr ? 'Gelen kutusu okunamadı.' : 'Could not read the inbox.'));
     }
     setInboxLoading(false);
   }, [tr]);
 
+  /**
+   * The one action that reaches the mail server: pulls the mailbox in a single pass and
+   * stores it, so every later view is instant and costs no IMAP connection.
+   */
+  const runSync = useCallback(async () => {
+    setSyncing(true);
+    setInboxError(null);
+    setSyncNote(null);
+    const { ok, data } = await apiFetchJson<SyncResult & { error?: string; message?: string }>(
+      '/api/admin/mail/sync',
+      // A sync downloads real message bodies, so it is allowed far longer than the 30s
+      // default — otherwise the browser gives up on work the server is about to finish.
+      { method: 'POST', json: { limit: 40 }, timeoutMs: 120000 }
+    );
+
+    if (ok && data) {
+      setLastSyncedAt(data.syncedAt);
+      setStoreWarning(data.warning || null);
+      const seconds = Math.max(data.durationMs / 1000, 0.1).toFixed(1);
+      setSyncNote(
+        data.truncated
+          ? tr
+            ? `${data.messageCount} mesaj eşitlendi (${seconds} sn). ${data.bodiesCached} tanesinin içeriği indirildi; kalanlar açtığınızda indirilecek.`
+            : `Synced ${data.messageCount} messages in ${seconds}s. ${data.bodiesCached} bodies cached; the rest download when opened.`
+          : tr
+          ? `${data.messageCount} mesaj eşitlendi (${seconds} sn). Tümü çevrimdışı okunabilir.`
+          : `Synced ${data.messageCount} messages in ${seconds}s. All readable offline.`
+      );
+      await loadInbox();
+    } else {
+      setInboxError(errorText(data as any, tr ? 'Eşitleme başarısız oldu.' : 'Sync failed.'));
+    }
+    setSyncing(false);
+  }, [tr, loadInbox]);
+
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
 
-  // When the inbox cannot work on this host (serverless), open on Compose — the pane that
-  // actually does something here — rather than an empty list that looks broken.
+  // Only when IMAP is genuinely not set up does the inbox have nothing to show; open on
+  // Compose then, rather than on an empty list that looks broken. A serverless host is no
+  // longer such a case — there the inbox works, it is just synced on demand.
   useEffect(() => {
     if (status && !status.imap.configured && status.smtp.configured) setPane('compose');
   }, [status]);
@@ -410,16 +499,74 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 py-2 pl-9 pr-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
-            <button
-              type="button"
-              onClick={loadInbox}
-              disabled={inboxLoading || !imapReady}
-              className="flex h-9 items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-xs font-semibold text-zinc-300 transition-colors hover:text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {inboxLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              <span>{tr ? 'Yenile' : 'Refresh'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={loadInbox}
+                disabled={inboxLoading || syncing || !imapReady}
+                title={tr ? 'Saklanan kopyayı yeniden okur' : 'Re-reads the stored copy'}
+                className="flex h-9 items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-xs font-semibold text-zinc-300 transition-colors hover:text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {inboxLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                <span>{tr ? 'Yenile' : 'Refresh'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={runSync}
+                disabled={syncing || !imapReady}
+                title={
+                  tr
+                    ? 'Posta sunucusuna bağlanıp mesajları bir kerede indirir'
+                    : 'Connects to the mail server and pulls messages in one pass'
+                }
+                className="flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition-colors hover:bg-blue-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {syncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <DownloadCloud className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {syncing
+                    ? tr
+                      ? 'Eşitleniyor...'
+                      : 'Syncing...'
+                    : tr
+                    ? 'Gelen kutusunu eşitle'
+                    : 'Sync inbox'}
+                </span>
+              </button>
+            </div>
           </div>
+
+          {/* Sync state: what is stored, and when it was last refreshed. */}
+          {imapReady && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-zinc-800/60 px-3.5 py-2.5 text-[11px] text-zinc-500">
+              <span className="flex items-center gap-1.5">
+                <Clock className="h-3 w-3" />
+                {lastSyncedAt
+                  ? tr
+                    ? `Son eşitleme: ${formatSyncTime(lastSyncedAt, tr)}`
+                    : `Last synced: ${formatSyncTime(lastSyncedAt, tr)}`
+                  : tr
+                  ? 'Henüz eşitlenmedi'
+                  : 'Not synced yet'}
+              </span>
+              {status?.imap.mode === 'sync' && (
+                <span className="rounded-md bg-zinc-800/70 px-1.5 py-0.5 font-semibold text-zinc-400">
+                  {tr ? 'isteğe bağlı eşitleme' : 'on-demand sync'}
+                </span>
+              )}
+              {syncNote && <span className="user-text text-emerald-400">{syncNote}</span>}
+            </div>
+          )}
+
+          {storeWarning && (
+            <div className="m-3.5 flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-950/25 p-3 text-[11px] leading-relaxed text-amber-200/90">
+              <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <span className="user-text">{storeWarning}</span>
+            </div>
+          )}
 
           {inboxError && (
             <div className="m-3.5 flex items-start gap-2 rounded-xl border border-red-700/40 bg-red-950/30 p-3 text-xs text-red-300">
@@ -437,14 +584,37 @@ export const AdminMailSection: React.FC<{ language: 'tr' | 'en' }> = ({ language
                   <span>{tr ? 'Yükleniyor...' : 'Loading...'}</span>
                 </li>
               ) : filteredMessages.length === 0 ? (
-                <li className="p-10 text-center text-xs text-zinc-500">
-                  {imapReady
-                    ? tr
-                      ? 'Mesaj yok.'
-                      : 'No messages.'
-                    : tr
-                    ? 'IMAP yapılandırılmamış.'
-                    : 'IMAP not configured.'}
+                <li className="px-6 py-10 text-center text-xs text-zinc-500">
+                  {!imapReady ? (
+                    tr ? (
+                      'IMAP yapılandırılmamış.'
+                    ) : (
+                      'IMAP not configured.'
+                    )
+                  ) : filter ? (
+                    tr ? (
+                      'Aramanızla eşleşen mesaj yok.'
+                    ) : (
+                      'No messages match your search.'
+                    )
+                  ) : lastSyncedAt ? (
+                    tr ? (
+                      'Gelen kutusu boş.'
+                    ) : (
+                      'The inbox is empty.'
+                    )
+                  ) : (
+                    // Nothing has been pulled yet, so point at the button that pulls it
+                    // rather than implying the mailbox is empty.
+                    <span className="flex flex-col items-center gap-2">
+                      <DownloadCloud className="h-6 w-6 text-zinc-600" />
+                      <span className="user-text leading-relaxed">
+                        {tr
+                          ? 'Mesajlar henüz indirilmedi. "Gelen kutusunu eşitle" ile bir kerede çekin; sonrasında açmak anlık olur.'
+                          : 'Nothing downloaded yet. Use "Sync inbox" to pull it once; opening messages is instant afterwards.'}
+                      </span>
+                    </span>
+                  )}
                 </li>
               ) : (
                 filteredMessages.map((m) => (

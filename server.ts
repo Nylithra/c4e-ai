@@ -50,15 +50,19 @@ import {
 import {
   describeMailConfig,
   fetchInbox,
-  fetchMessage,
   getImapConfig,
+  imapMode,
   imapUnavailableReason,
   getSmtpConfig,
+  readMessage,
   resolveRecipientByUsername,
   sendMail,
+  supportsLiveImap,
+  syncInbox,
   verifyImap,
   verifySmtp
 } from './src/server/mail';
+import { clearMailbox, readInboxSnapshot, storeWarning } from './src/server/mailStore';
 import { renderMailHtml } from './src/server/mailTemplate';
 
 const app = express();
@@ -1518,6 +1522,61 @@ app.post(
   }
 );
 
+/**
+ * Pulls the mailbox from IMAP once and caches it. This is the ONLY endpoint that reaches the
+ * mail server on its own, which is what makes the inbox work on serverless: a single
+ * connect → fetch → logout inside one request, rather than a socket held open between them.
+ *
+ * Capped tightly because each call is a real outbound login against the mail provider, and
+ * providers throttle (or lock) accounts that reconnect in a loop.
+ */
+app.post(
+  '/api/admin/mail/sync',
+  requireAdmin,
+  rateLimit({ scope: 'mail-sync', windowMs: 60000, max: 6, perUser: true }),
+  async (req: Request, res: Response) => {
+    if (!getImapConfig()) {
+      res.status(503).json({
+        success: false,
+        error: imapUnavailableReason() || 'IMAP kullanılamıyor.',
+        serverless: isServerless()
+      });
+      return;
+    }
+
+    try {
+      const result = await syncInbox({
+        mailbox: safeMailbox(req.body?.mailbox ?? req.query.mailbox),
+        limit: Number(req.body?.limit ?? req.query.limit) || 40
+      });
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      res.status(502).json({
+        success: false,
+        error: `IMAP hatası: ${String(error?.message || error).slice(0, 300)}`
+      });
+    }
+  }
+);
+
+/** Forgets everything synced for a mailbox. The mail itself is untouched on the server. */
+app.delete(
+  '/api/admin/mail/cache',
+  requireAdmin,
+  rateLimit({ scope: 'mail-cache-clear', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const mailbox = safeMailbox(req.query.mailbox);
+    await clearMailbox(mailbox);
+    res.json({ success: true, mailbox });
+  }
+);
+
+/**
+ * Reads the inbox WITHOUT touching the mail server: the list comes from the last sync.
+ *
+ * On a persistent host, where holding a connection costs nothing, an empty cache falls back
+ * to a live read so the inbox is never blank on a first visit.
+ */
 app.get(
   '/api/admin/mail/inbox',
   requireAdmin,
@@ -1532,12 +1591,36 @@ app.get(
       return;
     }
 
+    const mailbox = safeMailbox(req.query.mailbox);
+    const limit = Number(req.query.limit) || 25;
+
     try {
-      const messages = await fetchInbox({
-        mailbox: safeMailbox(req.query.mailbox),
-        limit: Number(req.query.limit) || 25
+      const cached = await readInboxSnapshot(mailbox, limit);
+      if (cached.messages.length > 0 || !supportsLiveImap()) {
+        res.json({
+          success: true,
+          source: 'cache',
+          mode: imapMode(),
+          count: cached.messages.length,
+          messages: cached.messages,
+          lastSyncedAt: cached.state.lastSyncedAt,
+          bodiesCached: cached.state.bodiesCached,
+          truncated: cached.state.truncated,
+          warning: storeWarning()
+        });
+        return;
+      }
+
+      const messages = await fetchInbox({ mailbox, limit });
+      res.json({
+        success: true,
+        source: 'live',
+        mode: imapMode(),
+        count: messages.length,
+        messages,
+        lastSyncedAt: null,
+        warning: storeWarning()
       });
-      res.json({ success: true, count: messages.length, messages });
     } catch (error: any) {
       res.status(502).json({ success: false, error: `IMAP hatası: ${String(error?.message || error).slice(0, 300)}` });
     }
@@ -1565,12 +1648,14 @@ app.get(
     }
 
     try {
-      const message = await fetchMessage(uid, safeMailbox(req.query.mailbox));
+      // Served from the sync when it cached this body; otherwise one short download that is
+      // cached on the way out, so opening the same message again is free.
+      const { message, source } = await readMessage(uid, safeMailbox(req.query.mailbox));
       if (!message) {
         res.status(404).json({ success: false, error: 'Mesaj bulunamadı.' });
         return;
       }
-      res.json({ success: true, message });
+      res.json({ success: true, source, message });
     } catch (error: any) {
       res.status(502).json({ success: false, error: `IMAP hatası: ${String(error?.message || error).slice(0, 300)}` });
     }
