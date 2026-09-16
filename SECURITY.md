@@ -182,26 +182,39 @@ sınırı vardır; bağlantı ayakta kalamaz. Bu yüzden `getImapConfig()` sunuc
 bilinçli olarak `null` döner ve arayüz sebebini açıkça yazar — zaman aşımına kadar bekleyip
 belirsiz bir hata vermek yerine.
 
-**Vercel kurulumu.** `vercel.json` içinde `/api/*` istekleri `api/index.ts` fonksiyonuna,
-diğer her şey `index.html`'e yönlenir.
+**Vercel kurulumu.** `vercel.json` içinde `/api/*` istekleri `api/index.js` fonksiyonuna,
+diğer her şey `index.html`'e yönlenir. Yapı komutu `npm run build:vercel`'dir: Vite
+frontend'i `dist/`e derler, ardından esbuild `src/server/vercelEntry.ts`'i **tek parça
+CommonJS dosyası** olarak `api/index.js`'e paketler.
 
-`api/` dizini **bilinçli olarak CommonJS**'tir (`api/package.json` → `"type": "commonjs"`),
-oysa depo kökü Vite için `"type": "module"` kullanır. Node ve Vercel, bir dosyanın modül
-sistemini **en yakın** package.json'dan seçer. Bu dosya olmadan fonksiyon ESM olarak
-derleniyor; Express'in CommonJS bağımlılık ağacı bu ESM çıktısına paketlendiğinde çalışma
-zamanı `Dynamic require of "path" is not supported` hatasıyla ölüyor ve bu dışarıya
-`500 FUNCTION_INVOCATION_FAILED` olarak yansıyor. CommonJS her iki paketleme stratejisinde de
-çalışır; ESM yalnızca birinde.
+**Fonksiyon neden önceden paketleniyor?** Vercel, her TypeScript dosyasını *ayrı ayrı*
+derleyip yan yana bırakır: `server.ts` → `/var/task/server.js`, fonksiyon →
+`/var/task/api/index.js`. Depo kökü Vite için `"type": "module"` dediğinden `server.js`
+bir ES modülüdür ve CommonJS bir fonksiyon onu `require()` edemez:
 
-Aynı nedenle `api/tsconfig.json` ayrıdır: kök tsconfig `noEmit`, `allowImportingTsExtensions`
-ve `moduleResolution: "bundler"` ile Vite'a göre ayarlıdır ve sunucusuz fonksiyonun TypeScript
-derlemesini bozabilir. `api/index.ts` yalnızca `server.ts`'in dışa aktardığı
-Express uygulamasını Vercel'e handler olarak verir; `server.ts` sunucusuz ortamı algılayınca
-kendi `app.listen()` çağrısını atlar (`isServerless`).
+```
+require() of ES Module /var/task/server.js from /var/task/api/index.js not supported
+```
+
+Fonksiyonu ESM'e çevirmek sorunu yalnızca taşır: Express'in bağımlılık ağacı CommonJS'tir
+ve uzantısız göreli import'lar Node'un ESM yükleyicisinde çözülmez (`Dynamic require of
+"path" is not supported`). İkisi de dışarıya `500 FUNCTION_INVOCATION_FAILED` olarak yansır.
+
+Paketleme bu hata sınıfının tamamını ortadan kaldırır: çözülecek dosyalar arası import,
+modül biçimi sınırı ve platformun TypeScript'i o ay nasıl derlediğine bağımlılık kalmaz.
+Yalnızca `node_modules` dışarıda tutulur; onu Node normal şekilde çözer. `api/package.json`
+(`"type": "commonjs"`) paketlenmiş çıktının kök `"type": "module"` tarafından ESM sanılmasını
+engeller. `server.ts` ise sunucusuz ortamı algılayınca kendi `app.listen()` çağrısını atlar
+(`isServerless`).
 
 > `vercel.json` daha önce **her** isteği `index.html`'e yönlendiriyordu; bu yüzden `/api/*`
 > dahil hiçbir arka uç ucu Vercel'de çalışmıyordu. Yalnızca posta değil, Topluluk API'si,
 > OAuth geri dönüşü ve bağış webhook'u da etkileniyordu.
+
+> Paketlenmiş `api/index.js`, Vercel'in `/var/task` yerleşimi birebir taklit edilerek ve
+> gerçek SMTP/IMAP sunucularına karşı doğrulandı: her iki gerileme takımı da (Topluluk API
+> 35 doğrulama, e-posta konsolu 68 doğrulama) hatasız geçti, `VERCEL=1` ile IMAP bilinçli
+> olarak kapandı, SMTP gönderimi çalıştı ve fonksiyon hiçbir port dinlemedi.
 
 Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && npm start`.
 

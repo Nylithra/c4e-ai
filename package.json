@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && npm run build:fn",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:vercel": "vite build && esbuild src/server/vercelEntry.ts --bundle --platform=node --format=cjs --packages=external --banner:js='/* OLUSTURULMUS DOSYA - ELLE DUZENLEMEYIN. Kaynak: src/server/vercelEntry.ts. Yeniden uretmek icin: npm run build:fn */' --outfile=api/index.js",
+    "build:fn": "esbuild src/server/vercelEntry.ts --bundle --platform=node --format=cjs --packages=external --banner:js='/* OLUSTURULMUS DOSYA - ELLE DUZENLEMEYIN. Kaynak: src/server/vercelEntry.ts. Yeniden uretmek icin: npm run build:fn */' --outfile=api/index.js"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
