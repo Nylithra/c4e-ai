@@ -6,6 +6,10 @@
  * reused verbatim; `server.ts` skips its own `app.listen()` when it detects a serverless
  * environment (see `isServerless`).
  *
+ * MODULE SYSTEM: see `api/package.json`. This directory is deliberately CommonJS even though
+ * the repository root is `"type": "module"`, because Express's dependency tree is CommonJS
+ * and fails to load when bundled into an ESM function.
+ *
  * WHAT WORKS HERE AND WHAT DOES NOT
  *
  *   ✅ Everything request/response shaped: the community API, OAuth callbacks, admin
@@ -24,12 +28,47 @@
  * Fly.io, a VPS) restores both of the above with no code change.
  */
 
-import app from '../server';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
-export default app;
+type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
-export const config = {
-  // The Express app parses its own body (and keeps the raw bytes for webhook signature
-  // verification), so Vercel must hand it the untouched stream.
-  api: { bodyParser: false }
+/**
+ * Loading the app can fail for environment reasons (a missing dependency in the traced
+ * bundle, a bad module format). Vercel reports that as an opaque FUNCTION_INVOCATION_FAILED
+ * page with no cause, so the failure is captured here and reported as readable JSON instead
+ * — the platform's Runtime Logs still receive the full stack.
+ */
+let app: Handler | null = null;
+let loadError: Error | null = null;
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const loaded = require('../server');
+  const candidate = loaded?.default ?? loaded?.app ?? loaded;
+  if (typeof candidate !== 'function') {
+    throw new Error(`Beklenen Express handler'ı bulunamadı (tip: ${typeof candidate}).`);
+  }
+  app = candidate as Handler;
+} catch (error: any) {
+  loadError = error instanceof Error ? error : new Error(String(error));
+  console.error('[c4e] Sunucu uygulaması yüklenemedi:', loadError.stack || loadError.message);
+}
+
+module.exports = function handler(req: IncomingMessage, res: ServerResponse) {
+  if (app) {
+    app(req, res);
+    return;
+  }
+
+  res.statusCode = 500;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(
+    JSON.stringify({
+      success: false,
+      error: 'server_init_failed',
+      message:
+        'Sunucu uygulaması başlatılamadı. Ayrıntılı yığın izi için dağıtım sağlayıcısının Runtime Logs bölümüne bakın.',
+      detail: loadError?.message || 'bilinmeyen hata'
+    })
+  );
 };

@@ -1,0 +1,4 @@
+{
+  "//": "The repository root sets \"type\": \"module\" for the Vite frontend. Node and Vercel pick a file's module system from the NEAREST package.json, so this file scopes the serverless function back to CommonJS. Without it the function is compiled as ESM, and when the platform bundles Express's CommonJS dependency tree into that ESM output the runtime dies at import with \"Dynamic require of 'path' is not supported\" — which surfaces as FUNCTION_INVOCATION_FAILED. CommonJS works under both bundling strategies; ESM only works under one.",
+  "type": "commonjs"
+}

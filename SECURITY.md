@@ -183,7 +183,19 @@ bilinçli olarak `null` döner ve arayüz sebebini açıkça yazar — zaman aş
 belirsiz bir hata vermek yerine.
 
 **Vercel kurulumu.** `vercel.json` içinde `/api/*` istekleri `api/index.ts` fonksiyonuna,
-diğer her şey `index.html`'e yönlenir. `api/index.ts` yalnızca `server.ts`'in dışa aktardığı
+diğer her şey `index.html`'e yönlenir.
+
+`api/` dizini **bilinçli olarak CommonJS**'tir (`api/package.json` → `"type": "commonjs"`),
+oysa depo kökü Vite için `"type": "module"` kullanır. Node ve Vercel, bir dosyanın modül
+sistemini **en yakın** package.json'dan seçer. Bu dosya olmadan fonksiyon ESM olarak
+derleniyor; Express'in CommonJS bağımlılık ağacı bu ESM çıktısına paketlendiğinde çalışma
+zamanı `Dynamic require of "path" is not supported` hatasıyla ölüyor ve bu dışarıya
+`500 FUNCTION_INVOCATION_FAILED` olarak yansıyor. CommonJS her iki paketleme stratejisinde de
+çalışır; ESM yalnızca birinde.
+
+Aynı nedenle `api/tsconfig.json` ayrıdır: kök tsconfig `noEmit`, `allowImportingTsExtensions`
+ve `moduleResolution: "bundler"` ile Vite'a göre ayarlıdır ve sunucusuz fonksiyonun TypeScript
+derlemesini bozabilir. `api/index.ts` yalnızca `server.ts`'in dışa aktardığı
 Express uygulamasını Vercel'e handler olarak verir; `server.ts` sunucusuz ortamı algılayınca
 kendi `app.listen()` çağrısını atlar (`isServerless`).
 
