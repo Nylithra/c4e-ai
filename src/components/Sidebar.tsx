@@ -141,7 +141,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 1. MOBILE TOP HEADER (Screens < md)                      */}
       {/* ======================================================== */}
-      <header className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[#09090b]/95 backdrop-blur-xl border-b border-zinc-800/80 px-4 py-2.5 flex items-center justify-between select-none">
+      <header className="md:hidden fixed top-0 left-0 right-0 z-40 app-rail backdrop-blur-xl border-b border-zinc-800/80 px-4 py-2.5 flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => setIsMobileDrawerOpen(true)}
@@ -287,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={() => handleNavClick(item.id, item.isBetaModal)}
                       className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                         isActive
-                          ? 'text-white bg-zinc-800/90 shadow-sm border border-zinc-700/50'
+                          ? 'text-white nav-active shadow-sm border border-zinc-700/50'
                           : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/60'
                       }`}
                       style={
@@ -428,7 +428,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 title={item.label}
                 className={`relative flex h-11 flex-1 items-center justify-center rounded-[20px] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                   isActive
-                    ? 'bg-zinc-800/80 text-white'
+                    ? 'nav-active text-white'
                     : 'text-zinc-500 hover:text-zinc-200 active:bg-zinc-900/70'
                 }`}
               >
@@ -465,11 +465,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* ======================================================== */}
       {/* 4. DESKTOP PERMANENT SIDEBAR (Screens >= md)              */}
       {/* ======================================================== */}
-      <aside className="hidden md:flex w-64 flex-shrink-0 flex-col justify-between h-screen sticky top-0 p-4 border-r border-zinc-800/60 bg-[#09090b]/95 backdrop-blur-md z-30 select-none">
+      <aside className="hidden md:flex w-64 flex-shrink-0 flex-col justify-between h-screen sticky top-0 p-4 border-r border-zinc-800/60 app-rail backdrop-blur-md z-30 select-none">
         <div className="space-y-5">
           <div className="px-2 pt-2 pb-1">
             <div className="cursor-pointer transition-opacity hover:opacity-90" onClick={() => setActiveTab('feed')}>
-              <span className="text-xl font-extrabold text-white tracking-tight">Code4Ever</span>
+              <span className="brand-gradient-text text-xl font-extrabold tracking-tight">Code4Ever</span>
             </div>
           </div>
 

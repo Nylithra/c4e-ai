@@ -67,8 +67,43 @@
 
   /* Efektler / Aksanlar */
   --grid-line: oklch(1 0 0 / 5%);
-  --glow: radial-gradient(60% 60% at 50% 0%, oklch(0.6 0.01 260 / 12%), transparent 70%);
   --radius: 0.875rem;
+
+  /*
+   * UYGULAMA GRADYANI
+   *
+   * Arka plan daha önce düz bir siyahtı ve tek "gradyan" tepedeki neredeyse görünmez bir
+   * parıltıydı; uygulama bu yüzden yassı duruyordu. Burada üç yumuşak ışık havuzu üst üste
+   * biniyor — sol üstte indigo, sağ üstte camgöbeği, altta menekşe — ve düz zemin üzerinde
+   * gerçek bir derinlik oluşturuyor.
+   *
+   * Neden radial ve neden bu kadar düşük opaklık: bu yüzey saatlerce metin okunan bir
+   * arka plan. Belirgin bir lineer gradyan kaydırdıkça bantlanır ve kontrastı satır satır
+   * değiştirir; geniş ve seyreltik radial havuzlar ise sabit kalır (background-attachment:
+   * fixed) ve metin kontrastını ölçülebilir biçimde bozmaz.
+   */
+  --app-gradient:
+    radial-gradient(1200px 780px at 6% 2%, oklch(0.58 0.19 272 / 46%), transparent 58%),
+    radial-gradient(1000px 640px at 98% 6%, oklch(0.60 0.16 208 / 34%), transparent 55%),
+    radial-gradient(1200px 820px at 62% 100%, oklch(0.54 0.18 314 / 32%), transparent 58%);
+
+  /* Eski ad korunuyor: .theme-glow-bg gibi yardımcılar ve Tema Stüdyosu bunu kullanıyor. */
+  --glow: radial-gradient(60% 60% at 50% 0%, oklch(0.6 0.01 260 / 12%), transparent 70%);
+
+  /*
+   * Marka gradyanı: birincil eylemler, aktif sekme ve logo.
+   *
+   * Açıklık değerleri (0.55 / 0.52) göz kararı değil: üzerine beyaz metin geliyor ve ilk
+   * denemede 0.64/0.60 ile ölçülen kontrast 3.93 idi — WCAG AA'nın 4.5 eşiğinin altında.
+   * Bu değerlerle ölçüm 4.5'in üstüne çıkıyor. Daha açık bir mor istenirse metnin koyuya
+   * çevrilmesi gerekir, aksi hâlde düğme yazısı okunaksızlaşır.
+   */
+  --brand-gradient: linear-gradient(135deg, oklch(0.55 0.19 268) 0%, oklch(0.52 0.21 302) 100%);
+  --brand-gradient-hover: linear-gradient(135deg, oklch(0.61 0.19 268) 0%, oklch(0.58 0.21 302) 100%);
+  --brand: oklch(0.56 0.20 282);
+
+  /* Kart yüzeylerine yukarıdan gelen çok hafif bir ışık; kartlar zeminden ayrışsın diye. */
+  --surface-sheen: linear-gradient(180deg, oklch(1 0 0 / 3.5%) 0%, transparent 42%);
 
   /* Tipografi */
   --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -84,12 +119,13 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-display);
-    background-image: 
-      var(--glow),
+    background-image:
+      var(--app-gradient),
       linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
       linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-    background-size: 100% 100%, 56px 56px, 56px 56px;
-    background-repeat: no-repeat, repeat, repeat;
+    /* --app-gradient üç katman olduğu için boyut/tekrar listeleri de üç değerle başlar. */
+    background-size: 100% 100%, 100% 100%, 100% 100%, 56px 56px, 56px 56px;
+    background-repeat: no-repeat, no-repeat, no-repeat, repeat, repeat;
     background-attachment: fixed;
     min-height: 100vh;
     letter-spacing: -0.01em;
@@ -298,4 +334,150 @@
 
 .theme-glow-bg {
   background-image: var(--glow);
+}
+
+/*
+ * MARKA GRADYANI YARDIMCILARI
+ *
+ * Birincil eylemler ("Yeni Gönderi", "Paylaş", aktif sekme) düz beyaz/mavi yerine marka
+ * gradyanını taşır. Ayrı sınıflar hâlinde durmalarının sebebi, bir üyenin Spark teması
+ * etkinken bunların o temanın aksan gradyanına devredebilmesi: --c4e-accent-image tanımlıysa
+ * o kazanır, değilse uygulamanın kendi marka gradyanı kullanılır.
+ */
+.brand-gradient {
+  background-image: var(--c4e-accent-image, var(--brand-gradient));
+  color: var(--c4e-on-accent, #fff);
+}
+
+.brand-gradient:hover:not(:disabled) {
+  background-image: var(--c4e-accent-image, var(--brand-gradient-hover));
+}
+
+/* Metni gradyanla boyar (logo / başlık vurguları). */
+.brand-gradient-text {
+  /* Varsayılan: düz, okunur bir renk. Gradyan yalnızca kırpma gerçekten destekleniyorsa
+     devreye girer — aksi hâlde şeffaf dolgu görünmez bir logo bırakırdı. */
+  color: var(--foreground);
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .brand-gradient-text {
+    background-image: var(--c4e-accent-image, var(--brand-gradient));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+@media (forced-colors: active) {
+  .brand-gradient-text {
+    -webkit-text-fill-color: currentColor;
+    color: currentColor;
+  }
+}
+
+/* Kartlara üstten hafif ışık; ayrı sınıf, çünkü her yüzeyde istenmiyor. */
+.surface-sheen {
+  background-image: var(--surface-sheen);
+}
+
+/*
+ * UYGULAMA KABUĞU
+ *
+ * Gradyanı hem body'ye hem buraya koymanın sebebi: body tek başına yeterli değil. Kabuk
+ * ve içindeki sütunlar tam ekranı kaplayan OPAK yüzeyler; gövdeye ne koyarsak koyalım
+ * üzerini örtüyorlar ve uygulama düz görünüyordu. Gradyan artık kabuğun kendisinde.
+ *
+ * `--app-gradient` tanımsızsa (Spark teması etkinken tema kendi zeminini yazar) kabuk
+ * sade `--background` rengine döner, yani bu kural temanın üstüne çıkmaz.
+ */
+.app-shell {
+  background-color: var(--background);
+  background-image: var(--app-gradient);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* Spark teması açıkken zemini tema belirler; kabuk gradyanı devre dışı kalır. */
+html[data-c4e-theme="on"][data-c4e-scope="app"] .app-shell {
+  background-image: none;
+}
+
+/*
+ * İçerik sütunu. Tamamen opak olursa kabuğun gradyanını tümüyle kapatır, tamamen saydam
+ * olursa uzun metinler gradyanın üzerinde okunur ve kontrast satır satır değişir. Yarı
+ * saydam koyu bir kat ikisini de çözüyor: gradyan hissediliyor, metin sabit bir zemine
+ * oturuyor.
+ */
+.content-column {
+  background-color: color-mix(in srgb, var(--background) 76%, transparent);
+}
+
+/*
+ * Kenar rayları (sol gezinme, sağ panel, mobil başlık). İçlerinde uzun paragraf yok, kısa
+ * etiketler var; bu yüzden içerik sütunundan daha saydam olabiliyorlar ve gradyanı asıl
+ * bunlar gösteriyor.
+ */
+.app-rail {
+  background-color: color-mix(in srgb, var(--background) 62%, transparent);
+}
+
+/* Saydam katman + sabit arka plan pahalı olabilir; kullanıcı saydamlık azaltma derse düz renk. */
+@media (prefers-reduced-transparency: reduce) {
+  .content-column,
+  .app-rail {
+    background-color: var(--background);
+  }
+}
+
+/* Spark teması açıkken zemini tema belirler: raylar ve sütun düz temanın rengine döner. */
+html[data-c4e-theme="on"][data-c4e-scope="app"] .content-column,
+html[data-c4e-theme="on"][data-c4e-scope="app"] .app-rail {
+  background-color: transparent;
+}
+
+/*
+ * Aktif gezinme öğesi. Düz bir zinc bloğu yerine markanın gradyanından süzülmüş bir kat:
+ * renk chrome'a da giriyor, ama metin kontrastını bozacak kadar doygun değil.
+ */
+.nav-active {
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand) 26%, transparent) 0%,
+    color-mix(in srgb, var(--brand) 10%, transparent) 100%
+  );
+  background-color: color-mix(in srgb, var(--background) 55%, transparent);
+}
+
+/* Spark teması açıkken üyenin kendi aksanı kullanılır. */
+html[data-c4e-theme="on"][data-c4e-scope="app"] .nav-active {
+  background-image: var(--c4e-accent-image);
+  opacity: 0.92;
+}
+
+/*
+ * DOKUNMA HEDEFİ TABANI (yalnızca dokunmatik cihazlar)
+ *
+ * Tarama, telefon genişliğinde 24-30px yüksekliğinde filtre yongaları buldu; parmakla
+ * güvenilir biçimde vurmak için küçükler. Görsel tasarımı değiştirmemek adına yazı ve
+ * dolgu aynı kalıyor, yalnızca taban yükseklik yükseliyor.
+ *
+ * Kapsam bilinçli olarak dar: paragraf ve liste içindeki satır içi bağlantılar DIŞARIDA.
+ * Onlara taban yükseklik vermek satır aralığını bozar ve metnin akışını kırar — bir
+ * cümlenin ortasındaki bağlantı zaten parmakla değil, çevresindeki metinle hedeflenir.
+ */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  select {
+    min-height: 36px;
+  }
+
+  /* Satır içi bağlantılar ve zaten yeterince büyük olan alanlar etkilenmez. */
+  p button,
+  li button,
+  .user-text button {
+    min-height: 0;
+  }
 }

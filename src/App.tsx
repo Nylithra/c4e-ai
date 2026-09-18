@@ -81,6 +81,7 @@ import {
   verifyAdminAccess
 } from './utils/securityHelper';
 import { Sidebar } from './components/Sidebar';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { RightPanel } from './components/RightPanel';
 import { FeedView } from './components/FeedView';
 import { ExploreView } from './components/ExploreView';
@@ -1246,7 +1247,7 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={400}>
-    <div className="min-h-screen w-full bg-app-background text-app-foreground flex justify-center font-display selection:bg-blue-500 selection:text-white relative">
+    <div className="app-shell min-h-screen w-full text-app-foreground flex justify-center font-display selection:bg-blue-500 selection:text-white relative">
       {rateLimitToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-black font-bold text-xs px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 border border-amber-300 animate-pulse">
           <AlertTriangle className="w-4 h-4 text-black flex-shrink-0" />
@@ -1297,6 +1298,10 @@ export default function App() {
         {/* Bottom padding comes from index.css so it can account for the floating
             mobile nav bar, the iOS home indicator and the PWA install banner. */}
         <main className="flex-1 flex min-h-screen w-full pt-[52px] md:pt-0 min-w-0">
+          {/* One failing view must not take the shell down with it: the sidebar, the header
+              and navigation stay usable, and `key` resets the boundary on every tab change so
+              a view that broke once is retried when the member comes back to it. */}
+          <ErrorBoundary key={activeTab} label={`view:${activeTab}`}>
           {activeTab === 'feed' && (
             <FeedView
               posts={posts}
@@ -1530,6 +1535,8 @@ export default function App() {
               posts={posts}
             />
           )}
+
+          </ErrorBoundary>
 
           <RightPanel
             communities={displayCommunities}

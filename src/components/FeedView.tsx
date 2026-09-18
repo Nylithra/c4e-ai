@@ -483,7 +483,7 @@ export const FeedView: React.FC<FeedViewProps> = ({
   });
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b] relative">
+    <div className="content-column flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 relative">
       {toastMessage && (
         <div className="fixed top-4 right-4 z-50 bg-zinc-900 border border-zinc-700 text-white text-xs font-bold px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 animate-bounce">
           <Check className="w-4 h-4 text-emerald-400" />

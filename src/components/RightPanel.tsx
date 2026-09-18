@@ -40,7 +40,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   };
 
   return (
-    <aside className="w-80 min-w-[320px] max-w-[320px] flex-shrink-0 hidden xl:block p-4 space-y-4 border-l border-zinc-800/60 bg-[#09090b]/95 h-screen sticky top-0 overflow-y-auto z-20 select-none">
+    <aside className="w-80 min-w-[320px] max-w-[320px] flex-shrink-0 hidden xl:block p-4 space-y-4 border-l border-zinc-800/60 app-rail h-screen sticky top-0 overflow-y-auto z-20 select-none">
       <div className="bg-[#0c0c0e] border border-zinc-800/60 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2 border-b border-zinc-800/40 pb-2.5">
           <TrendingUp className="w-4 h-4 text-zinc-300" />

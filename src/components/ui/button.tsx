@@ -12,7 +12,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-zinc-100 text-zinc-950 hover:bg-white shadow-md',
+        default: 'brand-gradient shadow-lg shadow-[oklch(0.62_0.20_282_/_0.28)]',
+        brand: 'brand-gradient shadow-lg shadow-[oklch(0.62_0.20_282_/_0.28)]',
+        neutral: 'bg-zinc-100 text-zinc-950 hover:bg-white shadow-md',
         primary: 'bg-blue-600 text-white hover:bg-blue-500 shadow-md shadow-blue-600/20',
         community: 'bg-purple-600 text-white hover:bg-purple-500 shadow-lg shadow-purple-600/20',
         spark:
