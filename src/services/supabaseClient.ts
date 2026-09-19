@@ -834,7 +834,85 @@ export function subscribeToPosts(onUpdate: (posts: Post[]) => void): () => void 
   };
 }
 
+/**
+ * Sunucu tarafı kod araması.
+ *
+ * NEDEN SUNUCUDA: Keşfet ekranı zaten kod parçacıklarında arıyordu, ama yalnızca o an
+ * belleğe yüklenmiş gönderiler içinde. Yani "useEffect" araması, akışta duran son birkaç
+ * düzine gönderiyi tarıyordu — veritabanındakilerin tamamını değil. Bu sorgu Postgres'in
+ * tam metin indeksine (posts.search_vector, GIN) gider ve arşivin tümünü kapsar.
+ *
+ * NEDEN YENİ BİR SUNUCU UCU YOK: sorgu, çağıranın KENDİ oturum belirteciyle PostgREST'e
+ * gider, yani `posts` SELECT politikası aynen uygulanır. Gizli topluluk gönderileri üyesi
+ * olmayana dönmez; bu gerçek PostgreSQL üzerinde doğrulandı (yabancı 2 sonuç, üye 3).
+ * Servis rolüyle çalışan bir arama ucu yazmak, bu güvenceyi elle yeniden kurmak zorunda
+ * kalırdı ve sızıntı için yeni bir yüzey açardı.
+ */
+
+/**
+ * Aramanın döndürdüğü sütunlar. search_vector kasten DIŞARIDA: her satırda kilobaytlarca
+ * indeks verisi taşımak ağ trafiğini boşuna şişirir, arayüz onu hiç kullanmaz.
+ */
+const POST_SELECT =
+  'id,author,content,category,category_name,code_snippet,code_language,media_url,media_type,' +
+  'project_card,community_id,community_name,community_handle,likes_count,liked_by,' +
+  'comments_count,comments,reposts_count,reposted_by,bookmarked_by,is_pinned,is_deleted,created_at';
+
+export type CodeSearchScope = 'all' | 'code';
+
+export interface CodeSearchOptions {
+  /** Boş bırakılırsa tüm diller. */
+  language?: string;
+  /** 'code' yalnızca kod parçacığı içeren gönderileri döndürür. */
+  scope?: CodeSearchScope;
+  limit?: number;
+}
+
+export interface CodeSearchResult {
+  posts: Post[];
+  /** Arama sunucuya ulaşamadıysa çağıran yerel aramaya düşebilsin diye. */
+  ok: boolean;
+  error?: string;
+}
+
+// Saf fonksiyon kendi modülünde: tarayıcıya bağlı bir şey içermediği için Node altında
+// doğrudan sınanabiliyor ve ürettiği sorgu gerçek PostgreSQL'e verilerek doğrulanıyor.
+export { buildSearchQuery, foldForSearch } from '../utils/searchQuery';
+import { buildSearchQuery as toTsQuery } from '../utils/searchQuery';
+
+export async function searchPostsOnServer(
+  rawQuery: string,
+  options: CodeSearchOptions = {}
+): Promise<CodeSearchResult> {
+  const client = getSupabaseClient();
+  const tsquery = toTsQuery(rawQuery);
+  if (!client || !tsquery) return { posts: [], ok: false, error: 'not_configured' };
+
+  const limit = Math.min(Math.max(Number(options.limit) || 40, 1), 100);
+
+  try {
+    let request = client
+      .from('posts')
+      .select(POST_SELECT)
+      .textSearch('search_vector', tsquery, { config: 'simple' })
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (options.language) request = request.eq('code_language', options.language);
+    if (options.scope === 'code') request = request.not('code_snippet', 'is', null);
+
+    const { data, error } = await request;
+    if (error) return { posts: [], ok: false, error: error.message };
+
+    return { posts: (data || []).map(normalizePost), ok: true };
+  } catch (err: any) {
+    return { posts: [], ok: false, error: err?.message || String(err) };
+  }
+}
+
 export const ALLOWED_POST_COLUMNS = new Set([
+
   'id',
   'author',
   'content',

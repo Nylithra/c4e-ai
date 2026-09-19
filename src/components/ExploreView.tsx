@@ -1,7 +1,18 @@
-import React, { useState } from 'react';
-import { Search, TrendingUp, Code2, Users, ArrowUpRight } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, TrendingUp, Code2, Users, ArrowUpRight, Loader2, Database } from 'lucide-react';
 import { Post, Community, Trend } from '../types';
 import { UserAvatar } from './ui/avatar';
+import { searchPostsOnServer } from '../services/supabaseClient';
+
+/**
+ * Dil süzgecinde gösterilen diller. Serbest metin yerine sabit bir liste, çünkü değer
+ * doğrudan `code_language = ?` sorgusuna gidiyor ve orada yazım hatası sessiz bir "sonuç
+ * yok" üretirdi.
+ */
+const LANGUAGES = [
+  'typescript', 'javascript', 'python', 'java', 'csharp', 'cpp', 'go',
+  'rust', 'php', 'ruby', 'kotlin', 'swift', 'sql', 'bash', 'html', 'css'
+];
 
 interface ExploreViewProps {
   posts: Post[];
@@ -21,18 +32,74 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'posts' | 'communities'>('all');
+  const [codeOnly, setCodeOnly] = useState(false);
+  const [lang, setLang] = useState('');
+
+  // Sunucu araması
+  const [serverPosts, setServerPosts] = useState<Post[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const requestId = useRef(0);
 
   const q = (query || '').toLowerCase().trim();
 
-  const filteredPosts = posts.filter((p) => {
-    if (!p) return false;
-    const content = (p.content || '').toLowerCase();
-    const snippetCode = typeof p.code_snippet === 'object' && p.code_snippet 
-      ? (p.code_snippet.code || '') 
-      : (typeof p.code_snippet === 'string' ? p.code_snippet : '');
-    const authorUser = (p.author?.username || '').toLowerCase();
-    return content.includes(q) || snippetCode.toLowerCase().includes(q) || authorUser.includes(q);
-  });
+  /** Yerel arama: sunucuya ulaşılamadığında ve yazarken anında geri bildirim için. */
+  const localPosts = useMemo(
+    () =>
+      posts.filter((p) => {
+        if (!p) return false;
+        const content = (p.content || '').toLowerCase();
+        const snippetCode =
+          typeof p.code_snippet === 'object' && p.code_snippet
+            ? p.code_snippet.code || ''
+            : typeof p.code_snippet === 'string'
+            ? p.code_snippet
+            : '';
+        const authorUser = (p.author?.username || '').toLowerCase();
+        return content.includes(q) || snippetCode.toLowerCase().includes(q) || authorUser.includes(q);
+      }),
+    [posts, q]
+  );
+
+  /**
+   * Yazma durunca sunucuya sorar.
+   *
+   * Gecikme (debounce) her tuş vuruşunda sorgu atmamak için; `requestId` ise yarış koşulunu
+   * kapatıyor: hızlı yazarken önce başlayan bir istek sonra bitip, daha yeni sorgunun
+   * sonuçlarının üzerine yazabilirdi.
+   */
+  useEffect(() => {
+    if (q.length < 2) {
+      setServerPosts(null);
+      setSearching(false);
+      return;
+    }
+
+    const id = ++requestId.current;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      const result = await searchPostsOnServer(query, {
+        language: lang || undefined,
+        scope: codeOnly ? 'code' : 'all',
+        limit: 40
+      });
+      if (id !== requestId.current) return; // Daha yeni bir arama başladı.
+      setServerPosts(result.ok ? result.posts : null);
+      setSearching(false);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, q, lang, codeOnly]);
+
+  // Sunucu yanıt verdiyse onu göster; veremediyse (yapılandırılmamış/çevrimdışı) yerel
+  // sonuçlar boş bir ekrandan iyidir.
+  const usingServer = serverPosts !== null;
+  const filteredPosts = usingServer
+    ? serverPosts
+    : localPosts.filter((p) => {
+        if (codeOnly && !p.code_snippet) return false;
+        if (lang && (p as any).code_language !== lang && p.code_snippet?.language !== lang) return false;
+        return true;
+      });
 
   const filteredCommunities = communities.filter((c) => {
     if (!c) return false;
@@ -91,6 +158,84 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             {language === 'tr' ? 'Topluluklar' : 'Communities'}
           </button>
         </div>
+
+        {/* Kod süzgeçleri. Yalnızca gönderi sonuçları gösterilirken anlamlı oldukları için
+            topluluk sekmesinde gizleniyorlar. */}
+        {filter !== 'communities' && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setCodeOnly((v) => !v)}
+              aria-pressed={codeOnly}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                codeOnly
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Code2 className="h-3.5 w-3.5" />
+              <span>{language === 'tr' ? 'Sadece kod' : 'Code only'}</span>
+            </button>
+
+            <select
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+              aria-label={language === 'tr' ? 'Programlama dili' : 'Programming language'}
+              className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">{language === 'tr' ? 'Tüm diller' : 'All languages'}</option>
+              {LANGUAGES.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+
+            {(codeOnly || lang) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCodeOnly(false);
+                  setLang('');
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap text-zinc-500 hover:text-white transition-colors cursor-pointer"
+              >
+                {language === 'tr' ? 'Temizle' : 'Clear'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Sonuçların nereden geldiğini söylemek önemli: "arşivin tamamı" ile "ekrandaki
+            gönderiler" çok farklı iki şey ve kullanıcı hangisine baktığını bilmeli. */}
+        {q.length >= 2 && (
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+            {searching ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>{language === 'tr' ? 'Arşivde aranıyor...' : 'Searching the archive...'}</span>
+              </>
+            ) : usingServer ? (
+              <>
+                <Database className="h-3 w-3 text-emerald-500" />
+                <span>
+                  {language === 'tr'
+                    ? `Tüm arşivde ${filteredPosts.length} sonuç`
+                    : `${filteredPosts.length} results across the archive`}
+                </span>
+              </>
+            ) : (
+              <>
+                <Search className="h-3 w-3" />
+                <span>
+                  {language === 'tr'
+                    ? 'Yalnızca yüklenmiş gönderilerde arandı (sunucu araması kullanılamıyor)'
+                    : 'Searched loaded posts only (server search unavailable)'}
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="p-5 space-y-6">

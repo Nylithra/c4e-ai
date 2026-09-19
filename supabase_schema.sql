@@ -329,6 +329,94 @@ ALTER TABLE public.job_listings ADD COLUMN IF NOT EXISTS applied_by JSONB DEFAUL
 -- üretemez, sunucu yeniden başlasa veya iki dağıtım üst üste binse bile.
 ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMPTZ;
 
+-- ================================================================
+-- KOD ARAMASI
+-- ================================================================
+--
+-- code_snippet, {"title":..,"language":..,"code":..} biçiminde bir JSON METNİ olarak
+-- saklanıyor. Aramanın içine girmesi gereken şey yalnızca `code` alanı; JSON anahtarları
+-- indekse girerse "code" veya "title" aramak her gönderiyi getirirdi.
+--
+-- Doğrudan `code_snippet::jsonb ->> 'code'` yazılamaz: eski veya bozuk bir satırda cast
+-- hata fırlatır ve üretilmiş (generated) sütun TÜM tabloyu yazılamaz hâle getirir. Bu
+-- yüzden ayrıştırma denenir, başarısız olursa ham metne düşülür.
+CREATE OR REPLACE FUNCTION public.post_snippet_code(raw TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+BEGIN
+  IF raw IS NULL OR raw = '' THEN
+    RETURN '';
+  END IF;
+  BEGIN
+    RETURN coalesce(raw::jsonb ->> 'code', raw);
+  EXCEPTION WHEN others THEN
+    -- JSON değilse (eski kayıtlar düz metin tutuyordu) metnin kendisi aranabilir kalsın.
+    RETURN raw;
+  END;
+END;
+$$;
+
+-- Türkçe ve kod için diyakritikleri katlar: "gonderi" yazan biri "Gönderi" bulsun.
+-- translate() IMMUTABLE olduğu için üretilmiş sütunda kullanılabilir; unaccent eklentisi
+-- değildir ve orada çalışmaz. İ/ı ayrımı da burada çözülür.
+CREATE OR REPLACE FUNCTION public.search_fold(raw TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT translate(lower(coalesce(raw, '')), 'çğıöşüâîûİ', 'cgiosuaiui');
+$$;
+
+-- Kodu arama için parçalara ayırır.
+--
+-- NEDEN GEREKLİ: PostgreSQL'in varsayılan çözümleyicisi düzyazı için tasarlanmış ve noktalı
+-- ifadeleri ALAN ADI sanıyor. Ölçüldü: `f.read()` tek bir "host" token'ı olarak `f.read`
+-- hâline geliyor, dolayısıyla `read` araması onu BULAMIYOR — önek eşlemesi token'ın başından
+-- başlar. Aynı şey `np.array`, `obj.method`, `std::vector` için de geçerli; yani kod
+-- aramasının en sık kullanılacağı biçim sessizce çalışmıyordu.
+--
+-- Harf, rakam ve alt çizgi dışındaki her şeyi boşluğa çevirmek bunu çözer: `f.read()` iki
+-- token olur (`f`, `read`) ve ikisi de aranabilir. Alt çizgi korunur, çünkü tanımlayıcıların
+-- parçasıdır (`my_var`, `__init__`).
+CREATE OR REPLACE FUNCTION public.search_code_tokens(raw TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT regexp_replace(public.search_fold(raw), '[^a-z0-9_]+', ' ', 'g');
+$$;
+
+-- Arama vektörü.
+--
+-- NEDEN 'turkish' DEĞİL 'simple': Snowball Türkçe köklendiricisi tutarsız. Ölçüldü —
+-- belgedeki "Gönderilerimdeki" sözcüğü 'gönderi' köküne, sorgudaki "gönderi" sözcüğü ise
+-- 'gönder' köküne iniyor; ikisi ASLA eşleşmiyor. Yani köklendirme, gözle görülür biçimde
+-- orada olan bir kelimeyi bulunamaz hâle getiriyordu. Türkçenin eklemeli yapısı bunun
+-- yerine ÖNEK sorgusuyla çözülüyor (`gonderi:*`), ki bu hem daha öngörülebilir hem de
+-- arama kutusundan beklenen davranış.
+--
+-- Kod zaten köklendirilmemeli: bir çözümleyici useEffect/useState/useRef sözcüklerini aynı
+-- köke indirip üçünü birbirine karıştırabilir. Kod aramasında istenen, yazılan tanımlayıcının
+-- aynısını bulmaktır.
+--
+-- Ağırlıklar sıralamayı belirler: içerik (A), kod (B), dil ve yazar (C).
+ALTER TABLE public.posts
+  ADD COLUMN IF NOT EXISTS search_vector tsvector
+  GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple', public.search_fold(content)), 'A') ||
+    -- Düzyazının parçalanmış kopyası: metin içine gömülü `dizi.map()` gibi ifadeler de
+    -- aranabilsin diye, ama kod ağırlığında (B) — asıl içerik eşleşmesi önde kalsın.
+    setweight(to_tsvector('simple', public.search_code_tokens(content)), 'B') ||
+    setweight(to_tsvector('simple', public.search_code_tokens(public.post_snippet_code(code_snippet))), 'B') ||
+    setweight(to_tsvector('simple', public.search_fold(code_language)), 'C') ||
+    setweight(to_tsvector('simple', public.search_fold(author->>'username')), 'C')
+  ) STORED;
+
 ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS admins JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS last_message JSONB;
@@ -1242,6 +1330,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mail_cache_mailbox ON public.admin_mail_cac
 -- Gönderici sorgusu tam olarak şudur: "e-postası gönderilmemiş, yeni bildirimler".
 -- Kısmi indeks yalnızca bekleyen satırları taşır; gönderilenler indeksten düşer, yani
 -- indeks tablo büyüdükçe değil kuyruk büyüdükçe büyür.
+-- Arama sorgusunun tamamı bu indeksten karşılanır. GIN, tsvector için doğru tür:
+-- her token'ı ayrı ayrı indeksler, yani "içinde şu kelime geçen satırlar" sorgusu
+-- tabloyu taramadan yanıtlanır.
+CREATE INDEX IF NOT EXISTS idx_posts_search ON public.posts USING GIN (search_vector);
+-- Dile göre daraltma (yalnızca TypeScript parçacıkları) çok sık kullanılıyor.
+CREATE INDEX IF NOT EXISTS idx_posts_code_language ON public.posts(code_language) WHERE code_language IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_notifications_email_pending
   ON public.notifications(created_at)
   WHERE email_sent_at IS NULL;

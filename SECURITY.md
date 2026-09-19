@@ -255,6 +255,55 @@ Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && np
 
 ---
 
+## 2.1b Kod araması
+
+Keşfet ekranı zaten kod parçacıklarında arıyordu — ama yalnızca **o an belleğe yüklenmiş**
+gönderiler içinde. Yani "useEffect" araması akıştaki son birkaç düzine gönderiyi tarıyordu,
+arşivin tamamını değil. Arama artık PostgreSQL'in tam metin indeksine gidiyor
+(`posts.search_vector`, GIN).
+
+**Yeni bir sunucu ucu yok ve bu bilinçli.** Sorgu, çağıranın kendi oturum belirteciyle
+PostgREST'e gidiyor, dolayısıyla `posts` SELECT politikası aynen uygulanıyor: gizli topluluk
+gönderileri üyesi olmayana dönmüyor. Gerçek PostgreSQL üzerinde doğrulandı — yabancı ve anon
+2 sonuç, üye 3 sonuç görüyor. Servis rolüyle çalışan bir arama ucu yazmak bu güvenceyi elle
+yeniden kurmayı gerektirir ve sızıntı için yeni bir yüzey açardı.
+
+**Türkçe köklendirme kullanılmıyor, önek eşlemesi kullanılıyor.** Ölçüm: Snowball Türkçe
+köklendiricisi belgedeki "Gönderilerimdeki" sözcüğünü `gönderi`, sorgudaki "gönderi"
+sözcüğünü ise `gönder` köküne indiriyor — ikisi **asla eşleşmiyor**. Yani köklendirme, gözle
+görülür biçimde orada olan bir kelimeyi bulunamaz hâle getiriyordu. Bunun yerine her kelimeye
+önek operatörü (`gonderi:*`) ekleniyor; Türkçenin eklemeli yapısını çözüyor ve arama
+kutusundan beklenen davranış bu.
+
+**Diyakritikler katlanıyor.** Hem indeks hem sorgu `ç→c, ğ→g, ı→i, ö→o, ş→s, ü→u` dönüşümünden
+geçiyor, böylece "gonderi" yazan biri "Gönderilerimdeki" bulur — Türkiye'de diyakritiksiz
+yazmak çok yaygın. `unaccent` eklentisi yerine `translate()` kullanılıyor, çünkü `unaccent`
+IMMUTABLE değil ve üretilmiş sütunda çalışmaz.
+
+> **Bulunan ve düzeltilen hata:** PostgreSQL'in varsayılan çözümleyicisi düzyazı için
+> tasarlanmış ve noktalı ifadeleri **alan adı** sanıyor. `f.read()` tek bir "host" token'ı
+> (`f.read`) hâline geliyordu; önek eşlemesi token'ın başından başladığı için `read` araması
+> onu **bulamıyordu**. Aynı sorun `np.array`, `obj.method`, `std::vector` için de geçerliydi —
+> yani kod aramasının en sık kullanılacağı biçim sessizce çalışmıyordu.
+> `search_code_tokens()` artık harf/rakam/alt çizgi dışını boşluğa çeviriyor; `f.read()` iki
+> token oluyor ve ikisi de aranabiliyor. Bir gerileme nöbetçisi testi bu davranışı kilitliyor.
+
+`code_snippet` sütunu JSON metni olarak saklandığı için yalnızca `code` alanı indeksleniyor;
+JSON anahtarları sızsaydı "title" aramak her gönderiyi getirirdi (test bunu doğruluyor).
+Ayrıştırma başarısız olursa ham metne düşülür — eski kayıtlar düz metin tutuyordu ve
+doğrudan cast, üretilmiş sütunu tüm tablo için yazılamaz hâle getirirdi.
+
+Sunucu araması kullanılamıyorsa (yapılandırılmamış veya çevrimdışı) arayüz yerel aramaya
+düşer ve **hangisine baktığınızı açıkça yazar** — "tüm arşivde N sonuç" ile "yalnızca
+yüklenmiş gönderilerde arandı" çok farklı iki şey.
+
+Uçtan uca test edildi: 36 doğrulama, tamamı geçti. Tarayıcıda çalışan sorgu üreticisinin
+ürettiği tsquery, gerçek şema üzerinde gerçek PostgreSQL'e verilerek sınandı — yani halka
+kapalı, yalnızca fonksiyonun "bir metin ürettiği" değil, o metnin doğru satırları bulduğu
+doğrulandı.
+
+---
+
 ## 2.2a Bildirim e-postaları
 
 Bekleyen bildirimler üyeye **tek bir özet e-postası** olarak gönderilir.
