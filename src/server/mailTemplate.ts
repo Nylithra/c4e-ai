@@ -24,6 +24,14 @@ export interface MailTemplateInput {
   callToAction?: { label: string; url: string };
   /** Small print under the divider, e.g. why the recipient got this. */
   footnote?: string;
+  /**
+   * Opt-out link, rendered as its own line.
+   *
+   * Kept OUT of `footnote` on purpose: sendMail caps the footnote length, and an unsubscribe
+   * URL pushed past that cap is silently cut mid-token — which leaves the recipient with a
+   * permanently broken opt-out, the one link in a bulk e-mail that must always work.
+   */
+  unsubscribeUrl?: string;
   recipientName?: string;
   brandName?: string;
   brandDomain?: string;
@@ -101,6 +109,12 @@ export function renderMailHtml(input: MailTemplateInput): string {
            </tr>
          </table>`
       : '';
+
+  const unsubUrl = input.unsubscribeUrl ? safeUrl(input.unsubscribeUrl) : null;
+  const unsubscribe = unsubUrl
+    ? `<p class="c4e-note" style="margin:0;font-size:12px;line-height:1.6;color:${COLORS.faint};">` +
+      `<a href="${escapeHtml(unsubUrl)}" style="color:${COLORS.muted};">Bildirim e-postalarını durdur</a></p>`
+    : '';
 
   const footnote = input.footnote
     ? `<p class="c4e-note" style="margin:0 0 10px;font-size:12px;line-height:1.6;color:${COLORS.muted};">${escapeHtml(input.footnote)}</p>`
@@ -199,6 +213,7 @@ ${preheader}
           <td class="c4e-pad" align="left" style="padding:0 34px 30px;">
             <hr class="c4e-divider" style="border:0;border-top:1px solid ${COLORS.border};margin:0 0 18px;" />
             ${footnote}
+            ${unsubscribe}
             <p class="c4e-muted" style="margin:0;font-size:12px;line-height:1.6;color:${COLORS.faint};">
               ${escapeHtml(brandName)} ·
               <a href="https://${escapeHtml(brandDomain)}" style="color:${COLORS.muted};text-decoration:none;">${escapeHtml(brandDomain)}</a> ·
@@ -233,6 +248,7 @@ export function renderMailText(input: MailTemplateInput): string {
   const url = input.callToAction ? safeUrl(input.callToAction.url) : null;
   if (input.callToAction && url) lines.push(`${input.callToAction.label}: ${url}`, '');
   if (input.footnote) lines.push('--', input.footnote, '');
+  if (input.unsubscribeUrl) lines.push(`Bildirim e-postalarını durdur: ${input.unsubscribeUrl}`, '');
   lines.push('--', `${brandName} · ${brandDomain}`);
 
   return lines.join('\n');

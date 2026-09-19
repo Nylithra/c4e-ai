@@ -255,6 +255,60 @@ Kalıcı bir süreçte hiçbir kod değişikliği gerekmez: `npm run build && np
 
 ---
 
+## 2.2a Bildirim e-postaları
+
+Bekleyen bildirimler üyeye **tek bir özet e-postası** olarak gönderilir.
+
+**Gönderime istemci karar veremez.** Bildirimleri istemci oluşturuyor (anon anahtarla, RLS
+altında). "Şimdi şu kişiye posta at" demeyi de istemciye bıraksaydık, herhangi biri istediği
+üyeye istediği içerikte, platformun kendi alan adından posta yollatabilirdi — doğrudan bir
+kimlik avı aracı. Bu yüzden sunucu `notifications` tablosunu servis rolüyle **kendisi** okur;
+istemciden gelen hiçbir şey gönderime girdi değildir.
+
+| Uç | Kim çağırabilir |
+|---|---|
+| `POST/GET /api/notifications/email/dispatch` | Zamanlayıcı (`MAIL_NOTIFY_CRON_SECRET`) veya yönetici — başka kimse |
+| `GET/POST /api/email/unsubscribe` | Herkes, ama yalnızca imzalı jetonuyla ve yalnızca kendi aboneliği için |
+| `GET/PUT /api/me/email-prefs` | Yalnızca oturum sahibi, kendi tercihleri |
+
+**Neden özet.** Popüler bir gönderi dakikalar içinde onlarca beğeni alır; her biri için ayrı
+e-posta gelen kutusunu doldurur ve toplu abonelikten çıkışa yol açar. Dağıtım alıcı başına
+tek posta üretir ve **aynı şeye gelen bildirimleri tek satırda toplar** ("ayşe ve 4 kişi daha
+gönderini beğendi"), böylece 11 bildirim 4 satır olur.
+
+**Yineleme koruması.** `notifications.email_sent_at` tek doğruluk kaynağıdır; gönderim biter
+bitmez damgalanır. İki dağıtım üst üste binse veya sunucu ortada yeniden başlasa bile aynı
+bildirim ikinci kez e-posta üretmez. Damgayı **istemci ne uydurabilir ne silebilir**: bunu
+`protect_notification_email_state` tetikleyicisi garanti eder (şema 4.6) — aksi hâlde kötü
+niyetli bir istemci damgayı doldurup karşı tarafın e-postasını sessizce engelleyebilirdi.
+Gerçek PostgreSQL üzerinde üç dalı da doğrulandı.
+
+**Varsayılanlar bilinçli olarak asimetrik.** Üyenin doğrudan muhatap olduğu olaylar (yanıt,
+mesaj, takip, başvuru, davet) açık; beğeni / repost / yıldız kapalı gelir. Açık gelselerdi
+ilk popüler gönderi bir kutu dolusu posta üretir ve üye topluca aboneliği bırakırdı.
+
+**Abonelikten çıkma oturum gerektirmez** ve gerektirmemeli: bağlantıya tıklayan çoğunlukla
+oturum açmamıştır, zaten bütün mesele "giriş yapmadan bu postaları durdurabilmek". Güvenliği
+HMAC imzalı jeton sağlar — sahtesi üretilemez, başka bir üyeye çevrilemez. Ayrıca
+`List-Unsubscribe` ve `List-Unsubscribe-Post` başlıkları gönderilir; Gmail ve Outlook'un
+kendi tek tık "Abonelikten çık" düğmesini gösteren mekanizma budur ve yokluğu kullanıcıları
+bunun yerine spam düğmesine iter.
+
+> **Düzeltilen hata:** abonelikten çıkma bağlantısı önce dipnotun içine konmuştu; `sendMail`
+> dipnotu 300 karaktere kırpıyor ve jetonu tam ortasından kesiyordu — yani opt-out bağlantısı
+> **kalıcı olarak bozuk** gidiyordu. Artık ayrı bir alan (uzunluk sınırı yok) ve ayrıca bir
+> mail başlığı. Test bunu nöbetçiye bağladı: imza SHA-256 HMAC olduğu için tam 64 onaltılık
+> karakter olmak zorunda; kısalırsa test kırılır.
+
+Adresi olmayan, profili bulunamayan veya tercihi kapalı alıcıların bildirimleri **yine de
+damgalanır** — aksi hâlde kuyruğun başında kalıcı olarak birikir ve her dağıtımı yavaşlatırdı.
+Gönderim hatasında damgalanmaz, bir sonraki turda yeniden denenir.
+
+Bu davranışların tamamı gerçek bir SMTP sunucusuna karşı, gerçek Express rotaları üzerinden
+uçtan uca test edildi (58 doğrulama, tamamı geçti).
+
+---
+
 ## 2.2 E-posta konsolu (IMAP / SMTP)
 
 Admin panelindeki **E-postalar** sekmesi; gelen kutusunu IMAP ile eşitleyip okur, kullanıcı

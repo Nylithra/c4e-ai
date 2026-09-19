@@ -28,6 +28,7 @@ import {
   sendNativeNotification
 } from '../utils/notificationSound';
 import { IntegrationsSettings } from './IntegrationsSettings';
+import { EmailNotificationSettings } from './EmailNotificationSettings';
 import { ThemeStudio } from './ThemeStudio';
 import { UserAvatar } from './ui/avatar';
 import { ProfileTheme } from '../utils/themeHelper';
@@ -623,6 +624,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span>{language === 'tr' ? 'Sistem ve Sesli Bildirimler Etkin' : 'System and Sound Notifications Enabled'}</span>
                 </div>
               )}
+            </div>
+
+            {/* Tarayıcı bildirimleriyle aynı bölümde duruyor, çünkü kullanıcı için ikisi de
+                aynı soru: "bu olaydan nasıl haberdar olacağım?" */}
+            <div className="pt-4 border-t border-zinc-800/60">
+              <EmailNotificationSettings language={language} />
             </div>
           </div>
         )}

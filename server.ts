@@ -63,6 +63,16 @@ import {
   verifySmtp
 } from './src/server/mail';
 import { clearMailbox, readInboxSnapshot, storeWarning } from './src/server/mailStore';
+import {
+  cronSecretMatches,
+  dispatchNotificationEmails,
+  dispatcherConfigured,
+  readEmailPrefs,
+  sanitizeEmailPrefs,
+  verifyUnsubscribeToken,
+  writeEmailPrefs,
+  DEFAULT_EMAIL_PREFS
+} from './src/server/notificationMail';
 import { renderMailHtml } from './src/server/mailTemplate';
 
 const app = express();
@@ -1802,6 +1812,160 @@ app.post(
     }).replace('src="cid:PREVIEW"', 'src="/email-logo.png"');
 
     res.json({ success: true, html });
+  }
+);
+
+// -------------------------------------------------------------
+// BİLDİRİM E-POSTALARI
+// -------------------------------------------------------------
+
+/**
+ * Bekleyen bildirimleri e-postaya çevirir.
+ *
+ * İKİ TÜRLÜ ÇAĞRILABİLİR ve ikisi de bilinçli:
+ *   - zamanlayıcı (cron): oturum açamaz, bu yüzden paylaşılan bir sır sunar;
+ *   - yönetici: panelden elle tetiklemek için.
+ *
+ * Başka kimse çağıramaz. Bu uç, platformun kendi alan adından posta gönderir; açık bırakmak
+ * doğrudan bir kimlik avı aracı üretmek olurdu. Sır tanımlı değilse cron yolu tamamen kapalı
+ * kalır — eksik yapılandırmayı "herkese açık"a çevirmek yerine erişimi daraltır.
+ */
+app.all(
+  '/api/notifications/email/dispatch',
+  rateLimit({ scope: 'notify-dispatch', windowMs: 60000, max: 12 }),
+  async (req: Request, res: Response) => {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.status(405).json({ success: false, error: 'method_not_allowed' });
+      return;
+    }
+
+    // Zamanlayıcılar sırrı iki farklı şekilde taşıyor: Vercel Cron `Authorization: Bearer`
+    // kullanıyor, kendi kurduğumuz bir cron ise `X-Cron-Secret` gönderebilir. Bearer başlığı
+    // aynı zamanda kullanıcı oturumlarının taşıyıcısı olduğu için önce sır SABİT SÜREDE
+    // karşılaştırılır; tutmazsa başlık normal bir oturum jetonu gibi değerlendirilir.
+    const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1] || '';
+    const viaCron =
+      cronSecretMatches(String(req.headers['x-cron-secret'] || '')) || cronSecretMatches(bearer);
+
+    if (!viaCron) {
+      // Sır yoksa/yanlışsa yönetici oturumu şart. requireAdmin'i burada elle çağırıyoruz,
+      // çünkü middleware olarak eklenirse cron yolu da oturum isterdi.
+      await new Promise<void>((resolve) => requireAdmin(req, res, () => resolve()));
+      if (res.headersSent) return;
+    }
+
+    if (!dispatcherConfigured()) {
+      res.status(503).json({
+        success: false,
+        error: 'not_configured',
+        message:
+          'Bildirim e-postaları için SUPABASE_SERVICE_ROLE_KEY ve MAIL_SMTP_* değişkenleri gerekli.'
+      });
+      return;
+    }
+
+    try {
+      const result = await dispatchNotificationEmails({
+        limit: Number(req.body?.limit) || undefined,
+        dryRun: req.body?.dryRun === true
+      });
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      res.status(502).json({
+        success: false,
+        error: `Dağıtım hatası: ${String(error?.message || error).slice(0, 300)}`
+      });
+    }
+  }
+);
+
+/**
+ * Abonelikten çıkma. Oturum GEREKTİRMEZ ve gerektirmemeli: bağlantıya tıklayan kişi çoğu
+ * zaman oturum açmamıştır ve zaten bütün mesele "giriş yapmadan bu postaları durdurabilmek".
+ * Güvenliği imzalı jeton sağlıyor — sahtesi üretilemez, başka bir üyeye çevrilemez.
+ *
+ * GET üzerinden durum değiştiriyor olması bilinçli bir ödün: e-posta istemcileri yalnızca
+ * bağlantı açabilir. Riski sınırlı, çünkü yapabildiği tek şey jetonun sahibinin kendi
+ * bildirim e-postalarını kapatmak.
+ */
+app.all(
+  '/api/email/unsubscribe',
+  rateLimit({ scope: 'notify-unsub', windowMs: 60000, max: 30 }),
+  async (req: Request, res: Response) => {
+    // GET: kullanıcı e-postadaki bağlantıya tıkladı, onay sayfası döner.
+    // POST: sağlayıcının tek tık aboneliği (RFC 8058) — Gmail/Outlook kendi "Abonelikten
+    // çık" düğmesinden bunu çağırır ve bir sayfa göstermez, sade bir 200 bekler.
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.status(405).json({ success: false, error: 'method_not_allowed' });
+      return;
+    }
+    const oneClick = req.method === 'POST';
+    const userId = verifyUnsubscribeToken(req.query.token);
+    const page = (title: string, message: string) =>
+      `<!doctype html><html lang="tr"><head><meta charset="utf-8">` +
+      `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `<title>${escapeHtml(title)}</title><style>` +
+      `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;` +
+      `font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}` +
+      `.c{max-width:28rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}` +
+      `p{color:#a1a1aa;line-height:1.6;font-size:.9rem;margin:0 0 1.5rem}` +
+      `a{display:inline-block;padding:.7rem 1.2rem;border-radius:.75rem;background:#4f46e5;color:#fff;` +
+      `text-decoration:none;font-weight:600;font-size:.85rem}</style></head>` +
+      `<body><div class="c"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>` +
+      `<a href="/settings">Bildirim Tercihleri</a></div></body></html>`;
+
+    if (!userId) {
+      if (oneClick) {
+        res.status(400).json({ success: false, error: 'invalid_token' });
+        return;
+      }
+      res.status(400).type('html').send(
+        page('Bağlantı geçersiz', 'Bu abonelikten çıkma bağlantısı geçersiz veya eksik. Tercihlerini hesabından da kapatabilirsin.')
+      );
+      return;
+    }
+
+    const current = (await readEmailPrefs(userId)) || DEFAULT_EMAIL_PREFS;
+    const ok = await writeEmailPrefs(userId, { ...current, enabled: false });
+
+    if (oneClick) {
+      res.status(ok ? 200 : 502).json({ success: ok });
+      return;
+    }
+
+    res
+      .status(ok ? 200 : 502)
+      .type('html')
+      .send(
+        ok
+          ? page('Bildirim e-postaları kapatıldı', 'Bundan sonra Code4Ever sana bildirim e-postası göndermeyecek. İstediğin zaman ayarlardan yeniden açabilirsin.')
+          : page('İşlem tamamlanamadı', 'Tercihin şu anda kaydedilemedi. Lütfen biraz sonra tekrar dene veya ayarlardan kapat.')
+      );
+  }
+);
+
+/** Oturum sahibinin kendi bildirim e-postası tercihleri. */
+app.get('/api/me/email-prefs', requireAuth, async (req: Request, res: Response) => {
+  const userId = req.auth?.userId || '';
+  const prefs = (await readEmailPrefs(userId)) || DEFAULT_EMAIL_PREFS;
+  res.json({ success: true, prefs, defaults: DEFAULT_EMAIL_PREFS });
+});
+
+app.put(
+  '/api/me/email-prefs',
+  requireAuth,
+  rateLimit({ scope: 'email-prefs', windowMs: 60000, max: 30, perUser: true }),
+  async (req: Request, res: Response) => {
+    const userId = req.auth?.userId || '';
+    // Gövde temizlenerek yazılır: bilinmeyen anahtarlar düşer, tipler zorlanır. Böylece
+    // istemci profile rastgele JSON yazdıramaz.
+    const prefs = sanitizeEmailPrefs(req.body);
+    const ok = await writeEmailPrefs(userId, prefs);
+    if (!ok) {
+      res.status(502).json({ success: false, error: 'save_failed', message: 'Tercihler kaydedilemedi.' });
+      return;
+    }
+    res.json({ success: true, prefs });
   }
 );
 

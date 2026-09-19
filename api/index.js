@@ -986,6 +986,8 @@ function renderMailHtml(input) {
              </td>
            </tr>
          </table>` : "";
+  const unsubUrl = input.unsubscribeUrl ? safeUrl(input.unsubscribeUrl) : null;
+  const unsubscribe = unsubUrl ? `<p class="c4e-note" style="margin:0;font-size:12px;line-height:1.6;color:${COLORS.faint};"><a href="${escapeHtml2(unsubUrl)}" style="color:${COLORS.muted};">Bildirim e-postalar\u0131n\u0131 durdur</a></p>` : "";
   const footnote = input.footnote ? `<p class="c4e-note" style="margin:0 0 10px;font-size:12px;line-height:1.6;color:${COLORS.muted};">${escapeHtml2(input.footnote)}</p>` : "";
   const preheader = input.preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">
          ${escapeHtml2(input.preheader)}${"&#8203;&nbsp;".repeat(60)}
@@ -1076,6 +1078,7 @@ ${preheader}
           <td class="c4e-pad" align="left" style="padding:0 34px 30px;">
             <hr class="c4e-divider" style="border:0;border-top:1px solid ${COLORS.border};margin:0 0 18px;" />
             ${footnote}
+            ${unsubscribe}
             <p class="c4e-muted" style="margin:0;font-size:12px;line-height:1.6;color:${COLORS.faint};">
               ${escapeHtml2(brandName)} \xB7
               <a href="https://${escapeHtml2(brandDomain)}" style="color:${COLORS.muted};text-decoration:none;">${escapeHtml2(brandDomain)}</a> \xB7
@@ -1107,6 +1110,7 @@ function renderMailText(input) {
   const url = input.callToAction ? safeUrl(input.callToAction.url) : null;
   if (input.callToAction && url) lines.push(`${input.callToAction.label}: ${url}`, "");
   if (input.footnote) lines.push("--", input.footnote, "");
+  if (input.unsubscribeUrl) lines.push(`Bildirim e-postalar\u0131n\u0131 durdur: ${input.unsubscribeUrl}`, "");
   lines.push("--", `${brandName} \xB7 ${brandDomain}`);
   return lines.join("\n");
 }
@@ -1309,6 +1313,7 @@ async function sendMail(input) {
   const to = normalizeEmail(input.to);
   if (!to) return { ok: false, error: "Ge\xE7ersiz al\u0131c\u0131 e-posta adresi." };
   const subject = headerSafe(input.subject, 180);
+  const unsubscribeUrl = /^https?:\/\/[^\s<>"]+$/.test(String(input.unsubscribeUrl || "").trim()) ? headerSafe(String(input.unsubscribeUrl).trim(), 500) : "";
   if (!subject) return { ok: false, error: "Konu bo\u015F olamaz." };
   const bodyText = String(input.body || "").trim();
   if (!bodyText) return { ok: false, error: "Mesaj g\xF6vdesi bo\u015F olamaz." };
@@ -1321,6 +1326,8 @@ async function sendMail(input) {
     recipientName: input.recipientName ? headerSafe(input.recipientName, 80) : void 0,
     callToAction: input.callToAction,
     footnote: input.footnote ? headerSafe(input.footnote, 300) : void 0,
+    // NOT length-capped: truncating this is what silently breaks the opt-out.
+    unsubscribeUrl: unsubscribeUrl || void 0,
     logoCid: LOGO_CID
   };
   try {
@@ -1341,6 +1348,14 @@ async function sendMail(input) {
       to,
       subject,
       ...replyTo ? { replyTo } : {},
+      // RFC 2369 / RFC 8058. The One-Click variant tells the provider it may POST the URL
+      // directly, so the member never has to land on a page to opt out.
+      ...unsubscribeUrl ? {
+        headers: {
+          "List-Unsubscribe": `<${unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+        }
+      } : {},
       text: renderMailText(templateInput),
       html: renderMailHtml(templateInput),
       attachments: logoAttachment()
@@ -1576,6 +1591,282 @@ async function verifyImap() {
 
 // server.ts
 init_mailStore();
+
+// src/server/notificationMail.ts
+init_security();
+var DEFAULT_EMAIL_PREFS = {
+  enabled: true,
+  types: {
+    comment: true,
+    message: true,
+    follow: true,
+    job_application: true,
+    group_invite: true,
+    community: true,
+    like: false,
+    repost: false,
+    star: false,
+    job_listing: false
+  }
+};
+var ALL_TYPES = Object.keys(DEFAULT_EMAIL_PREFS.types);
+function sanitizeEmailPrefs(raw) {
+  let source = raw;
+  if (typeof raw === "string") {
+    try {
+      source = JSON.parse(raw);
+    } catch {
+      source = null;
+    }
+  }
+  if (!source || typeof source !== "object") return { ...DEFAULT_EMAIL_PREFS, types: { ...DEFAULT_EMAIL_PREFS.types } };
+  const types = {};
+  for (const type of ALL_TYPES) {
+    const value = source.types?.[type];
+    types[type] = typeof value === "boolean" ? value : DEFAULT_EMAIL_PREFS.types[type];
+  }
+  return { enabled: source.enabled !== false, types };
+}
+function unsubscribeToken(userId) {
+  const id = String(userId || "");
+  return `${Buffer.from(id, "utf8").toString("base64url")}.${hmacHex(OAUTH_STATE_SECRET, `unsub:${id}`)}`;
+}
+function verifyUnsubscribeToken(token) {
+  const raw = String(token || "");
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const encoded = raw.slice(0, dot);
+  const signature = raw.slice(dot + 1);
+  let userId;
+  try {
+    userId = Buffer.from(encoded, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  if (!userId) return null;
+  return safeEquals(signature, hmacHex(OAUTH_STATE_SECRET, `unsub:${userId}`)) ? userId : null;
+}
+function dispatcherConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && getSmtpConfig());
+}
+function adminHeaders3(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+async function rest2(pathAndQuery, init = {}) {
+  const response = await safeFetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+    method: init.method || "GET",
+    headers: adminHeaders3(init.headers),
+    body: init.body,
+    timeoutMs: 15e3,
+    maxResponseBytes: 4 * 1024 * 1024
+  });
+  let rows = [];
+  if (response.text) {
+    try {
+      const parsed = JSON.parse(response.text);
+      rows = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      rows = [];
+    }
+  }
+  return { ok: response.ok, status: response.status, rows };
+}
+var TYPE_LABELS = {
+  comment: "g\xF6nderine yan\u0131t verdi",
+  message: "sana mesaj g\xF6nderdi",
+  follow: "seni takip etmeye ba\u015Flad\u0131",
+  job_application: "ilan\u0131na ba\u015Fvurdu",
+  group_invite: "seni bir gruba davet etti",
+  community: "toplulu\u011Funla ilgili bir i\u015Flem yapt\u0131",
+  like: "g\xF6nderini be\u011Fendi",
+  repost: "g\xF6nderini yeniden payla\u015Ft\u0131",
+  star: "g\xF6nderine y\u0131ld\u0131z verdi",
+  job_listing: "yeni bir ilan payla\u015Ft\u0131"
+};
+function actorName(row) {
+  return String(row?.actor?.display_name || row?.actor?.username || "Bir \xFCye").slice(0, 60);
+}
+function describe(row) {
+  const label = TYPE_LABELS[String(row?.type)] || "seninle ilgili bir i\u015Flem yapt\u0131";
+  const content = String(row?.content || "").replace(/\s+/g, " ").trim().slice(0, 140);
+  return content ? `${actorName(row)} ${label}: \u201C${content}\u201D` : `${actorName(row)} ${label}.`;
+}
+function summarize(rows) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const key = `${row?.type}|${row?.target_id ?? ""}`;
+    const list = groups.get(key) || [];
+    list.push(row);
+    groups.set(key, list);
+  }
+  const lines = [];
+  for (const items of groups.values()) {
+    if (items.length === 1) {
+      lines.push(describe(items[0]));
+      continue;
+    }
+    const names = [];
+    for (const item of items) {
+      const name = actorName(item);
+      if (!names.includes(name)) names.push(name);
+    }
+    const label = TYPE_LABELS[String(items[0]?.type)] || "seninle ilgili bir i\u015Flem yapt\u0131";
+    const who = names.length === 1 ? `${names[0]} (${items.length} kez)` : names.length === 2 ? `${names[0]} ve ${names[1]}` : `${names[0]} ve ${names.length - 1} ki\u015Fi daha`;
+    const content = String(items[0]?.content || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    lines.push(content ? `${who} ${label}: \u201C${content}\u201D` : `${who} ${label}.`);
+  }
+  return lines;
+}
+function toPositiveInt2(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+async function dispatchNotificationEmails(options = {}) {
+  const startedAt = Date.now();
+  const limit = Math.min(toPositiveInt2(options.limit, 200), 500);
+  const perRecipient = Math.min(toPositiveInt2(options.perRecipient, 12), 50);
+  const maxAgeHours = Math.min(toPositiveInt2(options.maxAgeHours ?? toPositiveInt2(env("MAIL_NOTIFY_MAX_AGE_HOURS"), 48), 48), 720);
+  const dryRun = options.dryRun === true;
+  const appUrl = String(options.appUrl || env("APP_URL", "https://app.lanux.online")).replace(/\/+$/, "");
+  const skipped = {};
+  const skip = (reason, n = 1) => {
+    skipped[reason] = (skipped[reason] || 0) + n;
+  };
+  const { ok, rows } = await rest2(
+    `notifications?email_sent_at=is.null&is_read=eq.false&select=id,recipient_id,type,actor,content,target_id,created_at&order=created_at.asc&limit=${limit}`
+  );
+  if (!ok) {
+    return { pending: 0, recipients: 0, sent: 0, skipped: { supabase_okunamadi: 1 }, durationMs: Date.now() - startedAt, dryRun };
+  }
+  const pending = rows.length;
+  if (pending === 0) {
+    return { pending: 0, recipients: 0, sent: 0, skipped, durationMs: Date.now() - startedAt, dryRun };
+  }
+  const cutoff = Date.now() - maxAgeHours * 3600 * 1e3;
+  const stale = [];
+  const fresh = [];
+  for (const row of rows) {
+    const at = Date.parse(row.created_at || "");
+    if (Number.isFinite(at) && at < cutoff) stale.push(row.id);
+    else fresh.push(row);
+  }
+  if (stale.length) {
+    skip("cok_eski", stale.length);
+    if (!dryRun) await markSent(stale);
+  }
+  const byRecipient = /* @__PURE__ */ new Map();
+  for (const row of fresh) {
+    const id = String(row.recipient_id || "");
+    if (!id) {
+      skip("alici_yok");
+      continue;
+    }
+    const list = byRecipient.get(id) || [];
+    list.push(row);
+    byRecipient.set(id, list);
+  }
+  let sent = 0;
+  let recipients = 0;
+  for (const [recipientId, items] of byRecipient) {
+    const profile = await loadRecipient(recipientId);
+    if (!profile || !profile.email) {
+      skip(profile ? "adres_yok" : "profil_yok", items.length);
+      if (!dryRun) await markSent(items.map((i) => i.id));
+      continue;
+    }
+    const prefs = sanitizeEmailPrefs(profile.email_prefs);
+    if (!prefs.enabled) {
+      skip("abonelik_kapali", items.length);
+      if (!dryRun) await markSent(items.map((i) => i.id));
+      continue;
+    }
+    const wanted = items.filter((i) => prefs.types[String(i.type)] === true);
+    const unwanted = items.filter((i) => !wanted.includes(i));
+    if (unwanted.length) {
+      skip("tur_kapali", unwanted.length);
+      if (!dryRun) await markSent(unwanted.map((i) => i.id));
+    }
+    if (wanted.length === 0) continue;
+    recipients++;
+    if (dryRun) continue;
+    const token = unsubscribeToken(recipientId);
+    const allLines = summarize(wanted);
+    const paragraphs = allLines.slice(0, perRecipient);
+    const extra = allLines.length - paragraphs.length;
+    if (extra > 0) paragraphs.push(`\u2026ve ${extra} bildirim daha.`);
+    const result = await sendMail({
+      to: profile.email,
+      recipientName: profile.display_name || profile.username,
+      subject: wanted.length === 1 ? `Code4Ever: ${describe(wanted[0]).slice(0, 90)}` : `Code4Ever: ${wanted.length} yeni bildirim`,
+      heading: wanted.length === 1 ? "Yeni bir bildirimin var" : `${wanted.length} yeni bildirimin var`,
+      // sendMail gövdeyi düz metin alır ve boş satırları paragrafa çevirir.
+      body: paragraphs.join("\n\n"),
+      callToAction: { label: "Bildirimleri A\xE7", url: `${appUrl}/notifications` },
+      footnote: `Bu e-postay\u0131 Code4Ever hesab\u0131ndaki bildirim tercihlerin a\xE7\u0131k oldu\u011Fu i\xE7in al\u0131yorsun. Hangi bildirimlerin e-postayla gelece\u011Fini buradan se\xE7ebilirsin: ${appUrl}/settings`,
+      // Ayrı alan: dipnot uzunluk sınırına takılıyor ve jetonu ortadan kesiyordu, yani
+      // abonelikten çıkma bağlantısı kalıcı olarak bozuk gidiyordu.
+      unsubscribeUrl: `${appUrl}/api/email/unsubscribe?token=${token}`
+    });
+    if (result.ok) {
+      sent++;
+      await markSent(wanted.map((i) => i.id));
+    } else {
+      skip("gonderim_hatasi", wanted.length);
+    }
+  }
+  return { pending, recipients, sent, skipped, durationMs: Date.now() - startedAt, dryRun };
+}
+async function markSent(ids) {
+  if (ids.length === 0) return;
+  const list = ids.map((id) => `"${String(id).replace(/"/g, "")}"`).join(",");
+  await rest2(`notifications?id=in.(${encodeURIComponent(list)})`, {
+    method: "PATCH",
+    body: JSON.stringify({ email_sent_at: (/* @__PURE__ */ new Date()).toISOString() }),
+    headers: { Prefer: "return=minimal" }
+  });
+}
+async function loadRecipient(recipientId) {
+  const encoded = encodeURIComponent(recipientId);
+  for (const filter of [`id=eq.${encoded}`, `username=eq.${encoded}`]) {
+    const { ok, rows } = await rest2(`profiles?${filter}&select=id,username,display_name,email,email_prefs&limit=1`);
+    if (ok && rows.length > 0) {
+      const row = rows[0];
+      return {
+        id: String(row.id),
+        username: String(row.username || ""),
+        display_name: String(row.display_name || ""),
+        email: normalizeEmail(row.email),
+        email_prefs: row.email_prefs
+      };
+    }
+  }
+  return null;
+}
+async function readEmailPrefs(userId) {
+  const { ok, rows } = await rest2(`profiles?id=eq.${encodeURIComponent(userId)}&select=email_prefs&limit=1`);
+  if (!ok || rows.length === 0) return null;
+  return sanitizeEmailPrefs(rows[0].email_prefs);
+}
+async function writeEmailPrefs(userId, prefs) {
+  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ email_prefs: prefs }),
+    headers: { Prefer: "return=minimal" }
+  });
+  return ok;
+}
+function cronSecretMatches(presented) {
+  const secret = env("MAIL_NOTIFY_CRON_SECRET");
+  if (!secret) return false;
+  return safeEquals(String(presented || ""), secret);
+}
+
+// server.ts
 var app = (0, import_express.default)();
 var PORT = Number(env("PORT", "3000"));
 var IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -2945,6 +3236,94 @@ app.post(
       logoCid: "PREVIEW"
     }).replace('src="cid:PREVIEW"', 'src="/email-logo.png"');
     res.json({ success: true, html });
+  }
+);
+app.all(
+  "/api/notifications/email/dispatch",
+  rateLimit({ scope: "notify-dispatch", windowMs: 6e4, max: 12 }),
+  async (req, res) => {
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.status(405).json({ success: false, error: "method_not_allowed" });
+      return;
+    }
+    const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""))?.[1] || "";
+    const viaCron = cronSecretMatches(String(req.headers["x-cron-secret"] || "")) || cronSecretMatches(bearer);
+    if (!viaCron) {
+      await new Promise((resolve) => requireAdmin(req, res, () => resolve()));
+      if (res.headersSent) return;
+    }
+    if (!dispatcherConfigured()) {
+      res.status(503).json({
+        success: false,
+        error: "not_configured",
+        message: "Bildirim e-postalar\u0131 i\xE7in SUPABASE_SERVICE_ROLE_KEY ve MAIL_SMTP_* de\u011Fi\u015Fkenleri gerekli."
+      });
+      return;
+    }
+    try {
+      const result = await dispatchNotificationEmails({
+        limit: Number(req.body?.limit) || void 0,
+        dryRun: req.body?.dryRun === true
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(502).json({
+        success: false,
+        error: `Da\u011F\u0131t\u0131m hatas\u0131: ${String(error?.message || error).slice(0, 300)}`
+      });
+    }
+  }
+);
+app.all(
+  "/api/email/unsubscribe",
+  rateLimit({ scope: "notify-unsub", windowMs: 6e4, max: 30 }),
+  async (req, res) => {
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.status(405).json({ success: false, error: "method_not_allowed" });
+      return;
+    }
+    const oneClick = req.method === "POST";
+    const userId = verifyUnsubscribeToken(req.query.token);
+    const page = (title, message) => `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}.c{max-width:28rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{color:#a1a1aa;line-height:1.6;font-size:.9rem;margin:0 0 1.5rem}a{display:inline-block;padding:.7rem 1.2rem;border-radius:.75rem;background:#4f46e5;color:#fff;text-decoration:none;font-weight:600;font-size:.85rem}</style></head><body><div class="c"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><a href="/settings">Bildirim Tercihleri</a></div></body></html>`;
+    if (!userId) {
+      if (oneClick) {
+        res.status(400).json({ success: false, error: "invalid_token" });
+        return;
+      }
+      res.status(400).type("html").send(
+        page("Ba\u011Flant\u0131 ge\xE7ersiz", "Bu abonelikten \xE7\u0131kma ba\u011Flant\u0131s\u0131 ge\xE7ersiz veya eksik. Tercihlerini hesab\u0131ndan da kapatabilirsin.")
+      );
+      return;
+    }
+    const current = await readEmailPrefs(userId) || DEFAULT_EMAIL_PREFS;
+    const ok = await writeEmailPrefs(userId, { ...current, enabled: false });
+    if (oneClick) {
+      res.status(ok ? 200 : 502).json({ success: ok });
+      return;
+    }
+    res.status(ok ? 200 : 502).type("html").send(
+      ok ? page("Bildirim e-postalar\u0131 kapat\u0131ld\u0131", "Bundan sonra Code4Ever sana bildirim e-postas\u0131 g\xF6ndermeyecek. \u0130stedi\u011Fin zaman ayarlardan yeniden a\xE7abilirsin.") : page("\u0130\u015Flem tamamlanamad\u0131", "Tercihin \u015Fu anda kaydedilemedi. L\xFCtfen biraz sonra tekrar dene veya ayarlardan kapat.")
+    );
+  }
+);
+app.get("/api/me/email-prefs", requireAuth, async (req, res) => {
+  const userId = req.auth?.userId || "";
+  const prefs = await readEmailPrefs(userId) || DEFAULT_EMAIL_PREFS;
+  res.json({ success: true, prefs, defaults: DEFAULT_EMAIL_PREFS });
+});
+app.put(
+  "/api/me/email-prefs",
+  requireAuth,
+  rateLimit({ scope: "email-prefs", windowMs: 6e4, max: 30, perUser: true }),
+  async (req, res) => {
+    const userId = req.auth?.userId || "";
+    const prefs = sanitizeEmailPrefs(req.body);
+    const ok = await writeEmailPrefs(userId, prefs);
+    if (!ok) {
+      res.status(502).json({ success: false, error: "save_failed", message: "Tercihler kaydedilemedi." });
+      return;
+    }
+    res.json({ success: true, prefs });
   }
 );
 app.use("/api", (_req, res) => {

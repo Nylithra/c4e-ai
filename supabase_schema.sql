@@ -302,6 +302,12 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS show_liked_posts BOOLEAN DE
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
+-- E-posta bildirim tercihleri. Varsayılan bilinçli olarak AÇIK değil "seçmeli": üyenin
+-- doğrudan muhatap olduğu olaylar (yanıt, bahsetme, mesaj, başvuru) açık gelir; beğeni ve
+-- repost gibi yüksek hacimli, düşük değerli olaylar kapalı gelir. Aksi hâlde ilk popüler
+-- gönderi bir kutu dolusu e-posta üretir ve üye topluca aboneliği bırakır.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_prefs JSONB;
+
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS joined_communities JSONB DEFAULT '[]'::jsonb;
@@ -317,6 +323,11 @@ ALTER TABLE public.posts ADD COLUMN IF NOT EXISTS comments_count INTEGER DEFAULT
 
 ALTER TABLE public.job_listings ADD COLUMN IF NOT EXISTS applications JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.job_listings ADD COLUMN IF NOT EXISTS applied_by JSONB DEFAULT '[]'::jsonb;
+
+-- E-posta gönderimi bu bildirim için tamamlandığında damgalanır. NULL = henüz gönderilmedi.
+-- Gönderici bu sütunu tek doğruluk kaynağı olarak kullanır: aynı bildirim iki kez e-posta
+-- üretemez, sunucu yeniden başlasa veya iki dağıtım üst üste binse bile.
+ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMPTZ;
 
 ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.groups ADD COLUMN IF NOT EXISTS admins JSONB DEFAULT '[]'::jsonb;
@@ -788,6 +799,40 @@ CREATE TRIGGER trg_restrict_group_updates
 BEFORE UPDATE ON public.groups
 FOR EACH ROW EXECUTE FUNCTION public.restrict_group_updates();
 
+-- 4.6 Bildirimler: e-posta gönderim damgasını yalnızca arka uç yazabilir.
+--
+-- NEDEN: bildirimleri istemci oluşturuyor (anon anahtarla, RLS altında). email_sent_at
+-- serbest bırakılsaydı, kötü niyetli bir istemci bildirimi oluştururken damgayı doldurup
+-- karşı tarafın e-postasını SESSİZCE engelleyebilirdi — kurbanın fark edebileceği hiçbir iz
+-- bırakmadan. Damga bu yüzden istemci yazmalarında her zaman NULL'a zorlanır; yalnızca
+-- servis rolü (gönderimi fiilen yapan arka uç) gerçek bir değer yazabilir.
+CREATE OR REPLACE FUNCTION public.protect_notification_email_state()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    NEW.email_sent_at := NULL;
+  ELSE
+    -- Güncellemede mevcut değer korunur: istemci ne silebilir ne de uydurabilir.
+    NEW.email_sent_at := OLD.email_sent_at;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_notification_email_state ON public.notifications;
+CREATE TRIGGER trg_protect_notification_email_state
+BEFORE INSERT OR UPDATE ON public.notifications
+FOR EACH ROW EXECUTE FUNCTION public.protect_notification_email_state();
+
 -- ================================================================
 -- 5. ROW LEVEL SECURITY
 -- ================================================================
@@ -1194,6 +1239,12 @@ CREATE INDEX IF NOT EXISTS idx_community_api_keys_hash ON public.community_api_k
 CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_api_keys(community_id, revoked_at);
 -- The inbox list is always "this mailbox, newest UID first", which is exactly this index.
 CREATE INDEX IF NOT EXISTS idx_admin_mail_cache_mailbox ON public.admin_mail_cache(mailbox, uid DESC);
+-- Gönderici sorgusu tam olarak şudur: "e-postası gönderilmemiş, yeni bildirimler".
+-- Kısmi indeks yalnızca bekleyen satırları taşır; gönderilenler indeksten düşer, yani
+-- indeks tablo büyüdükçe değil kuyruk büyüdükçe büyür.
+CREATE INDEX IF NOT EXISTS idx_notifications_email_pending
+  ON public.notifications(created_at)
+  WHERE email_sent_at IS NULL;
 
 -- ================================================================
 -- 9. BOOTSTRAP THE PLATFORM ADMINISTRATOR

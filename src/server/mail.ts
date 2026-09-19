@@ -382,6 +382,16 @@ export interface SendMailInput {
   callToAction?: { label: string; url: string };
   footnote?: string;
   replyTo?: string;
+  /**
+   * Opt-out URL for bulk mail (notification digests).
+   *
+   * Passed separately rather than inlined into `footnote`, which is length-capped: an
+   * unsubscribe link cut mid-token is a permanently broken opt-out. It also becomes the
+   * List-Unsubscribe header, which is what actually makes Gmail and Outlook show their own
+   * one-click "Unsubscribe" button next to the sender — the mechanism large providers expect
+   * from bulk senders, and whose absence drives recipients to the spam button instead.
+   */
+  unsubscribeUrl?: string;
 }
 
 export interface SendMailResult {
@@ -401,6 +411,11 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
   if (!to) return { ok: false, error: 'Geçersiz alıcı e-posta adresi.' };
 
   const subject = headerSafe(input.subject, 180);
+  // CR/LF stripped because this value also becomes a mail HEADER; an unescaped newline there
+  // is a header-injection vector. Only absolute http(s) URLs are accepted.
+  const unsubscribeUrl = /^https?:\/\/[^\s<>"]+$/.test(String(input.unsubscribeUrl || '').trim())
+    ? headerSafe(String(input.unsubscribeUrl).trim(), 500)
+    : '';
   if (!subject) return { ok: false, error: 'Konu boş olamaz.' };
 
   const bodyText = String(input.body || '').trim();
@@ -416,6 +431,8 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
     recipientName: input.recipientName ? headerSafe(input.recipientName, 80) : undefined,
     callToAction: input.callToAction,
     footnote: input.footnote ? headerSafe(input.footnote, 300) : undefined,
+    // NOT length-capped: truncating this is what silently breaks the opt-out.
+    unsubscribeUrl: unsubscribeUrl || undefined,
     logoCid: LOGO_CID
   };
 
@@ -438,6 +455,16 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
       to,
       subject,
       ...(replyTo ? { replyTo } : {}),
+      // RFC 2369 / RFC 8058. The One-Click variant tells the provider it may POST the URL
+      // directly, so the member never has to land on a page to opt out.
+      ...(unsubscribeUrl
+        ? {
+            headers: {
+              'List-Unsubscribe': `<${unsubscribeUrl}>`,
+              'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+            }
+          }
+        : {}),
       text: renderMailText(templateInput),
       html: renderMailHtml(templateInput),
       attachments: logoAttachment()
