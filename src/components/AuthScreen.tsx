@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Github, Shield, Sparkles, Code2, GitFork, MessageSquare, Zap } from 'lucide-react';
+import { Github, Shield, Sparkles, Code2, GitFork, MessageSquare, Zap, KeyRound } from 'lucide-react';
 import { UserProfile } from '../types';
 import { signInWithGitHubSupabase, saveStoredProfile, DEFAULT_USER } from '../services/supabaseClient';
+import { startLanuxFlow } from '../services/lanuxClient';
 
 interface AuthScreenProps {
   language: 'tr' | 'en';
@@ -11,6 +12,7 @@ interface AuthScreenProps {
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ language, onChangeLanguage, isClosedBetaActive = false }) => {
   const [loading, setLoading] = useState(false);
+  const [lanuxLoading, setLanuxLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -24,6 +26,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ language, onChangeLangua
       setAuthError(err?.message || 'Giriş sırasında bir hata oluştu.');
     } finally {
       setLoading(false);
+    }
+  };
+
+
+  const handleLanuxLogin = async () => {
+    setLanuxLoading(true);
+    setAuthError(null);
+    const result = await startLanuxFlow('login');
+    if (!result.ok) {
+      // Yönlendirme olmadıysa kullanıcı burada kalır; sebebi görmeli.
+      setAuthError(result.error || 'Lanux girişi başlatılamadı.');
+      setLanuxLoading(false);
     }
   };
 
@@ -156,9 +170,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ language, onChangeLangua
           )}
 
           <div className="space-y-3">
+            {/* Lanux birincil giriş yolu: marka gradyanını taşıyor ve üstte duruyor. */}
+            <button
+              onClick={handleLanuxLogin}
+              disabled={loading || demoLoading || lanuxLoading}
+              className="brand-gradient w-full py-3.5 px-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-3 transition-all duration-200 shadow-xl active:scale-[0.99] disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <KeyRound className="w-5 h-5" />
+              <span>
+                {lanuxLoading
+                  ? language === 'tr'
+                    ? 'Lanux\'a yönlendiriliyor...'
+                    : 'Redirecting to Lanux...'
+                  : language === 'tr'
+                  ? 'Lanux ile Giriş Yap'
+                  : 'Sign in with Lanux'}
+              </span>
+            </button>
+
             <button
               onClick={handleGitHubOAuth}
-              disabled={loading || demoLoading}
+              disabled={loading || demoLoading || lanuxLoading}
               className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-zinc-200 text-black font-bold text-sm flex items-center justify-center gap-3 transition-all duration-200 shadow-xl active:scale-[0.99] disabled:opacity-50 cursor-pointer"
             >
               <Github className="w-5 h-5" />
@@ -199,10 +231,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ language, onChangeLangua
               <Shield className="w-4 h-4 text-emerald-400" />
               <span>Gelişmiş Koruma Sistemi</span>
             </div>
+            {/*
+              Bu not eskiden yalnızca GitHub'ı anlatıyordu. Artık Lanux ile de girilebiliyor
+              ve o yolda GitHub kimliği gelmiyor; kullanıcının depolarını neden göremediğini
+              sonradan keşfetmesi yerine burada söylemek daha dürüst.
+            */}
             <p className="text-[11px] text-zinc-500 font-mono leading-relaxed">
               {language === 'tr'
-                ? 'Giriş yaptığınızda GitHub profil resminiz, biyografiniz ve kamuya açık depolarınız senkronize edilir.'
-                : 'Your GitHub avatar, bio, and public repositories sync seamlessly upon authorization.'}
+                ? 'GitHub ile girdiğinizde profil resminiz, biyografiniz ve kamuya açık depolarınız senkronize edilir. Lanux ile girdiğinizde depolarınızı görmek için Ayarlar > Bağlı Hesaplar bölümünden GitHub hesabınızı bağlayabilirsiniz.'
+                : 'Signing in with GitHub syncs your avatar, bio and public repositories. If you sign in with Lanux, link your GitHub account under Settings > Connected Accounts to see your repositories.'}
             </p>
           </div>
         </div>

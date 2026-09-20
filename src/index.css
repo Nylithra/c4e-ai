@@ -466,18 +466,27 @@ html[data-c4e-theme="on"][data-c4e-scope="app"] .nav-active {
  * Kapsam bilinçli olarak dar: paragraf ve liste içindeki satır içi bağlantılar DIŞARIDA.
  * Onlara taban yükseklik vermek satır aralığını bozar ve metnin akışını kırar — bir
  * cümlenin ortasındaki bağlantı zaten parmakla değil, çevresindeki metinle hedeflenir.
+ *
+ * `@layer base` ŞART. Katmansız bir kural, özgüllüğü ne olursa olsun, katmanlı TÜM
+ * Tailwind yardımcılarını yener; bu kural katman dışında kaldığında `min-h-11` yazılmış
+ * bir düğme dokunmatik cihazda 44px değil 36px oluyordu. Yani taban, tam da yükseltmek
+ * için var olduğu yerde tavana dönüşüyordu. Base katmanında yardımcılar üstte kalır:
+ * hiçbir şey yazılmamış düğmeler 36px tabanını alır, açıkça daha büyük istenmiş olanlar
+ * istenen yükseklikte kalır.
  */
-@media (pointer: coarse) {
-  button,
-  [role="button"],
-  select {
-    min-height: 36px;
-  }
+@layer base {
+  @media (pointer: coarse) {
+    button,
+    [role="button"],
+    select {
+      min-height: 36px;
+    }
 
-  /* Satır içi bağlantılar ve zaten yeterince büyük olan alanlar etkilenmez. */
-  p button,
-  li button,
-  .user-text button {
-    min-height: 0;
+    /* Satır içi bağlantılar ve zaten yeterince büyük olan alanlar etkilenmez. */
+    p button,
+    li button,
+    .user-text button {
+      min-height: 0;
+    }
   }
 }

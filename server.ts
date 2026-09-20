@@ -64,6 +64,31 @@ import {
 } from './src/server/mail';
 import { clearMailbox, readInboxSnapshot, storeWarning } from './src/server/mailStore';
 import {
+  buildAuthorizeUrl,
+  createPkce,
+  decryptRefreshToken,
+  encryptRefreshToken,
+  exchangeCode,
+  getLanuxConfig,
+  lanuxUnavailableReason,
+  notifyServiceLink,
+  openFlow,
+  revokeRefreshToken,
+  sealFlow,
+  verifyIdToken
+} from './src/server/lanuxAuth';
+import {
+  accountsConfigured,
+  clearLanuxLink,
+  createSessionToken,
+  findById,
+  readEncryptedRefreshToken,
+  resolveLinkAccount,
+  resolveLoginAccount,
+  writeGithubLink,
+  writeLanuxLink
+} from './src/server/lanuxAccounts';
+import {
   cronSecretMatches,
   dispatchNotificationEmails,
   dispatcherConfigured,
@@ -1966,6 +1991,307 @@ app.put(
       return;
     }
     res.json({ success: true, prefs });
+  }
+);
+
+// -------------------------------------------------------------
+// LANUX İLE GİRİŞ (OpenID Connect)
+// -------------------------------------------------------------
+
+/** Ham `Cookie` başlığından tek bir çerezi okur (cookie-parser bağımlılığı eklemeden). */
+function readCookie(req: Request, name: string): string {
+  const header = String(req.headers.cookie || '');
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return '';
+      }
+    }
+  }
+  return '';
+}
+
+const FLOW_COOKIE = 'c4e_lanux_oidc';
+const CLAIM_COOKIE = 'c4e_lanux_claim';
+
+/**
+ * Akış çerezi. `httpOnly` şart: içinde PKCE doğrulayıcısı var ve tarayıcı JavaScript'ine
+ * görünmesi, kodu ele geçiren bir saldırganın belirteç alabilmesi demek olur.
+ * `sameSite: 'lax'` gerekiyor çünkü çerez, Lanux'tan gelen üst düzey yönlendirmede geri
+ * gönderilmeli — 'strict' olsaydı callback çerezi hiç görmezdi.
+ */
+function flowCookieOptions() {
+  return {
+    httpOnly: true as const,
+    sameSite: 'lax' as const,
+    secure: IS_PRODUCTION,
+    path: '/',
+    maxAge: 10 * 60 * 1000
+  };
+}
+
+/**
+ * Akışı başlatır ve yetkilendirme adresini DÖNER (yönlendirmez).
+ *
+ * Neden JSON: 'link' kipinde kullanıcının mevcut oturumunu bilmemiz gerekiyor, oturum ise
+ * Supabase belirteci olarak `Authorization` başlığında taşınıyor. Üst düzey bir yönlendirme
+ * o başlığı taşımaz; bu yüzden istemci bu ucu fetch ile çağırıp dönen adrese kendisi gider.
+ */
+app.get(
+  '/api/auth/lanux/start',
+  rateLimit({ scope: 'lanux-start', windowMs: 60000, max: 20 }),
+  async (req: Request, res: Response) => {
+    const config = getLanuxConfig();
+    if (!config) {
+      res.status(503).json({ success: false, error: 'not_configured', message: lanuxUnavailableReason() });
+      return;
+    }
+
+    const mode = req.query.mode === 'link' ? 'link' : 'login';
+    let userId: string | undefined;
+
+    if (mode === 'link') {
+      // Bağlama, kimin hesabına bağlanacağını bilmeyi gerektirir; oturumsuz yapılamaz.
+      // requireAuth elle çağrılıyor çünkü middleware olarak eklenseydi 'login' kipi de
+      // oturum isterdi — oysa giriş yapmak için tam da oturumu olmayanlar gelir.
+      await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
+      if (res.headersSent) return;
+      userId = req.auth?.userId;
+    }
+
+    const { verifier, challenge } = createPkce();
+    const state = crypto.randomBytes(24).toString('base64url');
+    const nonce = crypto.randomBytes(24).toString('base64url');
+
+    res.cookie(FLOW_COOKIE, sealFlow({ state, nonce, verifier, mode, userId }), flowCookieOptions());
+    res.json({
+      success: true,
+      url: buildAuthorizeUrl(config, {
+        state,
+        nonce,
+        challenge,
+        prompt: typeof req.query.prompt === 'string' ? req.query.prompt : undefined
+      }),
+      mode
+    });
+  }
+);
+
+/**
+ * Lanux'tan dönüş. Buradan sonrası kimlik doğrulamanın kendisi, bu yüzden hiçbir adım
+ * atlanmıyor: state → kod takası → id_token imza/issuer/audience/nonce doğrulaması.
+ */
+app.get(
+  '/api/auth/lanux/callback',
+  rateLimit({ scope: 'lanux-callback', windowMs: 60000, max: 30 }),
+  async (req: Request, res: Response) => {
+    const config = getLanuxConfig();
+
+    const fail = (message: string, status = 400) => {
+      res.clearCookie(FLOW_COOKIE, { path: '/' });
+      res
+        .status(status)
+        .type('html')
+        .send(
+          `<!doctype html><html lang="tr"><head><meta charset="utf-8">` +
+            `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+            `<title>Lanux bağlantısı tamamlanamadı</title><style>` +
+            `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;` +
+            `font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}` +
+            `.c{max-width:28rem;text-align:center}h1{font-size:1.15rem;margin:0 0 .75rem}` +
+            `p{color:#a1a1aa;line-height:1.6;font-size:.9rem;margin:0 0 1.5rem}` +
+            `a{display:inline-block;padding:.7rem 1.2rem;border-radius:.75rem;background:#4f46e5;color:#fff;` +
+            `text-decoration:none;font-weight:600;font-size:.85rem}</style></head>` +
+            `<body><div class="c"><h1>Lanux bağlantısı tamamlanamadı</h1>` +
+            `<p>${escapeHtml(message)}</p><a href="/">Code4Ever'e dön</a></div></body></html>`
+        );
+    };
+
+    if (!config) return fail(lanuxUnavailableReason() || 'Lanux girişi yapılandırılmamış.', 503);
+    if (!accountsConfigured()) return fail('Sunucu Supabase ile yapılandırılmamış.', 503);
+
+    const providerError = typeof req.query.error === 'string' ? req.query.error : '';
+    if (providerError) {
+      const description = typeof req.query.error_description === 'string' ? req.query.error_description : '';
+      return fail(
+        providerError === 'access_denied'
+          ? 'Lanux hesabınıza erişim izni verilmedi. İsterseniz tekrar deneyebilirsiniz.'
+          : description || providerError
+      );
+    }
+
+    const flow = openFlow(readCookie(req, FLOW_COOKIE));
+    if (!flow) return fail('Oturum akışı bulunamadı veya süresi doldu. Lütfen baştan deneyin.');
+
+    // CSRF: saldırganın başlattığı bir akışın kurbanın tarayıcısında tamamlanmasını engeller.
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!state || !safeEquals(state, flow.state)) return fail('Güvenlik doğrulaması başarısız (state).');
+
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return fail('Yetkilendirme kodu alınamadı.');
+
+    const exchanged = await exchangeCode(config, code, flow.verifier);
+    if (!exchanged.ok || !exchanged.tokens) return fail(exchanged.error || 'Belirteç alınamadı.');
+
+    // KİMLİK BURADA KANITLANIR. Bu adım geçilmeden hiçbir bağlama yapılmaz.
+    const verified = await verifyIdToken(config, exchanged.tokens.id_token, flow.nonce);
+    if (!verified.ok || !verified.identity) return fail(verified.error || 'Kimlik doğrulanamadı.');
+
+    const identity = verified.identity;
+    const resolved =
+      flow.mode === 'link'
+        ? await resolveLinkAccount(String(flow.userId || ''), identity)
+        : await resolveLoginAccount(identity);
+
+    if (!resolved.ok || !resolved.profile) return fail(resolved.error || 'Hesap eşlenemedi.');
+
+    const encrypted = exchanged.tokens.refresh_token
+      ? encryptRefreshToken(exchanged.tokens.refresh_token)
+      : null;
+    const linked = await writeLanuxLink(resolved.profile.id, identity, encrypted);
+    if (!linked) return fail('Lanux bağlantısı kaydedilemedi.');
+
+    // Lanux'un "Hizmetlerim" ekranındaki rozeti. Başarısızlığı akışı düşürmez: bağlama
+    // bizim tarafımızda tamamlandı, kullanıcıyı bir rozet yüzünden geri çevirmek yanlış olur.
+    void notifyServiceLink(config, exchanged.tokens.access_token, 'link', resolved.profile.id);
+
+    res.clearCookie(FLOW_COOKIE, { path: '/' });
+
+    // 'link' kipinde kullanıcının zaten oturumu var; yeni oturum üretmeye gerek yok.
+    if (flow.mode === 'link') {
+      res.redirect('/settings?lanux=linked');
+      return;
+    }
+
+    const sessionToken = resolved.profile.email
+      ? await createSessionToken(resolved.profile.email, resolved.profile.id, identity)
+      : null;
+    if (!sessionToken) return fail('Oturum açılamadı. Lütfen tekrar deneyin.', 502);
+
+    /*
+     * Oturum jetonu ADRESE KONMAZ. URL'ye yazılsaydı tarayıcı geçmişine, sunucu günlüklerine
+     * ve dışarı giden isteklerin Referer başlığına sızardı. Bunun yerine kısa ömürlü, httpOnly
+     * bir çereze konuyor; uygulama açılışta bir kez `/session` ucundan talep ediyor ve çerez
+     * o anda siliniyor.
+     */
+    res.cookie(CLAIM_COOKIE, sessionToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: IS_PRODUCTION,
+      path: '/',
+      maxAge: 2 * 60 * 1000
+    });
+    res.redirect(resolved.created ? '/?lanux=welcome' : '/?lanux=ok');
+  }
+);
+
+/**
+ * Callback'in bıraktığı tek kullanımlık oturum jetonunu teslim eder ve çerezi siler.
+ * İstemci bunu Supabase'in `verifyOtp` çağrısıyla gerçek bir oturuma çevirir.
+ */
+app.post(
+  '/api/auth/lanux/session',
+  rateLimit({ scope: 'lanux-session', windowMs: 60000, max: 20 }),
+  (req: Request, res: Response) => {
+    const token = readCookie(req, CLAIM_COOKIE);
+    res.clearCookie(CLAIM_COOKIE, { path: '/' });
+    if (!token) {
+      res.status(404).json({ success: false, error: 'no_pending_session' });
+      return;
+    }
+    res.json({ success: true, token_hash: token });
+  }
+);
+
+/** Üyenin Lanux ve GitHub bağlantı durumu. */
+app.get('/api/auth/lanux/status', requireAuth, async (req: Request, res: Response) => {
+  const profile = await findById(req.auth?.userId || '');
+  res.json({
+    success: true,
+    configured: Boolean(getLanuxConfig()),
+    reason: lanuxUnavailableReason(),
+    lanux: profile?.lanux_user_id
+      ? { linked: true, username: (profile as any).lanux_username || null }
+      : { linked: false },
+    github: profile?.github_username ? { linked: true, username: profile.github_username } : { linked: false }
+  });
+});
+
+/**
+ * Bağlantıyı kaldırır: Lanux tarafındaki hizmet kaydı ve yenileme belirteci iptal edilir,
+ * sonra kendi kaydımız temizlenir.
+ *
+ * Yalnızca Lanux ile giriş yapmış, başka giriş yolu olmayan bir üyenin bağlantıyı kaldırması
+ * ENGELLENİR — aksi hâlde kendi hesabının kapısını kilitlemiş olurdu.
+ */
+app.post(
+  '/api/auth/lanux/unlink',
+  requireAuth,
+  rateLimit({ scope: 'lanux-unlink', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const userId = req.auth?.userId || '';
+    const profile = await findById(userId);
+    if (!profile?.lanux_user_id) {
+      res.status(400).json({ success: false, error: 'not_linked', message: 'Bağlı bir Lanux hesabı yok.' });
+      return;
+    }
+
+    if (!profile.github_username) {
+      res.status(409).json({
+        success: false,
+        error: 'last_identity',
+        message:
+          'Lanux bağlantısını kaldırmadan önce GitHub hesabınızı bağlayın; aksi hâlde hesabınıza giriş yapamazsınız.'
+      });
+      return;
+    }
+
+    const config = getLanuxConfig();
+    if (config) {
+      const stored = await readEncryptedRefreshToken(userId);
+      const refreshToken = stored ? decryptRefreshToken(stored) : null;
+      if (refreshToken) void revokeRefreshToken(config, refreshToken);
+    }
+
+    const cleared = await clearLanuxLink(userId);
+    res.status(cleared ? 200 : 502).json({ success: cleared });
+  }
+);
+
+/**
+ * GitHub bağlantısını kaydeder. Yalnızca Lanux ile giren üyelerin GitHub kimliği olmadığı
+ * için depolarına erişebilmek adına bunu ayrıca bağlamaları gerekiyor.
+ */
+app.post(
+  '/api/auth/github/link',
+  requireAuth,
+  rateLimit({ scope: 'github-link', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const username = asString(req.body?.username, 40);
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
+      res.status(400).json({ success: false, error: 'invalid_username' });
+      return;
+    }
+
+    // Kullanıcı adının gerçekten var olduğunu GitHub'a sorarak doğrula: uydurma bir ad
+    // kaydedip "bağlı" görünmek, depo ekranını kalıcı olarak boş bırakırdı.
+    const check = await safeFetch(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+      headers: { 'User-Agent': 'Code4Ever-Platform', Accept: 'application/vnd.github+json' },
+      allowedHosts: ['api.github.com'],
+      timeoutMs: 10000,
+      maxResponseBytes: 128 * 1024
+    });
+    if (!check.ok) {
+      res.status(404).json({ success: false, error: 'github_user_not_found' });
+      return;
+    }
+
+    const saved = await writeGithubLink(req.auth?.userId || '', username);
+    res.status(saved ? 200 : 502).json({ success: saved, username });
   }
 );
 

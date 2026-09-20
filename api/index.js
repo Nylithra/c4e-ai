@@ -653,7 +653,7 @@ var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
-var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+var import_node_crypto5 = __toESM(require("node:crypto"), 1);
 init_security();
 
 // src/server/communityApi.ts
@@ -1592,6 +1592,422 @@ async function verifyImap() {
 // server.ts
 init_mailStore();
 
+// src/server/lanuxAuth.ts
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+init_security();
+var LANUX_SCOPES = "openid profile email offline_access services:write";
+function getLanuxConfig() {
+  const issuer = env("LANUX_ISSUER").replace(/\/+$/, "");
+  const clientId = env("LANUX_CLIENT_ID");
+  const clientSecret = env("LANUX_CLIENT_SECRET");
+  const redirectUri = env("LANUX_REDIRECT_URI");
+  if (!issuer || !clientId || !clientSecret || !redirectUri) return null;
+  return { issuer, clientId, clientSecret, redirectUri };
+}
+function lanuxUnavailableReason() {
+  return getLanuxConfig() ? null : "Lanux giri\u015Fi yap\u0131land\u0131r\u0131lmam\u0131\u015F (LANUX_ISSUER / LANUX_CLIENT_ID / LANUX_CLIENT_SECRET / LANUX_REDIRECT_URI eksik).";
+}
+function issuerHost(config) {
+  try {
+    return [new URL(config.issuer).hostname];
+  } catch {
+    return [];
+  }
+}
+function createPkce() {
+  const verifier = import_node_crypto3.default.randomBytes(32).toString("base64url");
+  const challenge = import_node_crypto3.default.createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+function sealFlow(secrets) {
+  const payload = Buffer.from(JSON.stringify({ ...secrets, issuedAt: Date.now() }), "utf8").toString("base64url");
+  return `${payload}.${hmacHex(flowSecret(), payload)}`;
+}
+function openFlow(sealed, maxAgeMs = 10 * 60 * 1e3) {
+  const raw = String(sealed || "");
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = raw.slice(0, dot);
+  const signature = raw.slice(dot + 1);
+  if (!safeEquals(signature, hmacHex(flowSecret(), payload))) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!parsed?.state || !parsed?.nonce || !parsed?.verifier) return null;
+    if (!Number.isFinite(parsed.issuedAt) || Date.now() - parsed.issuedAt > maxAgeMs) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+var fallbackSecret = "";
+function flowSecret() {
+  const configured = env("LANUX_STATE_SECRET") || env("OAUTH_STATE_SECRET");
+  if (configured) return configured;
+  if (!fallbackSecret) fallbackSecret = import_node_crypto3.default.randomBytes(32).toString("hex");
+  return fallbackSecret;
+}
+function buildAuthorizeUrl(config, params) {
+  const url = new URL(`${config.issuer}/authorize`);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("redirect_uri", config.redirectUri);
+  url.searchParams.set("scope", LANUX_SCOPES);
+  url.searchParams.set("state", params.state);
+  url.searchParams.set("nonce", params.nonce);
+  url.searchParams.set("code_challenge", params.challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  if (params.prompt && ["login", "consent", "none"].includes(params.prompt)) {
+    url.searchParams.set("prompt", params.prompt);
+  }
+  return url.toString();
+}
+function basicAuth(config) {
+  return "Basic " + Buffer.from(
+    `${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`
+  ).toString("base64");
+}
+async function tokenRequest(config, body) {
+  const response = await safeFetch(`${config.issuer}/api/oauth/token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: basicAuth(config)
+    },
+    body: new URLSearchParams(body).toString(),
+    allowedHosts: issuerHost(config),
+    timeoutMs: 15e3,
+    maxResponseBytes: 256 * 1024
+  });
+  let parsed = null;
+  try {
+    parsed = JSON.parse(response.text || "{}");
+  } catch {
+    parsed = null;
+  }
+  if (!response.ok || !parsed?.id_token) {
+    const code = String(parsed?.error || `http_${response.status}`);
+    const detail = String(parsed?.error_description || "").slice(0, 200);
+    return { ok: false, error: detail ? `${code}: ${detail}` : code };
+  }
+  return { ok: true, tokens: parsed };
+}
+async function exchangeCode(config, code, verifier) {
+  return tokenRequest(config, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: config.redirectUri,
+    code_verifier: verifier
+  });
+}
+var jwksCache = /* @__PURE__ */ new Map();
+function createCachedJwks(issuer) {
+  return import("jose").then(
+    ({ createRemoteJWKSet }) => createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`))
+  );
+}
+async function verifyIdToken(config, idToken, expectedNonce) {
+  try {
+    if (!jwksCache.has(config.issuer)) jwksCache.set(config.issuer, createCachedJwks(config.issuer));
+    const jwks = await jwksCache.get(config.issuer);
+    const { jwtVerify } = await import("jose");
+    const { payload } = await jwtVerify(idToken, jwks, {
+      issuer: config.issuer,
+      audience: config.clientId
+    });
+    if (!payload.nonce || !safeEquals(String(payload.nonce), expectedNonce)) {
+      return { ok: false, error: "nonce do\u011Frulamas\u0131 ba\u015Far\u0131s\u0131z" };
+    }
+    const sub = String(payload.sub || "");
+    if (!sub) return { ok: false, error: "id_token i\xE7inde sub yok" };
+    return {
+      ok: true,
+      identity: {
+        sub,
+        username: String(payload.preferred_username || "").slice(0, 80),
+        email: payload.email ? String(payload.email).toLowerCase().slice(0, 254) : null,
+        // Lanux `email_verified` göndermiyorsa DOĞRULANMAMIŞ sayılır. Varsayılanı `true`
+        // yapmak, e-posta üzerinden otomatik hesap eşlemeyi hesap ele geçirmeye çevirirdi.
+        emailVerified: payload.email_verified === true,
+        name: String(payload.name || payload.preferred_username || "").slice(0, 120),
+        picture: String(payload.picture || "").slice(0, 500)
+      }
+    };
+  } catch (error) {
+    return { ok: false, error: `id_token do\u011Frulanamad\u0131: ${String(error?.message || error).slice(0, 200)}` };
+  }
+}
+function encryptionKey() {
+  return import_node_crypto3.default.createHash("sha256").update(`lanux-refresh:${flowSecret()}`).digest();
+}
+function encryptRefreshToken(plaintext) {
+  if (!plaintext) return "";
+  const iv = import_node_crypto3.default.randomBytes(12);
+  const cipher = import_node_crypto3.default.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+function decryptRefreshToken(stored) {
+  const raw = String(stored || "");
+  const parts = raw.split(".");
+  if (parts.length !== 4 || parts[0] !== "v1") return null;
+  try {
+    const decipher = import_node_crypto3.default.createDecipheriv(
+      "aes-256-gcm",
+      encryptionKey(),
+      Buffer.from(parts[1], "base64url")
+    );
+    decipher.setAuthTag(Buffer.from(parts[2], "base64url"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(parts[3], "base64url")),
+      decipher.final()
+    ]);
+    return decrypted.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+async function notifyServiceLink(config, accessToken, action, externalUserId) {
+  try {
+    const response = await safeFetch(`${config.issuer}/api/v1/me/services`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        service_key: "code4ever",
+        action,
+        external_user_id: externalUserId,
+        plan: "free"
+      }),
+      allowedHosts: issuerHost(config),
+      timeoutMs: 1e4,
+      maxResponseBytes: 64 * 1024
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+async function revokeRefreshToken(config, refreshToken) {
+  try {
+    const response = await safeFetch(`${config.issuer}/api/oauth/revoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(config)
+      },
+      body: new URLSearchParams({ token: refreshToken }).toString(),
+      allowedHosts: issuerHost(config),
+      timeoutMs: 1e4,
+      maxResponseBytes: 64 * 1024
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// src/server/lanuxAccounts.ts
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+init_security();
+function accountsConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+}
+function adminHeaders3(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+async function call(path3, init = {}) {
+  const response = await safeFetch(`${SUPABASE_URL}${path3}`, {
+    method: init.method || "GET",
+    headers: adminHeaders3(),
+    body: init.body,
+    timeoutMs: 15e3,
+    maxResponseBytes: 1024 * 1024
+  });
+  let json = null;
+  try {
+    json = JSON.parse(response.text || "null");
+  } catch {
+    json = null;
+  }
+  return { ok: response.ok, status: response.status, json };
+}
+var rest2 = (pathAndQuery, init) => call(`/rest/v1/${pathAndQuery}`, init);
+var PROFILE_FIELDS = "id,username,display_name,email,lanux_user_id,github_username";
+async function findProfile(filter) {
+  const { ok, json } = await rest2(`profiles?${filter}&select=${PROFILE_FIELDS}&limit=1`);
+  if (!ok || !Array.isArray(json) || json.length === 0) return null;
+  return json[0];
+}
+var findByLanuxSub = (sub) => findProfile(`lanux_user_id=eq.${encodeURIComponent(sub)}`);
+var findByEmail = (email) => findProfile(`email=eq.${encodeURIComponent(email)}`);
+var findById = (id) => findProfile(`id=eq.${encodeURIComponent(id)}`);
+var RESERVED = /* @__PURE__ */ new Set([
+  "admin",
+  "administrator",
+  "nylithra",
+  "c4e_admin",
+  "code4ever",
+  "system",
+  "root",
+  "support",
+  "staff",
+  "moderator",
+  "security",
+  "official",
+  "api",
+  "bot"
+]);
+function sanitizeUsername(raw) {
+  const base = String(raw || "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 24);
+  return base.length >= 3 ? base : "";
+}
+async function allocateUsername(preferred) {
+  const base = sanitizeUsername(preferred) || `lanux${import_node_crypto4.default.randomBytes(3).toString("hex")}`;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidate = attempt === 0 ? base : `${base}${attempt + 1}`.slice(0, 28);
+    if (RESERVED.has(candidate)) continue;
+    const taken = await findProfile(`username=eq.${encodeURIComponent(candidate)}`);
+    if (!taken) return candidate;
+  }
+  return `lanux${import_node_crypto4.default.randomBytes(5).toString("hex")}`;
+}
+async function findAuthUserByEmail(email) {
+  const { ok, json } = await call(`/auth/v1/admin/users?filter=${encodeURIComponent(email)}`);
+  if (!ok) return null;
+  const users = Array.isArray(json?.users) ? json.users : Array.isArray(json) ? json : [];
+  const match = users.find((u) => String(u?.email || "").toLowerCase() === email.toLowerCase());
+  return match ? { id: String(match.id) } : null;
+}
+async function createAuthUser(identity, email, forcedId) {
+  const { ok, json } = await call("/auth/v1/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      ...forcedId ? { id: forcedId } : {},
+      email,
+      // Kimliği Lanux doğruladı; kullanıcıyı bir de Supabase'in doğrulama postasıyla
+      // uğraştırmak gereksiz bir engel olurdu.
+      email_confirm: true,
+      user_metadata: {
+        full_name: identity.name,
+        avatar_url: identity.picture,
+        provider: "lanux",
+        lanux_sub: identity.sub
+      }
+    })
+  });
+  return ok && json?.id ? { id: String(json.id) } : null;
+}
+async function ensureAuthUser(email, profileId, identity) {
+  const existing = await findAuthUserByEmail(email);
+  if (existing) return true;
+  const created = await createAuthUser(identity, email, profileId);
+  return Boolean(created);
+}
+async function createSessionToken(email, profileId, identity) {
+  if (!await ensureAuthUser(email, profileId, identity)) return null;
+  const { ok, json } = await call("/auth/v1/admin/generate_link", {
+    method: "POST",
+    body: JSON.stringify({ type: "magiclink", email })
+  });
+  if (!ok) return null;
+  const token = json?.hashed_token || json?.properties?.hashed_token;
+  return token ? String(token) : null;
+}
+async function writeLanuxLink(profileId, identity, encryptedRefreshToken) {
+  const patch = {
+    lanux_user_id: identity.sub,
+    lanux_username: identity.username || null,
+    lanux_linked_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (encryptedRefreshToken) patch.lanux_refresh_token = encryptedRefreshToken;
+  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch)
+  });
+  return ok;
+}
+async function clearLanuxLink(profileId) {
+  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      lanux_user_id: null,
+      lanux_username: null,
+      lanux_linked_at: null,
+      lanux_refresh_token: null
+    })
+  });
+  return ok;
+}
+async function writeGithubLink(profileId, githubUsername) {
+  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      github_username: githubUsername,
+      github_linked_at: (/* @__PURE__ */ new Date()).toISOString()
+    })
+  });
+  return ok;
+}
+async function readEncryptedRefreshToken(profileId) {
+  const { ok, json } = await rest2(
+    `profiles?id=eq.${encodeURIComponent(profileId)}&select=lanux_refresh_token&limit=1`
+  );
+  if (!ok || !Array.isArray(json) || json.length === 0) return null;
+  return json[0]?.lanux_refresh_token || null;
+}
+async function resolveLoginAccount(identity) {
+  const existing = await findByLanuxSub(identity.sub);
+  if (existing) return { ok: true, profile: existing };
+  if (identity.emailVerified && identity.email) {
+    const byEmail = await findByEmail(identity.email);
+    if (byEmail) {
+      if (byEmail.lanux_user_id && byEmail.lanux_user_id !== identity.sub) {
+        return { ok: false, error: "Bu e-posta adresine sahip Code4Ever hesab\u0131 ba\u015Fka bir Lanux hesab\u0131na ba\u011Fl\u0131." };
+      }
+      return { ok: true, profile: byEmail };
+    }
+  }
+  if (!identity.email) {
+    return { ok: false, error: "Lanux hesab\u0131nda e-posta adresi yok; Code4Ever hesab\u0131 olu\u015Fturulam\u0131yor." };
+  }
+  const authUser = await findAuthUserByEmail(identity.email) || await createAuthUser(identity, identity.email);
+  if (!authUser) return { ok: false, error: "Kimlik sa\u011Flay\u0131c\u0131 hesab\u0131 olu\u015Fturulamad\u0131." };
+  const username = await allocateUsername(identity.username || identity.email.split("@")[0]);
+  const { ok } = await rest2("profiles", {
+    method: "POST",
+    body: JSON.stringify([
+      {
+        id: authUser.id,
+        username,
+        display_name: identity.name || username,
+        email: identity.email,
+        avatar_url: identity.picture || null,
+        role: "Geli\u015Ftirici"
+      }
+    ])
+  });
+  if (!ok) return { ok: false, error: "Code4Ever profili olu\u015Fturulamad\u0131." };
+  const created = await findById(authUser.id);
+  return created ? { ok: true, profile: created, created: true } : { ok: false, error: "Profil okunamad\u0131." };
+}
+async function resolveLinkAccount(currentUserId, identity) {
+  const current = await findById(currentUserId);
+  if (!current) return { ok: false, error: "\xD6nce Code4Ever hesab\u0131n\u0131za giri\u015F yap\u0131n." };
+  const taken = await findByLanuxSub(identity.sub);
+  if (taken && taken.id !== current.id) {
+    return { ok: false, error: "Bu Lanux hesab\u0131 ba\u015Fka bir Code4Ever hesab\u0131na ba\u011Fl\u0131." };
+  }
+  return { ok: true, profile: current };
+}
+
 // src/server/notificationMail.ts
 init_security();
 var DEFAULT_EMAIL_PREFS = {
@@ -1649,7 +2065,7 @@ function verifyUnsubscribeToken(token) {
 function dispatcherConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && getSmtpConfig());
 }
-function adminHeaders3(extra = {}) {
+function adminHeaders4(extra = {}) {
   return {
     apikey: SUPABASE_SERVICE_ROLE_KEY,
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -1657,10 +2073,10 @@ function adminHeaders3(extra = {}) {
     ...extra
   };
 }
-async function rest2(pathAndQuery, init = {}) {
+async function rest3(pathAndQuery, init = {}) {
   const response = await safeFetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
     method: init.method || "GET",
-    headers: adminHeaders3(init.headers),
+    headers: adminHeaders4(init.headers),
     body: init.body,
     timeoutMs: 15e3,
     maxResponseBytes: 4 * 1024 * 1024
@@ -1737,7 +2153,7 @@ async function dispatchNotificationEmails(options = {}) {
   const skip = (reason, n = 1) => {
     skipped[reason] = (skipped[reason] || 0) + n;
   };
-  const { ok, rows } = await rest2(
+  const { ok, rows } = await rest3(
     `notifications?email_sent_at=is.null&is_read=eq.false&select=id,recipient_id,type,actor,content,target_id,created_at&order=created_at.asc&limit=${limit}`
   );
   if (!ok) {
@@ -1824,7 +2240,7 @@ async function dispatchNotificationEmails(options = {}) {
 async function markSent(ids) {
   if (ids.length === 0) return;
   const list = ids.map((id) => `"${String(id).replace(/"/g, "")}"`).join(",");
-  await rest2(`notifications?id=in.(${encodeURIComponent(list)})`, {
+  await rest3(`notifications?id=in.(${encodeURIComponent(list)})`, {
     method: "PATCH",
     body: JSON.stringify({ email_sent_at: (/* @__PURE__ */ new Date()).toISOString() }),
     headers: { Prefer: "return=minimal" }
@@ -1833,7 +2249,7 @@ async function markSent(ids) {
 async function loadRecipient(recipientId) {
   const encoded = encodeURIComponent(recipientId);
   for (const filter of [`id=eq.${encoded}`, `username=eq.${encoded}`]) {
-    const { ok, rows } = await rest2(`profiles?${filter}&select=id,username,display_name,email,email_prefs&limit=1`);
+    const { ok, rows } = await rest3(`profiles?${filter}&select=id,username,display_name,email,email_prefs&limit=1`);
     if (ok && rows.length > 0) {
       const row = rows[0];
       return {
@@ -1848,12 +2264,12 @@ async function loadRecipient(recipientId) {
   return null;
 }
 async function readEmailPrefs(userId) {
-  const { ok, rows } = await rest2(`profiles?id=eq.${encodeURIComponent(userId)}&select=email_prefs&limit=1`);
+  const { ok, rows } = await rest3(`profiles?id=eq.${encodeURIComponent(userId)}&select=email_prefs&limit=1`);
   if (!ok || rows.length === 0) return null;
   return sanitizeEmailPrefs(rows[0].email_prefs);
 }
 async function writeEmailPrefs(userId, prefs) {
-  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(userId)}`, {
+  const { ok } = await rest3(`profiles?id=eq.${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify({ email_prefs: prefs }),
     headers: { Prefer: "return=minimal" }
@@ -2257,7 +2673,7 @@ app.post(
     const payload = validation.value;
     const authorUsername = normalizeUsername(asString(body.author_username ?? body.authorUsername)) || keyRow.created_by_username || "api";
     const post = await insertCommunityPost({
-      id: `post_api_${Date.now()}_${import_node_crypto3.default.randomBytes(6).toString("hex")}`,
+      id: `post_api_${Date.now()}_${import_node_crypto5.default.randomBytes(6).toString("hex")}`,
       author: {
         username: authorUsername,
         display_name: payload.authorName,
@@ -2349,7 +2765,7 @@ app.post(
     const name = sanitizeText(body.name, LIMITS.keyName) || "default";
     const generated = generateApiKey();
     const row = await insertKey({
-      id: `cak_${Date.now()}_${import_node_crypto3.default.randomBytes(6).toString("hex")}`,
+      id: `cak_${Date.now()}_${import_node_crypto5.default.randomBytes(6).toString("hex")}`,
       community_id: community.id,
       community_handle: community.handle,
       name,
@@ -2814,7 +3230,7 @@ app.post(
     const donations = loadByNoGameDonations();
     const referenceCode = asString(req.body?.reference_code, 120);
     const newRecord = {
-      id: `bng_claim_${Date.now()}_${import_node_crypto3.default.randomBytes(3).toString("hex")}`,
+      id: `bng_claim_${Date.now()}_${import_node_crypto5.default.randomBytes(3).toString("hex")}`,
       streamId: BYNOGAME_STREAM_ID,
       username,
       usernameNormalized: username,
@@ -2886,7 +3302,7 @@ app.post("/api/bynogame/webhook", rateLimit({ scope: "donation-webhook", windowM
   }
   const donations = loadByNoGameDonations();
   const newDonation = {
-    id: `bng_${Date.now()}_${import_node_crypto3.default.randomBytes(3).toString("hex")}`,
+    id: `bng_${Date.now()}_${import_node_crypto5.default.randomBytes(3).toString("hex")}`,
     streamId: asString(payload.streamId || payload.stream_id, 80) || BYNOGAME_STREAM_ID,
     username: donor,
     usernameNormalized: donor,
@@ -3324,6 +3740,194 @@ app.put(
       return;
     }
     res.json({ success: true, prefs });
+  }
+);
+function readCookie(req, name) {
+  const header = String(req.headers.cookie || "");
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return "";
+      }
+    }
+  }
+  return "";
+}
+var FLOW_COOKIE = "c4e_lanux_oidc";
+var CLAIM_COOKIE = "c4e_lanux_claim";
+function flowCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: IS_PRODUCTION,
+    path: "/",
+    maxAge: 10 * 60 * 1e3
+  };
+}
+app.get(
+  "/api/auth/lanux/start",
+  rateLimit({ scope: "lanux-start", windowMs: 6e4, max: 20 }),
+  async (req, res) => {
+    const config = getLanuxConfig();
+    if (!config) {
+      res.status(503).json({ success: false, error: "not_configured", message: lanuxUnavailableReason() });
+      return;
+    }
+    const mode = req.query.mode === "link" ? "link" : "login";
+    let userId;
+    if (mode === "link") {
+      await new Promise((resolve) => requireAuth(req, res, () => resolve()));
+      if (res.headersSent) return;
+      userId = req.auth?.userId;
+    }
+    const { verifier, challenge } = createPkce();
+    const state = import_node_crypto5.default.randomBytes(24).toString("base64url");
+    const nonce = import_node_crypto5.default.randomBytes(24).toString("base64url");
+    res.cookie(FLOW_COOKIE, sealFlow({ state, nonce, verifier, mode, userId }), flowCookieOptions());
+    res.json({
+      success: true,
+      url: buildAuthorizeUrl(config, {
+        state,
+        nonce,
+        challenge,
+        prompt: typeof req.query.prompt === "string" ? req.query.prompt : void 0
+      }),
+      mode
+    });
+  }
+);
+app.get(
+  "/api/auth/lanux/callback",
+  rateLimit({ scope: "lanux-callback", windowMs: 6e4, max: 30 }),
+  async (req, res) => {
+    const config = getLanuxConfig();
+    const fail = (message, status = 400) => {
+      res.clearCookie(FLOW_COOKIE, { path: "/" });
+      res.status(status).type("html").send(
+        `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lanux ba\u011Flant\u0131s\u0131 tamamlanamad\u0131</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}.c{max-width:28rem;text-align:center}h1{font-size:1.15rem;margin:0 0 .75rem}p{color:#a1a1aa;line-height:1.6;font-size:.9rem;margin:0 0 1.5rem}a{display:inline-block;padding:.7rem 1.2rem;border-radius:.75rem;background:#4f46e5;color:#fff;text-decoration:none;font-weight:600;font-size:.85rem}</style></head><body><div class="c"><h1>Lanux ba\u011Flant\u0131s\u0131 tamamlanamad\u0131</h1><p>${escapeHtml(message)}</p><a href="/">Code4Ever'e d\xF6n</a></div></body></html>`
+      );
+    };
+    if (!config) return fail(lanuxUnavailableReason() || "Lanux giri\u015Fi yap\u0131land\u0131r\u0131lmam\u0131\u015F.", 503);
+    if (!accountsConfigured()) return fail("Sunucu Supabase ile yap\u0131land\u0131r\u0131lmam\u0131\u015F.", 503);
+    const providerError = typeof req.query.error === "string" ? req.query.error : "";
+    if (providerError) {
+      const description = typeof req.query.error_description === "string" ? req.query.error_description : "";
+      return fail(
+        providerError === "access_denied" ? "Lanux hesab\u0131n\u0131za eri\u015Fim izni verilmedi. \u0130sterseniz tekrar deneyebilirsiniz." : description || providerError
+      );
+    }
+    const flow = openFlow(readCookie(req, FLOW_COOKIE));
+    if (!flow) return fail("Oturum ak\u0131\u015F\u0131 bulunamad\u0131 veya s\xFCresi doldu. L\xFCtfen ba\u015Ftan deneyin.");
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    if (!state || !safeEquals(state, flow.state)) return fail("G\xFCvenlik do\u011Frulamas\u0131 ba\u015Far\u0131s\u0131z (state).");
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    if (!code) return fail("Yetkilendirme kodu al\u0131namad\u0131.");
+    const exchanged = await exchangeCode(config, code, flow.verifier);
+    if (!exchanged.ok || !exchanged.tokens) return fail(exchanged.error || "Belirte\xE7 al\u0131namad\u0131.");
+    const verified = await verifyIdToken(config, exchanged.tokens.id_token, flow.nonce);
+    if (!verified.ok || !verified.identity) return fail(verified.error || "Kimlik do\u011Frulanamad\u0131.");
+    const identity = verified.identity;
+    const resolved = flow.mode === "link" ? await resolveLinkAccount(String(flow.userId || ""), identity) : await resolveLoginAccount(identity);
+    if (!resolved.ok || !resolved.profile) return fail(resolved.error || "Hesap e\u015Flenemedi.");
+    const encrypted = exchanged.tokens.refresh_token ? encryptRefreshToken(exchanged.tokens.refresh_token) : null;
+    const linked = await writeLanuxLink(resolved.profile.id, identity, encrypted);
+    if (!linked) return fail("Lanux ba\u011Flant\u0131s\u0131 kaydedilemedi.");
+    void notifyServiceLink(config, exchanged.tokens.access_token, "link", resolved.profile.id);
+    res.clearCookie(FLOW_COOKIE, { path: "/" });
+    if (flow.mode === "link") {
+      res.redirect("/settings?lanux=linked");
+      return;
+    }
+    const sessionToken = resolved.profile.email ? await createSessionToken(resolved.profile.email, resolved.profile.id, identity) : null;
+    if (!sessionToken) return fail("Oturum a\xE7\u0131lamad\u0131. L\xFCtfen tekrar deneyin.", 502);
+    res.cookie(CLAIM_COOKIE, sessionToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: IS_PRODUCTION,
+      path: "/",
+      maxAge: 2 * 60 * 1e3
+    });
+    res.redirect(resolved.created ? "/?lanux=welcome" : "/?lanux=ok");
+  }
+);
+app.post(
+  "/api/auth/lanux/session",
+  rateLimit({ scope: "lanux-session", windowMs: 6e4, max: 20 }),
+  (req, res) => {
+    const token = readCookie(req, CLAIM_COOKIE);
+    res.clearCookie(CLAIM_COOKIE, { path: "/" });
+    if (!token) {
+      res.status(404).json({ success: false, error: "no_pending_session" });
+      return;
+    }
+    res.json({ success: true, token_hash: token });
+  }
+);
+app.get("/api/auth/lanux/status", requireAuth, async (req, res) => {
+  const profile = await findById(req.auth?.userId || "");
+  res.json({
+    success: true,
+    configured: Boolean(getLanuxConfig()),
+    reason: lanuxUnavailableReason(),
+    lanux: profile?.lanux_user_id ? { linked: true, username: profile.lanux_username || null } : { linked: false },
+    github: profile?.github_username ? { linked: true, username: profile.github_username } : { linked: false }
+  });
+});
+app.post(
+  "/api/auth/lanux/unlink",
+  requireAuth,
+  rateLimit({ scope: "lanux-unlink", windowMs: 6e4, max: 10, perUser: true }),
+  async (req, res) => {
+    const userId = req.auth?.userId || "";
+    const profile = await findById(userId);
+    if (!profile?.lanux_user_id) {
+      res.status(400).json({ success: false, error: "not_linked", message: "Ba\u011Fl\u0131 bir Lanux hesab\u0131 yok." });
+      return;
+    }
+    if (!profile.github_username) {
+      res.status(409).json({
+        success: false,
+        error: "last_identity",
+        message: "Lanux ba\u011Flant\u0131s\u0131n\u0131 kald\u0131rmadan \xF6nce GitHub hesab\u0131n\u0131z\u0131 ba\u011Flay\u0131n; aksi h\xE2lde hesab\u0131n\u0131za giri\u015F yapamazs\u0131n\u0131z."
+      });
+      return;
+    }
+    const config = getLanuxConfig();
+    if (config) {
+      const stored = await readEncryptedRefreshToken(userId);
+      const refreshToken = stored ? decryptRefreshToken(stored) : null;
+      if (refreshToken) void revokeRefreshToken(config, refreshToken);
+    }
+    const cleared = await clearLanuxLink(userId);
+    res.status(cleared ? 200 : 502).json({ success: cleared });
+  }
+);
+app.post(
+  "/api/auth/github/link",
+  requireAuth,
+  rateLimit({ scope: "github-link", windowMs: 6e4, max: 10, perUser: true }),
+  async (req, res) => {
+    const username = asString(req.body?.username, 40);
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
+      res.status(400).json({ success: false, error: "invalid_username" });
+      return;
+    }
+    const check = await safeFetch(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+      headers: { "User-Agent": "Code4Ever-Platform", Accept: "application/vnd.github+json" },
+      allowedHosts: ["api.github.com"],
+      timeoutMs: 1e4,
+      maxResponseBytes: 128 * 1024
+    });
+    if (!check.ok) {
+      res.status(404).json({ success: false, error: "github_user_not_found" });
+      return;
+    }
+    const saved = await writeGithubLink(req.auth?.userId || "", username);
+    res.status(saved ? 200 : 502).json({ success: saved, username });
   }
 );
 app.use("/api", (_req, res) => {

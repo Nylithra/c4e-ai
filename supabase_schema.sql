@@ -306,6 +306,31 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 -- doğrudan muhatap olduğu olaylar (yanıt, bahsetme, mesaj, başvuru) açık gelir; beğeni ve
 -- repost gibi yüksek hacimli, düşük değerli olaylar kapalı gelir. Aksi hâlde ilk popüler
 -- gönderi bir kutu dolusu e-posta üretir ve üye topluca aboneliği bırakır.
+-- ================================================================
+-- LANUX KİMLİĞİ (OpenID Connect)
+-- ================================================================
+--
+-- lanux_user_id, id_token'daki `sub` alanıdır ve TEKİLDİR: bir Lanux hesabı yalnızca tek bir
+-- Code4Ever hesabına bağlanabilir. Tekillik veritabanında zorlanıyor, uygulamada değil —
+-- iki eşzamanlı bağlama isteği uygulama katmanındaki bir kontrolü atlatabilir, benzersiz
+-- indeksi atlatamaz.
+--
+-- `sub` DIŞINDAKİ hiçbir alan kalıcı anahtar değildir: kullanıcı adı ve e-posta değişebilir,
+-- `sub` değişmez.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS lanux_user_id TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS lanux_username TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS lanux_linked_at TIMESTAMPTZ;
+-- Yenileme belirteci AES-256-GCM ile ŞİFRELENMİŞ saklanır; bu sütun asla düz metin görmez.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS lanux_refresh_token TEXT;
+
+-- GitHub bağlantısı. Yalnızca Lanux ile giren üyelerin GitHub kimliği olmaz; depolarına
+-- erişebilmek için bunu ayrıca bağlamaları gerekir.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS github_username TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS github_linked_at TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_lanux_user_id
+  ON public.profiles(lanux_user_id) WHERE lanux_user_id IS NOT NULL;
+
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_prefs JSONB;
 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
@@ -637,6 +662,22 @@ BEGIN
   NEW.supporter_tier := OLD.supporter_tier;
   NEW.created_at := OLD.created_at;
 
+  -- KİMLİK BAĞLANTILARI İSTEMCİDEN YAZILAMAZ.
+  --
+  -- Bunlar "kim olduğunu" belirleyen alanlar. Serbest bırakılsaydı herhangi bir üye kendi
+  -- profiline bir BAŞKASININ lanux_user_id'sini yazıp, o Lanux hesabıyla giriş yapıldığında
+  -- oturumun kendi hesabına düşmesini sağlayabilirdi — düpedüz hesap ele geçirme. Aynısı
+  -- GitHub bağlantısı için de geçerli: depo erişimi ona bakıyor.
+  --
+  -- Bu alanları yalnızca arka uç yazar, o da ancak Lanux'un imzaladığı id_token doğrulandıktan
+  -- SONRA (servis rolü yukarıda muaf tutuluyor).
+  NEW.lanux_user_id := OLD.lanux_user_id;
+  NEW.lanux_username := OLD.lanux_username;
+  NEW.lanux_linked_at := OLD.lanux_linked_at;
+  NEW.lanux_refresh_token := OLD.lanux_refresh_token;
+  NEW.github_username := OLD.github_username;
+  NEW.github_linked_at := OLD.github_linked_at;
+
   -- Reserved usernames may not be claimed by regular members.
   IF lower(coalesce(NEW.username, '')) <> lower(coalesce(OLD.username, ''))
      AND lower(NEW.username) = ANY (reserved) THEN
@@ -694,6 +735,17 @@ BEGIN
   NEW.is_admin := false;
   NEW.verified := false;
   NEW.supporter_tier := 'none';
+
+  -- Yeni bir profil ASLA bağlı gelmez. Kayıt sırasında bu alanları doldurabilmek, doğrulama
+  -- yapılmadan bir kimliği sahiplenmek demek olurdu; bağlantıyı yalnızca arka uç, id_token
+  -- doğrulandıktan sonra kurar.
+  NEW.lanux_user_id := NULL;
+  NEW.lanux_username := NULL;
+  NEW.lanux_linked_at := NULL;
+  NEW.lanux_refresh_token := NULL;
+  NEW.github_username := NULL;
+  NEW.github_linked_at := NULL;
+
   RETURN NEW;
 END;
 $$;
@@ -1257,7 +1309,10 @@ BEGIN
     FROM information_schema.columns
    WHERE table_schema = 'public'
      AND table_name = 'profiles'
-     AND column_name <> 'email';
+     -- E-posta gizlidir; lanux_refresh_token ise ŞİFRELİ DE OLSA bir sırdır ve tarayıcıya
+     -- hiç gitmemelidir. Buradan dışlanmasaydı anon anahtarıyla herkes tarafından okunabilir
+     -- olurdu — daha önce `email` sütununda kapatılan sızıntının birebir aynısı.
+     AND column_name NOT IN ('email', 'lanux_refresh_token');
 
   EXECUTE format('GRANT SELECT (%s) ON public.profiles TO anon, authenticated', readable);
 END $$;

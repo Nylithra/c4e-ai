@@ -132,6 +132,10 @@ yer imleri, profil). Topluluğun kendisi keşfedilebilir kalır; herkes katılab
    anahtarı dahil değilse de, sızmış olabilecek servis anahtarları, bot tokenları, topluluk
    API anahtarları) iptal edip yeniden oluşturun.
 4. **Firestore kullanılıyorsa** `firestore.rules` dosyasını dağıtın.
+5. **Lanux girişini açmak istiyorsanız** Lanux Developer Console'da bir uygulama oluşturup
+   `LANUX_ISSUER`, `LANUX_CLIENT_ID`, `LANUX_CLIENT_SECRET`, `LANUX_REDIRECT_URI` ve
+   `LANUX_STATE_SECRET` değerlerini ayarlayın (ayrıntı: bölüm 2.4). Bu adım atlanırsa Lanux
+   girişi kapalı kalır; GitHub girişi ve uygulamanın geri kalanı etkilenmez.
 
 > Topluluk API'si `SUPABASE_SERVICE_ROLE_KEY` olmadan çalışmaz; anahtar yoksa tüm uçlar
 > dürüstçe 503 döner. `community_api_keys` tablosu şemayla birlikte gelir.
@@ -427,6 +431,72 @@ oturumundan (`user.email`) aldığı için hiçbir arayüz bu sütuna ihtiyaç d
 Yerel PostgreSQL 16 üzerinde doğrulandı: `anon` ve `authenticated` için hem `SELECT email`
 hem `SELECT *` "permission denied" veriyor, diğer sütunlar okunabiliyor, servis rolü
 okuyabiliyor.
+
+---
+
+## 2.4 Lanux ile giriş (OIDC)
+
+Lanux, Code4Ever'e ikinci bir giriş yolu ve mevcut hesaplara bağlanabilen bir kimlik.
+Bu akışın tek işi şu soruyu yanıtlamak: **"bu kişi gerçekten bu hesabın sahibi mi?"**
+Aşağıdakilerin her biri o sorunun yanlış yanıtlanabileceği somut bir yolu kapatıyor.
+
+### Akışın kendisi
+
+- **PKCE (S256) zorunlu.** Yetkilendirme kodu ağda veya kayıtlarda görülse bile, doğrulayıcıyı
+  bilmeyen biri onu jetona çeviremez.
+- **`state` ve `nonce` birlikte.** `state` CSRF'i, `nonce` yeniden oynatmayı kapatır; ikisi de
+  akış paketinde taşınır ve dönüşte karşılaştırılır.
+- **Akış paketi HMAC ile mühürlü ve 10 dakika ömürlü.** Sunucusuz ortamda iki çağrı arasında
+  paylaşılan bellek yok; durumu sunucuda tutmak yerine imzalı bir paket olarak taşımak, kurcalamayı
+  imkânsız bırakırken çağrılar arası durum ihtiyacını tamamen ortadan kaldırıyor.
+- **`id_token` JWKS ile doğrulanır** (`jose`): imza, `iss`, `aud`, süre ve `nonce`. Doğrulanmamış
+  hiçbir alan kullanılmaz.
+
+### Hesap eşleme
+
+- **`lanux_user_id` kısmi UNIQUE indeksle korunur.** Bir Lanux hesabı en fazla bir Code4Ever
+  hesabına bağlanabilir; ikinci bağlama veritabanı seviyesinde reddedilir.
+- **Otomatik eşleme yalnızca `email_verified === true` ise yapılır.** Alan hiç gelmezse
+  DOĞRULANMAMIŞ sayılır. `true` varsayılsaydı, sağlayıcıda doğrulanmamış bir adresi olan biri
+  aynı adrese sahip bir Code4Ever hesabını devralabilirdi.
+- **Kimlik sütunları profil tetikleyicilerinde sabitlenir**, yani üye kendi satırını güncelleyerek
+  `lanux_user_id` veya `github_username` yazamaz; bu alanları yalnızca sunucu servis rolüyle
+  değiştirir.
+- **`lanux_refresh_token` sütun seviyesinde kapalıdır** — 2.3'teki e-posta sızıntısıyla aynı sınıf
+  bir açık olurdu; `anon` ve `authenticated` rolleri bu sütunu okuyamaz.
+- **Yenileme belirteçleri AES-256-GCM ile şifreli saklanır.** GCM seçildi çünkü bütünlüğü de
+  doğruluyor; yalnızca şifreleyen bir kip saldırganın şifreli metni kurcalamasına izin verirdi.
+
+### Oturum köprüsü
+
+Lanux doğrulandıktan sonra Supabase oturumu, `admin/generate_link` ile üretilen `hashed_token`'ın
+istemcide `verifyOtp` ile tüketilmesiyle kurulur. **Supabase'in JWT sırrıyla kendi jetonumuzu
+imzalamak bilinçli olarak reddedildi**: o yol, oturum üretme yetkisini Supabase'in iptal ve süre
+yönetiminin dışına taşır ve sızan tek bir sır sınırsız oturum üretimine dönüşürdü. Jeton adres
+çubuğuna hiç yazılmaz; dönüşte yalnızca bir işaret bırakılır ve oturum POST ile teslim alınır.
+
+### Sadece Lanux ile girenler ve depo erişimi
+
+Lanux ile açılan bir hesapta GitHub kimliği yoktur, dolayısıyla depolar görünmez. Bu durum
+**Ayarlar > Bağlı Hesaplar** ekranında amber renkli bir kartla açıkça söylenir ve GitHub kullanıcı
+adı oradan bağlanır. Bağlama sunucu tarafında GitHub'a sorulur; var olmayan bir kullanıcı adı
+kabul edilmez.
+
+### Yapılandırma
+
+`LANUX_ISSUER`, `LANUX_CLIENT_ID`, `LANUX_CLIENT_SECRET`, `LANUX_REDIRECT_URI` ve
+`LANUX_STATE_SECRET` için `.env.example` dosyasına bakın. Dördü eksikse Lanux girişi tamamen
+kapalıdır ve GitHub girişi etkilenmez. `LANUX_STATE_SECRET` üretimde MUTLAKA sabitlenmelidir;
+tanımsızsa süreç başına rastgele üretilir ve sunucusuz ortamda akış yarıda kopar.
+
+### Doğrulama
+
+Uçtan uca 48 doğrulama (gerçek Express rotaları ve RS256 imzalayan gerçek bir sahte sağlayıcıya
+karşı) ve `id_token` saldırı takımında 19 doğrulama geçti. Saldırı takımı yalnızca reddedildiğini
+değil, **geçerli bir jetonun aynı çalıştırmada kabul edildiğini** de ölçer — aksi hâlde JWKS'e
+ulaşamamak da "her saldırı reddedildi" gibi görünürdü. Kapsanan saldırılar: yayımlanmamış anahtarla
+imza, `alg=none`, yanlış `aud`, yanlış `iss`, yeniden oynatılan `nonce`, süresi dolmuş jeton, bozuk
+girdi.
 
 ---
 

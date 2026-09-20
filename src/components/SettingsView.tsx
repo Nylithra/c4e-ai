@@ -19,6 +19,8 @@ import {
   Layers,
   Check,
   Palette
+,
+  KeyRound
 } from 'lucide-react';
 import { validateFileSize, notifyFileSizeExceeded } from '../utils/fileUploadHelper';
 import { isPWARunningStandalone } from '../utils/pwaHelper';
@@ -29,6 +31,7 @@ import {
 } from '../utils/notificationSound';
 import { IntegrationsSettings } from './IntegrationsSettings';
 import { EmailNotificationSettings } from './EmailNotificationSettings';
+import { AccountLinksSettings } from './AccountLinksSettings';
 import { ThemeStudio } from './ThemeStudio';
 import { UserAvatar } from './ui/avatar';
 import { ProfileTheme } from '../utils/themeHelper';
@@ -45,7 +48,7 @@ interface SettingsViewProps {
   onOpenSupport?: () => void;
 }
 
-type SettingsSection = 'overview' | 'profile' | 'integrations' | 'notifications' | 'privacy' | 'preferences' | 'theme';
+type SettingsSection = 'overview' | 'profile' | 'integrations' | 'notifications' | 'privacy' | 'preferences' | 'theme' | 'accounts';
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   user,
@@ -192,7 +195,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     notifications: language === 'tr' ? 'Bildirimler & Ses' : 'Notifications & Sound',
     privacy: language === 'tr' ? 'Grup & Gizlilik Ayarları' : 'Group & Privacy Settings',
     preferences: language === 'tr' ? 'Dil & Tercihler' : 'Language & Preferences',
-    theme: language === 'tr' ? 'Gradyan Tema Stüdyosu' : 'Gradient Theme Studio'
+    theme: language === 'tr' ? 'Gradyan Tema Stüdyosu' : 'Gradient Theme Studio',
+    accounts: language === 'tr' ? 'Bağlı Hesaplar' : 'Connected Accounts'
   };
 
   /**
@@ -310,6 +314,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       {language === 'tr'
                         ? 'Masaüstü ve mobil bildirim izinleri, ses efektleri'
                         : 'Desktop/mobile push notification permissions and chime'}
+                    </span>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" />
+              </button>
+
+              {/* 3. Connected accounts (Lanux + GitHub) */}
+              <button
+                type="button"
+                onClick={() => setActiveSection('accounts')}
+                className="w-full flex items-center justify-between p-4 rounded-2xl bg-[#0c0c0e] hover:bg-zinc-900/60 border border-zinc-800/80 transition-all text-left group cursor-pointer"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-indigo-950/60 text-indigo-400 border border-indigo-900/40 group-hover:scale-105 transition-transform">
+                    <KeyRound className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-white block group-hover:text-indigo-400 transition-colors">
+                      {language === 'tr' ? 'Bağlı Hesaplar' : 'Connected Accounts'}
+                    </span>
+                    <span className="text-[11px] text-zinc-400 font-mono block">
+                      {language === 'tr'
+                        ? 'Lanux ile giriş ve GitHub depo erişimi'
+                        : 'Lanux sign-in and GitHub repository access'}
                     </span>
                   </div>
                 </div>
@@ -631,6 +659,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="pt-4 border-t border-zinc-800/60">
               <EmailNotificationSettings language={language} />
             </div>
+          </div>
+        )}
+
+        {/* Connected Accounts Section */}
+        {activeSection === 'accounts' && (
+          <div className="bg-[#0c0c0e] border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-zinc-800/60 pb-3">
+              <KeyRound className="w-4 h-4 text-indigo-400" />
+              <span>{language === 'tr' ? 'Bağlı Hesaplar' : 'Connected Accounts'}</span>
+            </h3>
+            <p className="user-text text-xs text-zinc-400 leading-relaxed">
+              {language === 'tr'
+                ? 'Bu hesaba hangi yollardan giriş yapabileceğini ve nelere erişebileceğini buradan yönetirsin.'
+                : 'Manage how you can sign in to this account and what it can reach.'}
+            </p>
+            <AccountLinksSettings language={language} />
           </div>
         )}
 

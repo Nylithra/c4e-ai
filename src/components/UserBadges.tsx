@@ -349,6 +349,9 @@ export const UserBadges: React.FC<UserBadgesProps> = ({
             type="button"
             key={`${badge.id}_${idx}`}
             title={badge.label}
+            // Metin etiketi kapalıyken rozet yalnızca bir simge; erişilebilir bir adı
+            // olmazsa ekran okuyucuda "düğme" diye geçer.
+            aria-label={badge.label}
             onClick={(e) => {
               e.stopPropagation();
               e.preventDefault();
@@ -359,7 +362,12 @@ export const UserBadges: React.FC<UserBadgesProps> = ({
               borderColor: `${badge.color}45`,
               color: badge.color
             }}
-            className="inline-flex items-center justify-center gap-1 px-2 min-h-6 rounded-full border text-[10px] font-semibold tracking-wide shadow-sm hover:scale-110 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            /*
+             * Rozet tıklanabilir: detay penceresini açıyor. Fare ile 24px'lik hap boyutu
+             * doğru duruyor ama parmakla vurulamayacak kadar küçük, bu yüzden dokunmatik
+             * cihazlarda taban 36px'e çıkıyor. Tasarım masaüstünde aynı kalıyor.
+             */
+            className="inline-flex items-center justify-center gap-1 px-2 min-h-6 pointer-coarse:min-h-9 pointer-coarse:px-3 rounded-full border text-[10px] font-semibold tracking-wide shadow-sm hover:scale-110 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {renderIcon(badge)}
             {showTextLabels && <span>{badge.label}</span>}
