@@ -252,6 +252,56 @@ export async function clearLanuxLink(profileId: string): Promise<boolean> {
   return ok;
 }
 
+/**
+ * Üyenin Supabase auth kaydındaki GitHub kimliğini okur.
+ *
+ * BU FONKSİYON, GİTHUB BAĞLAMANIN TEK DOĞRULUK KAYNAĞI. Tarayıcıdan gelen hiçbir iddia
+ * kabul edilmiyor: kullanıcı adı, OAuth akışını Supabase'in kendisi tamamladıktan sonra
+ * auth kaydına yazdığı kimlikten okunuyor. Eskiden bu alan elle yazılıyordu ve yalnızca
+ * "böyle bir GitHub kullanıcısı var mı" diye sorulduğu için, üye başkasının kullanıcı adını
+ * kendi profiline bağlayıp onun depolarını kendi profilinde gösterebiliyordu.
+ */
+export async function readGithubIdentity(
+  userId: string
+): Promise<{ username: string; avatarUrl: string | null } | null> {
+  const { ok, json } = await call(`/auth/v1/admin/users/${encodeURIComponent(userId)}`);
+  if (!ok) return null;
+
+  const identities = Array.isArray(json?.identities) ? json.identities : [];
+  const github = identities.find((i: any) => String(i?.provider || '') === 'github');
+  if (!github) return null;
+
+  const data = github.identity_data || {};
+  // Supabase sağlayıcıya göre farklı adlar kullanıyor; GitHub'da `user_name` asıl giriş adı.
+  const username = String(data.user_name || data.preferred_username || data.user_login || '');
+
+  // KIRPMADAN doğrula. Önce 39 karaktere kırpıp sonra bakmak, geçersiz bir değeri geçerli
+  // GÖRÜNEN başka birinin adına çevirir: "cok-cok-...-cok" 80 karakterken reddedilmeli,
+  // kırpıldığında ise kusursuz bir GitHub kullanıcı adı olur ve kimseye ait olmayan (ya da
+  // bambaşka birine ait) bir hesap profile yazılır. GitHub'ın kendi sınırı zaten 39 karakter.
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) return null;
+
+  return { username, avatarUrl: data.avatar_url ? String(data.avatar_url).slice(0, 500) : null };
+}
+
+/**
+ * Bu GitHub kullanıcı adı başka bir profile bağlı mı?
+ *
+ * GitHub kullanıcı adları büyük/küçük harf duyarsız, bu yüzden karşılaştırma da öyle olmalı;
+ * aksi hâlde "Owner" ve "owner" iki ayrı kayıt gibi görünür ve iki üye aynı depoları
+ * kendi profilinde gösterir.
+ */
+export const findByGithubUsername = (username: string) =>
+  findProfile(`github_username=ilike.${encodeURIComponent(username)}`);
+
+export async function clearGithubLink(profileId: string): Promise<boolean> {
+  const { ok } = await rest(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ github_username: null, github_linked_at: null })
+  });
+  return ok;
+}
+
 export async function writeGithubLink(profileId: string, githubUsername: string): Promise<boolean> {
   const { ok } = await rest(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
     method: 'PATCH',

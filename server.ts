@@ -79,10 +79,13 @@ import {
 } from './src/server/lanuxAuth';
 import {
   accountsConfigured,
+  clearGithubLink,
   clearLanuxLink,
   createSessionToken,
+  findByGithubUsername,
   findById,
   readEncryptedRefreshToken,
+  readGithubIdentity,
   resolveLinkAccount,
   resolveLoginAccount,
   writeGithubLink,
@@ -2263,35 +2266,84 @@ app.post(
 );
 
 /**
- * GitHub bağlantısını kaydeder. Yalnızca Lanux ile giren üyelerin GitHub kimliği olmadığı
- * için depolarına erişebilmek adına bunu ayrıca bağlamaları gerekiyor.
+ * GitHub bağlantısını kaydeder.
+ *
+ * İSTEĞİN GÖVDESİ YOK, BİLİNÇLİ OLARAK. Kullanıcı adı tarayıcıdan gelmiyor; üye GitHub
+ * yetkilendirmesini (giriştekiyle aynı akış) tamamladıktan sonra Supabase auth kaydına
+ * düşen kimlikten, servis rolüyle okunuyor. Önceki sürüm kullanıcı adını elle alıyor ve
+ * yalnızca "böyle biri var mı" diye soruyordu; o hâliyle herhangi bir üye, başkasının
+ * GitHub adını kendi profiline bağlayıp onun depolarını kendi profilinde gösterebiliyordu.
+ *
+ * Bu uç akıştan ÖNCE de çağrılabilir: GitHub ile giriş yapmış birinin kimliği zaten auth
+ * kaydında durur, dolayısıyla hiçbir yönlendirmeye gerek kalmadan bağlanır. Kimlik yoksa
+ * `needs_authorization` döner ve istemci yetkilendirmeyi başlatır.
  */
 app.post(
   '/api/auth/github/link',
   requireAuth,
   rateLimit({ scope: 'github-link', windowMs: 60000, max: 10, perUser: true }),
   async (req: Request, res: Response) => {
-    const username = asString(req.body?.username, 40);
-    if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
-      res.status(400).json({ success: false, error: 'invalid_username' });
+    const userId = req.auth?.userId || '';
+
+    const identity = await readGithubIdentity(userId);
+    if (!identity) {
+      res.status(409).json({
+        success: false,
+        error: 'needs_authorization',
+        message: 'Önce GitHub hesabınızla yetkilendirme yapmanız gerekiyor.'
+      });
       return;
     }
 
-    // Kullanıcı adının gerçekten var olduğunu GitHub'a sorarak doğrula: uydurma bir ad
-    // kaydedip "bağlı" görünmek, depo ekranını kalıcı olarak boş bırakırdı.
-    const check = await safeFetch(`https://api.github.com/users/${encodeURIComponent(username)}`, {
-      headers: { 'User-Agent': 'Code4Ever-Platform', Accept: 'application/vnd.github+json' },
-      allowedHosts: ['api.github.com'],
-      timeoutMs: 10000,
-      maxResponseBytes: 128 * 1024
-    });
-    if (!check.ok) {
-      res.status(404).json({ success: false, error: 'github_user_not_found' });
+    // Aynı GitHub hesabı iki C4E profiline bağlanamaz: bağlanabilseydi ikisi de aynı
+    // depoları "kendi" depoları gibi gösterirdi ve hangisinin doğru olduğu anlaşılmazdı.
+    const owner = await findByGithubUsername(identity.username);
+    if (owner && owner.id !== userId) {
+      res.status(409).json({
+        success: false,
+        error: 'github_already_linked',
+        message: 'Bu GitHub hesabı başka bir Code4Ever hesabına bağlı.'
+      });
       return;
     }
 
-    const saved = await writeGithubLink(req.auth?.userId || '', username);
-    res.status(saved ? 200 : 502).json({ success: saved, username });
+    const saved = await writeGithubLink(userId, identity.username);
+    res.status(saved ? 200 : 502).json({ success: saved, username: identity.username });
+  }
+);
+
+/**
+ * GitHub bağlantısını kaldırır.
+ *
+ * Lanux bağlantısı yoksa ENGELLENİR: GitHub o hâlde üyenin tek giriş yolu ve bağlantıyı
+ * kaldırmak kendi hesabının kapısını kilitlemek olurdu. (Aynı koruma ters yönde Lanux
+ * bağlantısını kaldırırken de var.)
+ */
+app.post(
+  '/api/auth/github/unlink',
+  requireAuth,
+  rateLimit({ scope: 'github-unlink', windowMs: 60000, max: 10, perUser: true }),
+  async (req: Request, res: Response) => {
+    const userId = req.auth?.userId || '';
+    const profile = await findById(userId);
+
+    if (!profile?.github_username) {
+      res.status(400).json({ success: false, error: 'not_linked', message: 'Bağlı bir GitHub hesabı yok.' });
+      return;
+    }
+
+    if (!profile.lanux_user_id) {
+      res.status(409).json({
+        success: false,
+        error: 'last_identity',
+        message:
+          'GitHub bağlantısını kaldırmadan önce Lanux hesabınızı bağlayın; aksi hâlde hesabınıza giriş yapamazsınız.'
+      });
+      return;
+    }
+
+    const cleared = await clearGithubLink(userId);
+    res.status(cleared ? 200 : 502).json({ success: cleared });
   }
 );
 

@@ -478,9 +478,40 @@ yönetiminin dışına taşır ve sızan tek bir sır sınırsız oturum üretim
 ### Sadece Lanux ile girenler ve depo erişimi
 
 Lanux ile açılan bir hesapta GitHub kimliği yoktur, dolayısıyla depolar görünmez. Bu durum
-**Ayarlar > Bağlı Hesaplar** ekranında amber renkli bir kartla açıkça söylenir ve GitHub kullanıcı
-adı oradan bağlanır. Bağlama sunucu tarafında GitHub'a sorulur; var olmayan bir kullanıcı adı
-kabul edilmez.
+**Ayarlar > Bağlı Hesaplar** ekranında amber renkli bir kartla açıkça söylenir ve GitHub hesabı
+oradan bağlanır.
+
+### Kapatılan açık: GitHub kullanıcı adı elle yazılıyordu
+
+İlk sürümde üye GitHub **kullanıcı adını bir kutuya yazıyordu** ve sunucu yalnızca "böyle bir
+GitHub kullanıcısı var mı" diye soruyordu. Varlık sahiplik değildir: bu hâliyle herhangi bir üye
+tanınmış birinin kullanıcı adını kendi profiline bağlayıp **onun depolarını kendi profilinde**
+gösterebilirdi.
+
+Artık kullanıcı adı hiçbir yerde yazılmıyor. Bağlama, girişteki akışın aynısı: üye GitHub'a gidip
+yetkilendirmeyi tamamlar, kullanıcı adı sunucu tarafından **Supabase auth kaydındaki GitHub
+kimliğinden** servis rolüyle okunur. `POST /api/auth/github/link` isteğinin gövdesi yoktur ve
+gövdeye yazılan herhangi bir kullanıcı adı yok sayılır — uçtan uca test bunu ayrıca ölçüyor.
+
+Buna eşlik eden iki koruma:
+
+- **`lower(github_username)` üzerinde kısmi UNIQUE indeks.** Sunucu yazmadan önce "başkasına bağlı
+  mı" diye bakıyor, ama önce-oku-sonra-yaz bir yarış penceresi bırakır; asıl garanti indekste.
+  `lower()` şart, çünkü GitHub kullanıcı adları büyük/küçük harf duyarsızdır — aksi hâlde `Owner`
+  ve `owner` iki ayrı kayıt olur ve iki üye aynı depoları kendi profilinde gösterir.
+- **Kullanıcı adı kırpılmadan doğrulanır.** Önce 39 karaktere kırpıp sonra biçim kontrolü yapmak,
+  geçersiz bir değeri geçerli *görünen* başka birinin adına çevirir. (Bu, daha önce abonelikten
+  çıkma bağlantısını bozan `headerSafe` kırpmasıyla aynı sınıf hata; test yakaladı.)
+
+Bağlantıyı kaldırma, Lanux tarafındaki korumanın aynısını taşır: GitHub üyenin tek kimliğiyse
+kaldırma reddedilir, aksi hâlde üye kendi hesabının kapısını kilitlemiş olurdu.
+
+Şemanın bu indeksi eklerken mevcut veriyi bozmaması ayrıca doğrulandı: eski akıştan kalmış
+çift kayıtlar (farklı harflerle yazılmış olanlar dahil) en erken bağlanan korunacak şekilde
+temizleniyor, ardından indeks kuruluyor. Temizliğin `trg_protect_profile_privileges`
+tetikleyicisini geçici olarak kapatması gerekiyor — tetikleyici kimlik sütunlarını sabitler ve
+betik SQL Editor'de `postgres` olarak çalıştığı için muaf değildir; kapatma tek bir `DO` bloğu
+(tek işlem) içinde yapılır, böylece koruma hiçbir durumda kapalı kalamaz.
 
 ### Yapılandırma
 
@@ -491,7 +522,7 @@ tanımsızsa süreç başına rastgele üretilir ve sunucusuz ortamda akış yar
 
 ### Doğrulama
 
-Uçtan uca 48 doğrulama (gerçek Express rotaları ve RS256 imzalayan gerçek bir sahte sağlayıcıya
+Uçtan uca 70 doğrulama (gerçek Express rotaları ve RS256 imzalayan gerçek bir sahte sağlayıcıya
 karşı) ve `id_token` saldırı takımında 19 doğrulama geçti. Saldırı takımı yalnızca reddedildiğini
 değil, **geçerli bir jetonun aynı çalıştırmada kabul edildiğini** de ölçer — aksi hâlde JWKS'e
 ulaşamamak da "her saldırı reddedildi" gibi görünürdü. Kapsanan saldırılar: yayımlanmamış anahtarla

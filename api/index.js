@@ -1946,6 +1946,25 @@ async function clearLanuxLink(profileId) {
   });
   return ok;
 }
+async function readGithubIdentity(userId) {
+  const { ok, json } = await call(`/auth/v1/admin/users/${encodeURIComponent(userId)}`);
+  if (!ok) return null;
+  const identities = Array.isArray(json?.identities) ? json.identities : [];
+  const github = identities.find((i) => String(i?.provider || "") === "github");
+  if (!github) return null;
+  const data = github.identity_data || {};
+  const username = String(data.user_name || data.preferred_username || data.user_login || "");
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) return null;
+  return { username, avatarUrl: data.avatar_url ? String(data.avatar_url).slice(0, 500) : null };
+}
+var findByGithubUsername = (username) => findProfile(`github_username=ilike.${encodeURIComponent(username)}`);
+async function clearGithubLink(profileId) {
+  const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ github_username: null, github_linked_at: null })
+  });
+  return ok;
+}
 async function writeGithubLink(profileId, githubUsername) {
   const { ok } = await rest2(`profiles?id=eq.${encodeURIComponent(profileId)}`, {
     method: "PATCH",
@@ -3911,23 +3930,50 @@ app.post(
   requireAuth,
   rateLimit({ scope: "github-link", windowMs: 6e4, max: 10, perUser: true }),
   async (req, res) => {
-    const username = asString(req.body?.username, 40);
-    if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
-      res.status(400).json({ success: false, error: "invalid_username" });
+    const userId = req.auth?.userId || "";
+    const identity = await readGithubIdentity(userId);
+    if (!identity) {
+      res.status(409).json({
+        success: false,
+        error: "needs_authorization",
+        message: "\xD6nce GitHub hesab\u0131n\u0131zla yetkilendirme yapman\u0131z gerekiyor."
+      });
       return;
     }
-    const check = await safeFetch(`https://api.github.com/users/${encodeURIComponent(username)}`, {
-      headers: { "User-Agent": "Code4Ever-Platform", Accept: "application/vnd.github+json" },
-      allowedHosts: ["api.github.com"],
-      timeoutMs: 1e4,
-      maxResponseBytes: 128 * 1024
-    });
-    if (!check.ok) {
-      res.status(404).json({ success: false, error: "github_user_not_found" });
+    const owner = await findByGithubUsername(identity.username);
+    if (owner && owner.id !== userId) {
+      res.status(409).json({
+        success: false,
+        error: "github_already_linked",
+        message: "Bu GitHub hesab\u0131 ba\u015Fka bir Code4Ever hesab\u0131na ba\u011Fl\u0131."
+      });
       return;
     }
-    const saved = await writeGithubLink(req.auth?.userId || "", username);
-    res.status(saved ? 200 : 502).json({ success: saved, username });
+    const saved = await writeGithubLink(userId, identity.username);
+    res.status(saved ? 200 : 502).json({ success: saved, username: identity.username });
+  }
+);
+app.post(
+  "/api/auth/github/unlink",
+  requireAuth,
+  rateLimit({ scope: "github-unlink", windowMs: 6e4, max: 10, perUser: true }),
+  async (req, res) => {
+    const userId = req.auth?.userId || "";
+    const profile = await findById(userId);
+    if (!profile?.github_username) {
+      res.status(400).json({ success: false, error: "not_linked", message: "Ba\u011Fl\u0131 bir GitHub hesab\u0131 yok." });
+      return;
+    }
+    if (!profile.lanux_user_id) {
+      res.status(409).json({
+        success: false,
+        error: "last_identity",
+        message: "GitHub ba\u011Flant\u0131s\u0131n\u0131 kald\u0131rmadan \xF6nce Lanux hesab\u0131n\u0131z\u0131 ba\u011Flay\u0131n; aksi h\xE2lde hesab\u0131n\u0131za giri\u015F yapamazs\u0131n\u0131z."
+      });
+      return;
+    }
+    const cleared = await clearGithubLink(userId);
+    res.status(cleared ? 200 : 502).json({ success: cleared });
   }
 );
 app.use("/api", (_req, res) => {

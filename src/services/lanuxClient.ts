@@ -80,18 +80,63 @@ export async function unlinkLanux(): Promise<{ ok: boolean; error?: string }> {
   return ok ? { ok: true } : { ok: false, error: data?.message || 'Bağlantı kaldırılamadı.' };
 }
 
-/** GitHub kullanıcı adını hesaba bağlar (yalnızca Lanux ile girenler için gerekli). */
-export async function linkGithub(username: string): Promise<{ ok: boolean; error?: string }> {
-  const { ok, data } = await apiFetchJson<{ error?: string }>('/api/auth/github/link', {
-    method: 'POST',
-    json: { username }
+/**
+ * GitHub hesabını bağlar — girişteki akışın aynısı.
+ *
+ * Kullanıcı adı artık hiçbir yerde elle yazılmıyor. Sunucu onu, yetkilendirme tamamlandıktan
+ * sonra Supabase auth kaydına düşen GitHub kimliğinden okuyor; yani bağlanan hesabın gerçekten
+ * o kişiye ait olduğunu GitHub kanıtlıyor.
+ *
+ * İki adım var ve sırası önemli:
+ *   1. Önce sunucuya sorulur. GitHub ile giriş yapmış birinin kimliği auth kaydında zaten
+ *      durur, dolayısıyla hiçbir yönlendirmeye gerek kalmadan bağlanır.
+ *   2. Kimlik yoksa yetkilendirme başlatılır ve kullanıcı GitHub'a gider.
+ */
+export async function linkGithub(): Promise<{ ok: boolean; error?: string; redirecting?: boolean }> {
+  const { ok, data } = await apiFetchJson<{ error?: string; message?: string }>('/api/auth/github/link', {
+    method: 'POST'
   });
+
   if (ok) return { ok: true };
-  return {
-    ok: false,
-    error:
-      data?.error === 'github_user_not_found'
-        ? 'Bu GitHub kullanıcı adı bulunamadı.'
-        : 'GitHub hesabı bağlanamadı.'
-  };
+
+  if (data?.error === 'github_already_linked') {
+    return { ok: false, error: data.message || 'Bu GitHub hesabı başka bir hesaba bağlı.' };
+  }
+
+  if (data?.error !== 'needs_authorization') {
+    return { ok: false, error: data?.message || 'GitHub hesabı bağlanamadı.' };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) return { ok: false, error: 'GitHub bağlantısı şu anda kullanılamıyor.' };
+
+  // Girişle aynı sağlayıcı ve aynı tam sayfa yönlendirmesi; dönüşteki işareti
+  // AccountLinksSettings okuyup bağlamayı tamamlıyor.
+  const redirectTo = new URL(window.location.href);
+  redirectTo.searchParams.set('github', 'linking');
+
+  const { error } = await client.auth.linkIdentity({
+    provider: 'github',
+    options: { redirectTo: redirectTo.toString(), scopes: 'read:user' }
+  });
+
+  if (error) {
+    // Supabase projesinde "Manual linking" kapalıysa buraya düşülür; sebebi gizlemek
+    // kullanıcıyı da yöneticiyi de boşuna uğraştırır.
+    return {
+      ok: false,
+      error: /manual linking/i.test(error.message)
+        ? 'GitHub bağlama kapalı görünüyor (Supabase > Authentication > Manual linking).'
+        : error.message
+    };
+  }
+
+  return { ok: true, redirecting: true };
+}
+
+export async function unlinkGithub(): Promise<{ ok: boolean; error?: string }> {
+  const { ok, data } = await apiFetchJson<{ message?: string }>('/api/auth/github/unlink', {
+    method: 'POST'
+  });
+  return ok ? { ok: true } : { ok: false, error: data?.message || 'Bağlantı kaldırılamadı.' };
 }

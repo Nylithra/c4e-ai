@@ -331,6 +331,66 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS github_linked_at TIMESTAMPT
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_lanux_user_id
   ON public.profiles(lanux_user_id) WHERE lanux_user_id IS NOT NULL;
 
+-- Bir GitHub hesabı da yalnızca bir profile bağlanabilir.
+--
+-- Sunucu bağlamadan önce zaten "başkasına bağlı mı" diye bakıyor, ama önce-oku-sonra-yaz
+-- bir yarış penceresi bırakır; iki istek aynı anda gelirse ikisi de boş görür. Asıl garanti
+-- burada. lower() ŞART: GitHub kullanıcı adları büyük/küçük harf duyarsızdır, aksi hâlde
+-- "Owner" ve "owner" iki ayrı kayıt olur ve iki üye aynı depoları kendi profilinde gösterir.
+--
+-- ÖNCE TEMİZLİK. Eski akışta kullanıcı adı elle yazılıyor ve sahipliği doğrulanmıyordu,
+-- dolayısıyla mevcut veride aynı adın birden fazla profile yazılmış olması MÜMKÜN. Böyle
+-- satırlar kalırsa indeks oluşturulamaz ve betiğin tamamı yarıda kesilir. En erken bağlanan
+-- kayıt korunuyor (bağlanma anı yoksa profilin kendi oluşturulma anı), diğerleri boşaltılıyor:
+-- bu üyeler bağlantıyı yeniden kurduğunda artık sahiplik GitHub tarafından doğrulanacak.
+--
+-- TETİKLEYİCİYİ GEÇİCİ OLARAK KAPATMAK ZORUNDAYIZ. trg_protect_profile_privileges kimlik
+-- sütunlarını sabitliyor (`NEW.github_username := OLD.github_username`) ve yalnızca
+-- service_role ile platform yöneticisini muaf tutuyor. Bu betik SQL Editor'de `postgres`
+-- olarak çalışır, yani muaf değildir: temizlik UPDATE'i sessizce geri alınır, ardından
+-- indeks oluşturma hata verir ve betik yarıda kalır. Kapatmayı DO bloğunun içinde yapmak
+-- şart — blok tek bir ifade, dolayısıyla tek bir işlem: temizlik hata verse bile tetikleyici
+-- açık kalmadan geri alınır, yani koruma hiçbir durumda kapalı unutulmaz.
+DO $$
+DECLARE
+  -- Bu blok tetikleyici OLUŞTURULMADAN önce çalışıyor (tetikleyici bölüm 4'te). İlk
+  -- kurulumda henüz yoktur; koşulsuz bir DISABLE orada "trigger does not exist" ile patlar.
+  korunuyor BOOLEAN := EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.profiles'::regclass
+      AND tgname = 'trg_protect_profile_privileges'
+      AND NOT tgisinternal
+  );
+BEGIN
+  IF korunuyor THEN
+    ALTER TABLE public.profiles DISABLE TRIGGER trg_protect_profile_privileges;
+  END IF;
+
+  WITH sirali AS (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY lower(github_username)
+        ORDER BY COALESCE(github_linked_at, created_at, now()) ASC, id ASC
+      ) AS sira
+    FROM public.profiles
+    WHERE github_username IS NOT NULL
+  )
+  UPDATE public.profiles p
+  SET github_username = NULL,
+      github_linked_at = NULL
+  FROM sirali s
+  WHERE p.id = s.id AND s.sira > 1;
+
+  IF korunuyor THEN
+    ALTER TABLE public.profiles ENABLE TRIGGER trg_protect_profile_privileges;
+  END IF;
+END;
+$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_github_username
+  ON public.profiles(lower(github_username)) WHERE github_username IS NOT NULL;
+
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_prefs JSONB;
 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
