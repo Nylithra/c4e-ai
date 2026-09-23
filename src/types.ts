@@ -256,7 +256,7 @@ export interface GitHubRepo {
 
 export interface NotificationItem {
   id: string;
-  type: 'like' | 'star' | 'comment' | 'community' | 'repost' | 'follow' | 'job_application' | 'job_listing' | 'group_invite' | 'message';
+  type: 'like' | 'star' | 'comment' | 'community' | 'repost' | 'follow' | 'job_application' | 'job_listing' | 'group_invite' | 'message' | 'project_commit';
   recipient_id?: string;
   actor: {
     username: string;

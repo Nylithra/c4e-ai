@@ -653,7 +653,7 @@ var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
-var import_node_crypto5 = __toESM(require("node:crypto"), 1);
+var import_node_crypto6 = __toESM(require("node:crypto"), 1);
 init_security();
 
 // src/server/communityApi.ts
@@ -2041,7 +2041,11 @@ var DEFAULT_EMAIL_PREFS = {
     like: false,
     repost: false,
     star: false,
-    job_listing: false
+    job_listing: false,
+    // Takip, üyenin kendi eliyle kurduğu bir ABONELİK: "bu projeden haberim olsun".
+    // Beğeni/repost gibi kendiliğinden gelen olaylardan farklı, bu yüzden açık geliyor —
+    // kapalı gelseydi üyenin açıkça istediği şey sessizce yok sayılmış olurdu.
+    project_commit: true
   }
 };
 var ALL_TYPES = Object.keys(DEFAULT_EMAIL_PREFS.types);
@@ -2121,7 +2125,8 @@ var TYPE_LABELS = {
   like: "g\xF6nderini be\u011Fendi",
   repost: "g\xF6nderini yeniden payla\u015Ft\u0131",
   star: "g\xF6nderine y\u0131ld\u0131z verdi",
-  job_listing: "yeni bir ilan payla\u015Ft\u0131"
+  job_listing: "yeni bir ilan payla\u015Ft\u0131",
+  project_commit: "takip etti\u011Fin projeye yeni commit att\u0131"
 };
 function actorName(row) {
   return String(row?.actor?.display_name || row?.actor?.username || "Bir \xFCye").slice(0, 60);
@@ -2299,6 +2304,268 @@ function cronSecretMatches(presented) {
   const secret = env("MAIL_NOTIFY_CRON_SECRET");
   if (!secret) return false;
   return safeEquals(String(presented || ""), secret);
+}
+
+// src/server/projects.ts
+var import_node_crypto5 = __toESM(require("node:crypto"), 1);
+init_security();
+function adminHeaders5(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+async function rest4(pathAndQuery, init = {}) {
+  const response = await safeFetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+    method: init.method || "GET",
+    headers: adminHeaders5(init.headers),
+    body: init.body,
+    timeoutMs: 15e3,
+    maxResponseBytes: 4 * 1024 * 1024
+  });
+  let rows = [];
+  if (response.text) {
+    try {
+      const parsed = JSON.parse(response.text);
+      rows = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      rows = [];
+    }
+  }
+  return { ok: response.ok, status: response.status, rows };
+}
+function projectsConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+}
+var REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/[A-Za-z0-9._-]{1,100}$/;
+function normalizeRepoFullName(raw) {
+  const value = String(raw ?? "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+  return REPO_PATTERN.test(value) ? value : null;
+}
+function cleanText(raw, max) {
+  return String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+function newProjectId() {
+  return `prj_${import_node_crypto5.default.randomBytes(9).toString("hex")}`;
+}
+function toPositiveInt3(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+function githubHeaders() {
+  const token = env("GITHUB_TOKEN");
+  return {
+    "User-Agent": "Code4Ever-Platform",
+    Accept: "application/vnd.github+json",
+    ...token ? { Authorization: `Bearer ${token}` } : {}
+  };
+}
+async function readRepo(fullName) {
+  const [owner, repo] = fullName.split("/");
+  const response = await safeFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    { headers: githubHeaders(), allowedHosts: ["api.github.com"], timeoutMs: 1e4, maxResponseBytes: 512 * 1024 }
+  );
+  if (!response.ok) return null;
+  try {
+    const data = JSON.parse(response.text || "{}");
+    if (!data?.full_name) return null;
+    return {
+      fullName: String(data.full_name),
+      htmlUrl: String(data.html_url || `https://github.com/${data.full_name}`).slice(0, 300),
+      defaultBranch: String(data.default_branch || "main").slice(0, 100),
+      language: data.language ? String(data.language).slice(0, 40) : null,
+      description: data.description ? String(data.description).slice(0, 600) : null,
+      ownerLogin: String(data.owner?.login || "").slice(0, 39)
+    };
+  } catch {
+    return null;
+  }
+}
+async function readLatestCommit(fullName, branch) {
+  const [owner, repo] = fullName.split("/");
+  const response = await safeFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`,
+    { headers: githubHeaders(), allowedHosts: ["api.github.com"], timeoutMs: 1e4, maxResponseBytes: 1024 * 1024 }
+  );
+  if (!response.ok) return null;
+  try {
+    const data = JSON.parse(response.text || "{}");
+    if (!data?.sha) return null;
+    return {
+      sha: String(data.sha).slice(0, 40),
+      // Yalnızca ilk satır: commit gövdeleri sayfalarca olabiliyor ve bildirimde tek satır
+      // gösteriliyor.
+      message: String(data.commit?.message || "").split("\n")[0].slice(0, 200),
+      authorName: String(data.commit?.author?.name || data.author?.login || "").slice(0, 80),
+      committedAt: data.commit?.author?.date ? String(data.commit.author.date) : null,
+      url: String(data.html_url || "").slice(0, 300)
+    };
+  } catch {
+    return null;
+  }
+}
+var PROJECT_FIELDS = "id,owner_id,owner_username,name,about,repo_full_name,repo_url,repo_default_branch,language,likes_count,followers_count,last_commit_sha,last_commit_at,last_checked_at,created_at";
+async function findProjectById(id) {
+  const { ok, rows } = await rest4(
+    `projects?id=eq.${encodeURIComponent(id)}&is_deleted=eq.false&select=${PROJECT_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
+async function findProjectByRepo(fullName) {
+  const { ok, rows } = await rest4(
+    `projects?repo_full_name=ilike.${encodeURIComponent(fullName)}&is_deleted=eq.false&select=${PROJECT_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
+async function insertProject(row) {
+  const { ok, rows } = await rest4(`projects?select=${PROJECT_FIELDS}`, {
+    method: "POST",
+    body: JSON.stringify(row),
+    headers: { Prefer: "return=representation" }
+  });
+  return ok && rows.length ? rows[0] : null;
+}
+async function updateProject(id, patch) {
+  const { ok } = await rest4(`projects?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch)
+  });
+  return ok;
+}
+async function softDeleteProject(id) {
+  return updateProject(id, { is_deleted: true });
+}
+var TABLE = {
+  like: "project_likes",
+  follow: "project_follows"
+};
+async function setRelation(relation, projectId, userId, on) {
+  const table = TABLE[relation];
+  if (!on) {
+    const { ok: ok2 } = await rest4(
+      `${table}?project_id=eq.${encodeURIComponent(projectId)}&user_id=eq.${encodeURIComponent(userId)}`,
+      { method: "DELETE" }
+    );
+    return ok2;
+  }
+  const { ok } = await rest4(table, {
+    method: "POST",
+    body: JSON.stringify({ project_id: projectId, user_id: userId }),
+    headers: { Prefer: "resolution=ignore-duplicates" }
+  });
+  return ok;
+}
+async function readRelations(relation, userId, projectIds) {
+  if (!userId || projectIds.length === 0) return {};
+  const list = projectIds.map((id) => `"${id}"`).join(",");
+  const { ok, rows } = await rest4(
+    `${TABLE[relation]}?user_id=eq.${encodeURIComponent(userId)}&project_id=in.(${encodeURIComponent(list)})&select=project_id`
+  );
+  if (!ok) return {};
+  const map = {};
+  for (const row of rows) map[String(row.project_id)] = true;
+  return map;
+}
+async function readFollowerIds(projectId) {
+  const { ok, rows } = await rest4(
+    `project_follows?project_id=eq.${encodeURIComponent(projectId)}&select=user_id`
+  );
+  return ok ? rows.map((r) => String(r.user_id)).filter(Boolean) : [];
+}
+async function listProjects(options) {
+  const order = options.sort === "top" ? "likes_count.desc,created_at.desc" : "created_at.desc";
+  const ownerFilter = options.sort === "mine" && options.ownerId ? `&owner_id=eq.${encodeURIComponent(options.ownerId)}` : "";
+  const { ok, rows } = await rest4(
+    `projects?is_deleted=eq.false${ownerFilter}&select=${PROJECT_FIELDS}&order=${order}&limit=${options.limit}`
+  );
+  return ok ? rows : [];
+}
+async function projectOfTheWeek() {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString();
+  const { ok, rows } = await rest4(
+    `project_likes?created_at=gte.${encodeURIComponent(since)}&select=project_id&limit=5000`
+  );
+  if (!ok || rows.length === 0) return null;
+  const tally = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const id = String(row.project_id);
+    tally.set(id, (tally.get(id) || 0) + 1);
+  }
+  const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [id, weeklyLikes] of ranked) {
+    const project = await findProjectById(id);
+    if (project) return { project, weeklyLikes };
+  }
+  return null;
+}
+async function allTimeTop() {
+  const rows = await listProjects({ sort: "top", limit: 1 });
+  return rows.length && Number(rows[0].likes_count) > 0 ? rows[0] : null;
+}
+async function notifyFollowers(project, commit, followerIds) {
+  const recipients = followerIds.filter((id) => id && id !== project.owner_id);
+  if (recipients.length === 0) return 0;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const rows = recipients.map((recipientId) => ({
+    id: `ntf_${import_node_crypto5.default.randomBytes(9).toString("hex")}`,
+    recipient_id: recipientId,
+    type: "project_commit",
+    actor: {
+      username: project.owner_username,
+      display_name: project.owner_username,
+      avatar_url: ""
+    },
+    content: `"${project.name}" projesine yeni commit: ${commit.message}`,
+    target_id: project.id,
+    is_read: false,
+    created_at: now
+  }));
+  const { ok } = await rest4("notifications", { method: "POST", body: JSON.stringify(rows) });
+  return ok ? rows.length : 0;
+}
+async function runCommitWatch(options = {}) {
+  const budgetMs = options.budgetMs === void 0 ? 2e4 : Math.max(1e3, options.budgetMs);
+  const maxProjects = options.maxProjects === void 0 ? 25 : Math.max(1, options.maxProjects);
+  const deadline = Date.now() + budgetMs;
+  const result = { checked: 0, newCommits: 0, notified: 0, failed: 0, timedOut: false };
+  const { ok, rows } = await rest4(
+    `projects?is_deleted=eq.false&select=${PROJECT_FIELDS}&order=last_checked_at.asc.nullsfirst&limit=${maxProjects}`
+  );
+  if (!ok) return result;
+  for (const project of rows) {
+    if (Date.now() >= deadline) {
+      result.timedOut = true;
+      break;
+    }
+    const branch = project.repo_default_branch || "main";
+    const commit = await readLatestCommit(project.repo_full_name, branch);
+    result.checked++;
+    if (!commit) {
+      result.failed++;
+      await updateProject(project.id, {
+        last_checked_at: (/* @__PURE__ */ new Date()).toISOString(),
+        check_failures: Number(project.check_failures || 0) + 1
+      });
+      continue;
+    }
+    const isNew = commit.sha !== project.last_commit_sha;
+    const firstEverCheck = !project.last_commit_sha;
+    if (isNew && !firstEverCheck) {
+      const followers = await readFollowerIds(project.id);
+      result.notified += await notifyFollowers(project, commit, followers);
+      result.newCommits++;
+    }
+    await updateProject(project.id, {
+      last_commit_sha: commit.sha,
+      last_commit_at: commit.committedAt,
+      last_checked_at: (/* @__PURE__ */ new Date()).toISOString(),
+      check_failures: 0
+    });
+  }
+  return result;
 }
 
 // server.ts
@@ -2692,7 +2959,7 @@ app.post(
     const payload = validation.value;
     const authorUsername = normalizeUsername(asString(body.author_username ?? body.authorUsername)) || keyRow.created_by_username || "api";
     const post = await insertCommunityPost({
-      id: `post_api_${Date.now()}_${import_node_crypto5.default.randomBytes(6).toString("hex")}`,
+      id: `post_api_${Date.now()}_${import_node_crypto6.default.randomBytes(6).toString("hex")}`,
       author: {
         username: authorUsername,
         display_name: payload.authorName,
@@ -2784,7 +3051,7 @@ app.post(
     const name = sanitizeText(body.name, LIMITS.keyName) || "default";
     const generated = generateApiKey();
     const row = await insertKey({
-      id: `cak_${Date.now()}_${import_node_crypto5.default.randomBytes(6).toString("hex")}`,
+      id: `cak_${Date.now()}_${import_node_crypto6.default.randomBytes(6).toString("hex")}`,
       community_id: community.id,
       community_handle: community.handle,
       name,
@@ -3037,8 +3304,9 @@ app.get("/api/github/repos", rateLimit({ scope: "github-repos", windowMs: 6e4, m
     return;
   }
   try {
+    const perPage = Math.min(Math.max(Number(req.query.per_page) || 15, 1), 100);
     const response = await safeFetch(
-      `https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=15`,
+      `https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=${perPage}`,
       {
         headers: { "User-Agent": "Code4Ever-Platform", Accept: "application/vnd.github+json" },
         allowedHosts: ["api.github.com"],
@@ -3249,7 +3517,7 @@ app.post(
     const donations = loadByNoGameDonations();
     const referenceCode = asString(req.body?.reference_code, 120);
     const newRecord = {
-      id: `bng_claim_${Date.now()}_${import_node_crypto5.default.randomBytes(3).toString("hex")}`,
+      id: `bng_claim_${Date.now()}_${import_node_crypto6.default.randomBytes(3).toString("hex")}`,
       streamId: BYNOGAME_STREAM_ID,
       username,
       usernameNormalized: username,
@@ -3321,7 +3589,7 @@ app.post("/api/bynogame/webhook", rateLimit({ scope: "donation-webhook", windowM
   }
   const donations = loadByNoGameDonations();
   const newDonation = {
-    id: `bng_${Date.now()}_${import_node_crypto5.default.randomBytes(3).toString("hex")}`,
+    id: `bng_${Date.now()}_${import_node_crypto6.default.randomBytes(3).toString("hex")}`,
     streamId: asString(payload.streamId || payload.stream_id, 80) || BYNOGAME_STREAM_ID,
     username: donor,
     usernameNormalized: donor,
@@ -3804,8 +4072,8 @@ app.get(
       userId = req.auth?.userId;
     }
     const { verifier, challenge } = createPkce();
-    const state = import_node_crypto5.default.randomBytes(24).toString("base64url");
-    const nonce = import_node_crypto5.default.randomBytes(24).toString("base64url");
+    const state = import_node_crypto6.default.randomBytes(24).toString("base64url");
+    const nonce = import_node_crypto6.default.randomBytes(24).toString("base64url");
     res.cookie(FLOW_COOKIE, sealFlow({ state, nonce, verifier, mode, userId }), flowCookieOptions());
     res.json({
       success: true,
@@ -3976,6 +4244,262 @@ app.post(
     res.status(cleared ? 200 : 502).json({ success: cleared });
   }
 );
+app.get(
+  "/api/projects",
+  rateLimit({ scope: "projects-list", windowMs: 6e4, max: 60 }),
+  async (req, res) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const sortParam = asString(req.query.sort, 10);
+    const sort = sortParam === "top" ? "top" : sortParam === "mine" ? "mine" : "new";
+    const userId = req.auth?.userId || "";
+    if (sort === "mine" && !userId) {
+      res.status(401).json({ success: false, error: "auth_required" });
+      return;
+    }
+    const limit = Math.min(Math.max(toPositiveInt3(req.query.limit, 30), 1), 50);
+    const projects = await listProjects({ sort, ownerId: userId, limit });
+    const ids = projects.map((p) => String(p.id));
+    const [liked, followed] = userId ? await Promise.all([readRelations("like", userId, ids), readRelations("follow", userId, ids)]) : [{}, {}];
+    res.json({
+      success: true,
+      projects: projects.map((p) => ({
+        ...p,
+        liked_by_me: Boolean(liked[p.id]),
+        followed_by_me: Boolean(followed[p.id])
+      }))
+    });
+  }
+);
+app.get(
+  "/api/projects/highlights",
+  rateLimit({ scope: "projects-highlights", windowMs: 6e4, max: 60 }),
+  async (_req, res) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const [week, allTime] = await Promise.all([projectOfTheWeek(), allTimeTop()]);
+    res.json({
+      success: true,
+      week: week ? { ...week.project, weekly_likes: week.weeklyLikes } : null,
+      all_time: allTime
+    });
+  }
+);
+app.post(
+  "/api/projects",
+  requireAuth,
+  // Sınır REDDEDİLEN denemeleri de sayıyor (doğru davranış: hammering'i o durdurur). Ama
+  // 10 fazla düşüktü: depo adını birkaç kez yanlış yazan biri kendini bir dakika dışarıda
+  // bırakıyordu. 30, insan kullanımı için rahat, kötüye kullanım için hâlâ dar.
+  rateLimit({ scope: "projects-create", windowMs: 6e4, max: 30, perUser: true }),
+  async (req, res) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const userId = req.auth?.userId || "";
+    const profile = await findById(userId);
+    if (!profile) {
+      res.status(404).json({ success: false, error: "profile_not_found" });
+      return;
+    }
+    if (!profile.github_username) {
+      res.status(409).json({
+        success: false,
+        error: "github_required",
+        message: "Proje ekleyebilmek i\xE7in \xF6nce GitHub hesab\u0131n\u0131z\u0131 ba\u011Flay\u0131n."
+      });
+      return;
+    }
+    const repoFullName = normalizeRepoFullName(req.body?.repo);
+    if (!repoFullName) {
+      res.status(400).json({ success: false, error: "invalid_repo" });
+      return;
+    }
+    const repo = await readRepo(repoFullName);
+    if (!repo) {
+      res.status(404).json({
+        success: false,
+        error: "repo_not_found",
+        message: "Depo bulunamad\u0131. Herkese a\xE7\u0131k bir depo olmal\u0131."
+      });
+      return;
+    }
+    if (repo.ownerLogin.toLowerCase() !== String(profile.github_username).toLowerCase()) {
+      res.status(403).json({
+        success: false,
+        error: "not_your_repo",
+        message: "Yaln\u0131zca kendi GitHub hesab\u0131n\u0131zdaki depolar\u0131 ekleyebilirsiniz."
+      });
+      return;
+    }
+    const existing = await findProjectByRepo(repo.fullName);
+    if (existing) {
+      res.status(409).json({
+        success: false,
+        error: "repo_already_added",
+        message: "Bu depo i\xE7in zaten bir proje var."
+      });
+      return;
+    }
+    const name = cleanText(req.body?.name, 80) || repo.fullName.split("/")[1];
+    const about = cleanText(req.body?.about, 600) || repo.description || "";
+    const created = await insertProject({
+      id: newProjectId(),
+      owner_id: userId,
+      owner_username: profile.username,
+      name,
+      about,
+      repo_full_name: repo.fullName,
+      repo_url: repo.htmlUrl,
+      repo_default_branch: repo.defaultBranch,
+      language: repo.language
+    });
+    if (!created) {
+      res.status(502).json({ success: false, error: "create_failed" });
+      return;
+    }
+    res.status(201).json({ success: true, project: { ...created, liked_by_me: false, followed_by_me: false } });
+  }
+);
+app.all(
+  "/api/projects/watch",
+  rateLimit({ scope: "projects-watch", windowMs: 6e4, max: 12 }),
+  async (req, res) => {
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.status(405).json({ success: false, error: "method_not_allowed" });
+      return;
+    }
+    const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""))?.[1] || "";
+    const viaCron = cronSecretMatches(String(req.headers["x-cron-secret"] || "")) || cronSecretMatches(bearer);
+    if (!viaCron) {
+      await new Promise((resolve) => requireAdmin(req, res, () => resolve()));
+      if (res.headersSent) return;
+    }
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const result = await runCommitWatch({
+      budgetMs: toPositiveInt3(req.body?.budgetMs, 2e4),
+      maxProjects: toPositiveInt3(req.body?.maxProjects, 25)
+    });
+    res.json({ success: true, ...result });
+  }
+);
+app.get(
+  "/api/projects/:id",
+  rateLimit({ scope: "projects-detail", windowMs: 6e4, max: 60 }),
+  async (req, res) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: "not_found" });
+      return;
+    }
+    const userId = req.auth?.userId || "";
+    const [liked, followed] = userId ? await Promise.all([
+      readRelations("like", userId, [project.id]),
+      readRelations("follow", userId, [project.id])
+    ]) : [{}, {}];
+    res.json({
+      success: true,
+      project: {
+        ...project,
+        liked_by_me: Boolean(liked[project.id]),
+        followed_by_me: Boolean(followed[project.id])
+      }
+    });
+  }
+);
+app.patch(
+  "/api/projects/:id",
+  requireAuth,
+  rateLimit({ scope: "projects-update", windowMs: 6e4, max: 20, perUser: true }),
+  async (req, res) => {
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: "not_found" });
+      return;
+    }
+    if (project.owner_id !== req.auth?.userId && !req.auth?.isAdmin) {
+      res.status(403).json({ success: false, error: "forbidden" });
+      return;
+    }
+    const patch = {};
+    if (req.body?.name !== void 0) {
+      const name = cleanText(req.body.name, 80);
+      if (!name) {
+        res.status(400).json({ success: false, error: "invalid_name" });
+        return;
+      }
+      patch.name = name;
+    }
+    if (req.body?.about !== void 0) patch.about = cleanText(req.body.about, 600);
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ success: false, error: "nothing_to_update" });
+      return;
+    }
+    const saved = await updateProject(project.id, patch);
+    res.status(saved ? 200 : 502).json({ success: saved });
+  }
+);
+app.delete(
+  "/api/projects/:id",
+  requireAuth,
+  rateLimit({ scope: "projects-delete", windowMs: 6e4, max: 20, perUser: true }),
+  async (req, res) => {
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: "not_found" });
+      return;
+    }
+    if (project.owner_id !== req.auth?.userId && !req.auth?.isAdmin) {
+      res.status(403).json({ success: false, error: "forbidden" });
+      return;
+    }
+    const removed = await softDeleteProject(project.id);
+    res.status(removed ? 200 : 502).json({ success: removed });
+  }
+);
+for (const relation of ["like", "follow"]) {
+  app.post(
+    `/api/projects/:id/${relation}`,
+    requireAuth,
+    rateLimit({ scope: `projects-${relation}`, windowMs: 6e4, max: 60, perUser: true }),
+    async (req, res) => {
+      if (!projectsConfigured()) {
+        res.status(503).json({ success: false, error: "not_configured" });
+        return;
+      }
+      const project = await findProjectById(asString(req.params.id, 60));
+      if (!project) {
+        res.status(404).json({ success: false, error: "not_found" });
+        return;
+      }
+      const on = req.body?.on !== false;
+      const done = await setRelation(relation, project.id, req.auth?.userId || "", on);
+      if (!done) {
+        res.status(502).json({ success: false, error: "update_failed" });
+        return;
+      }
+      const fresh = await findProjectById(project.id);
+      res.json({
+        success: true,
+        on,
+        likes_count: Number(fresh?.likes_count ?? project.likes_count),
+        followers_count: Number(fresh?.followers_count ?? project.followers_count)
+      });
+    }
+  );
+}
 app.use("/api", (_req, res) => {
   res.status(404).json({ success: false, error: "not_found" });
 });

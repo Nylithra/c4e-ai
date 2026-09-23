@@ -12,7 +12,8 @@ import {
   Repeat2,
   UserPlus,
   Mail,
-  Inbox
+  Inbox,
+  GitCommit
 } from 'lucide-react';
 import { NotificationItem } from '../types';
 import { UserAvatar } from './ui/avatar';
@@ -31,7 +32,7 @@ type FilterId = 'all' | 'unread' | 'social' | 'work';
 
 /** Which notification types belong to which filter tab. */
 const FILTER_TYPES: Record<Exclude<FilterId, 'all' | 'unread'>, ReadonlyArray<NotificationItem['type']>> = {
-  social: ['like', 'star', 'comment', 'repost', 'follow', 'community', 'group_invite', 'message'],
+  social: ['like', 'star', 'comment', 'repost', 'follow', 'community', 'group_invite', 'message', 'project_commit'],
   work: ['job_application', 'job_listing']
 };
 
@@ -52,7 +53,8 @@ const TYPE_STYLES: Record<
   group_invite: { icon: Users, badge: 'bg-purple-500/20 text-purple-400 border-purple-500/30', tint: 'text-purple-400' },
   message: { icon: Mail, badge: 'bg-blue-500/20 text-blue-400 border-blue-500/30', tint: 'text-blue-400' },
   job_application: { icon: Briefcase, badge: 'bg-teal-500/20 text-teal-400 border-teal-500/30', tint: 'text-teal-400' },
-  job_listing: { icon: Briefcase, badge: 'bg-teal-500/20 text-teal-400 border-teal-500/30', tint: 'text-teal-400' }
+  job_listing: { icon: Briefcase, badge: 'bg-teal-500/20 text-teal-400 border-teal-500/30', tint: 'text-teal-400' },
+  project_commit: { icon: GitCommit, badge: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30', tint: 'text-indigo-400' }
 };
 
 const FALLBACK_STYLE = { icon: Bell, badge: 'bg-zinc-800 text-zinc-300 border-zinc-700', tint: 'text-zinc-300' };
@@ -139,6 +141,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
     if (item.type === 'message' || item.type === 'group_invite') onSelectTab('messages');
     else if (item.type === 'job_application' || item.type === 'job_listing') onSelectTab('jobs');
     else if (item.type === 'community') onSelectTab('communities');
+    else if (item.type === 'project_commit') onSelectTab('projects');
   };
 
   const filterTabs: Array<{ id: FilterId; label: string; count: number }> = [

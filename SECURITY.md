@@ -136,6 +136,9 @@ yer imleri, profil). Topluluğun kendisi keşfedilebilir kalır; herkes katılab
    `LANUX_ISSUER`, `LANUX_CLIENT_ID`, `LANUX_CLIENT_SECRET`, `LANUX_REDIRECT_URI` ve
    `LANUX_STATE_SECRET` değerlerini ayarlayın (ayrıntı: bölüm 2.4). Bu adım atlanırsa Lanux
    girişi kapalı kalır; GitHub girişi ve uygulamanın geri kalanı etkilenmez.
+6. **Proje commit bildirimleri için** `MAIL_NOTIFY_CRON_SECRET` tanımlı olmalı (tarama onu
+   kullanıyor) ve tercihen `GITHUB_TOKEN` verilmeli — kimliksiz GitHub isteği saatte 60 ile
+   sınırlı ve bu birkaç projede tükenir. Ayrıntı: bölüm 2.5.
 
 > Topluluk API'si `SUPABASE_SERVICE_ROLE_KEY` olmadan çalışmaz; anahtar yoksa tüm uçlar
 > dürüstçe 503 döner. `community_api_keys` tablosu şemayla birlikte gelir.
@@ -528,6 +531,80 @@ değil, **geçerli bir jetonun aynı çalıştırmada kabul edildiğini** de öl
 ulaşamamak da "her saldırı reddedildi" gibi görünürdü. Kapsanan saldırılar: yayımlanmamış anahtarla
 imza, `alg=none`, yanlış `aud`, yanlış `iss`, yeniden oynatılan `nonce`, süresi dolmuş jeton, bozuk
 girdi.
+
+---
+
+## 2.5 Projeler (vitrin, beğeni, takip, commit bildirimi)
+
+Bir üye kendi GitHub deposunu platforma tanıtır; diğerleri **beğenir** (vitrin) ya da
+**takip eder** (abonelik). Takip edenler her yeni commit'te bildirim alır, etmeyenler almaz.
+Ayrıca iki liderlik tablosu var: *haftanın projesi* ve *tüm zamanların en çok beğenileni*.
+
+### Bu bir yarışma, dolayısıyla puan korunmalı
+
+Liderlik tabloları puana bakıyor. Puanın uydurulabildiği bir tablo, "kim daha çok istek
+gönderdi" tablosundan ibaret olurdu. Bu yüzden:
+
+- **Sayaçlar türetilmiş veridir.** `likes_count` / `followers_count` her güncellemede
+  `project_likes` / `project_follows` tablolarındaki **gerçek satır sayısından yeniden
+  hesaplanır** (tetikleyici 4.7). Kim ne yazarsa yazsın — üye, yönetici, hatta servis rolü —
+  sonuç her zaman gerçek sayıdır.
+- **Aynı üye bir projeyi iki kez beğenemez:** birleşim tablosunun birincil anahtarı
+  `(project_id, user_id)`. İsteği tekrarlamak sayacı artırmaz.
+- **Üye yalnızca kendi adına beğeni/takip satırı ekleyebilir** (RLS), ve bu tablolarda
+  `UPDATE` yetkisi hiç verilmemiştir — bir beğeni ya vardır ya yoktur.
+- **Depo ve sahiplik değiştirilemez.** Değiştirilebilseydi, beğenileri toplanmış bir projenin
+  deposu bambaşka bir şeyle değiştirilip o beğeniler devralınabilirdi.
+
+İlk tasarımda sayaçlar "eski değeri koru" biçiminde korunuyordu; bu YANLIŞTI, çünkü sayaçları
+besleyen tetikleyicinin kendi güncellemesini de engelliyordu — beğeniler hiç sayılmıyordu.
+Gerçek PostgreSQL üzerindeki test bunu yakaladı.
+
+### Depo sahipliği GitHub'a sorulur
+
+Üye yalnızca **kendi bağlı GitHub hesabındaki** bir depoyu tanıtabilir; sunucu depoyu
+GitHub'dan okuyup `owner.login` ile üyenin doğrulanmış `github_username` alanını
+karşılaştırır. Bu yüzden proje eklemek GitHub bağlantısı ister (bkz. 2.4) — bağlantı yoksa
+sahiplik doğrulanamaz. Bir depo için yalnızca bir proje olabilir; garanti
+`lower(repo_full_name)` üzerindeki kısmi UNIQUE indekste (sunucunun ön kontrolü
+önce-oku-sonra-yaz yarışı bırakır).
+
+### Bildirim yalnızca takip edenlere
+
+Commit tarayıcısı zamanlayıcı sırrı ya da yönetici oturumu ister; herkese açık olsaydı, onu
+istediği sıklıkta tetikleyen biri hem GitHub kotasını tüketir hem de takipçilere bildirim
+akışı yarattırırdı. Tarayıcının üç davranışı bilinçli:
+
+- **Sıra önemli:** `last_commit_sha` bildirimler GÖNDERİLDİKTEN SONRA yazılır. Tersi olsaydı,
+  damgalama ile bildirim arasında düşen bir çağrı o commit'i sonsuza dek "bildirilmiş" sayar
+  ve takipçiler onu hiç görmezdi.
+- **İlk kontrol bildirim üretmez.** Proje eklendiği anda mevcut son commit "yeni" görünür;
+  bildirim gönderilseydi her yeni proje, olmamış bir olay için posta atardı.
+- **Ulaşılamayan depo turu durdurmaz.** Silinmiş/özelleştirilmiş depo sayaçla işaretlenir, tur
+  devam eder. Süre bütçesi dolarsa tur temiz kesilir; sıralama `last_checked_at` alanına göre
+  olduğu için sıradaki tur kaldığı yerden devam eder ve hiçbir proje aç kalmaz.
+
+`project_commit` bildirimi e-posta özetine de giriyor ve varsayılanı **açık**: takip, üyenin
+kendi eliyle kurduğu bir aboneliktir, kapalı gelseydi açıkça istediği şey yok sayılmış olurdu.
+Üye bunu Ayarlar > E-posta bildirimleri bölümünden kapatabilir.
+
+### Haftanın projesi gerçekten haftaya bakar
+
+Toplam beğeniye bakmak kolay olurdu ama yanlış: birkaç hafta sonra "haftanın projesi" kalıcı
+olarak "tüm zamanların projesi" ile aynı şeye dönüşür ve yeni projelerin hiç şansı kalmazdı.
+Bu yüzden son 7 günün beğeni SATIRLARI sayılıyor — şemadaki ayrı birleşim tablosu tam olarak
+bunu mümkün kılmak için var (JSONB dizisinde "ne zaman beğenildi" bilgisi yoktur). Hiç beğeni
+almamış bir proje de ödül almaz.
+
+### Doğrulama
+
+Uçtan uca 68 doğrulama (gerçek Express rotaları, sahte GitHub'a gerçek HTTP) ve arayüzde 30
+doğrulama geçti. Kapsanan saldırılar: başkasının deposunu kendi projesi gibi eklemek, aynı
+depoyu iki kez eklemek (farklı harflerle dahil), beğeni isteğini tekrarlayarak sayacı
+şişirmek, düzenleme gövdesiyle depo/puan/sahiplik yazmak, takip etmeyene bildirim gitmesi,
+aynı commit için ikinci kez bildirim, takibi bıraktıktan sonra bildirim almaya devam etmek,
+tarayıcıyı yetkisiz tetiklemek. Şema güvenceleri ayrıca gerçek PostgreSQL üzerinde 18 kontrolle
+ölçüldü.
 
 ---
 

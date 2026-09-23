@@ -102,6 +102,26 @@ import {
   DEFAULT_EMAIL_PREFS
 } from './src/server/notificationMail';
 import { renderMailHtml } from './src/server/mailTemplate';
+import {
+  allTimeTop,
+  cleanText,
+  findProjectById,
+  findProjectByRepo,
+  insertProject,
+  listProjects,
+  newProjectId,
+  normalizeRepoFullName,
+  projectOfTheWeek,
+  projectsConfigured,
+  readRelations,
+  readRepo,
+  runCommitWatch,
+  setRelation,
+  softDeleteProject,
+  toPositiveInt,
+  updateProject,
+  type ProjectSort
+} from './src/server/projects';
 
 const app = express();
 const PORT = Number(env('PORT', '3000'));
@@ -1025,8 +1045,12 @@ app.get('/api/github/repos', rateLimit({ scope: 'github-repos', windowMs: 60000,
   }
 
   try {
+    // Proje oluşturma ekranı buradan besleniyor ve çok deposu olan biri kendi deposunu
+    // 15 kayıtlık bir listede bulamaz. Üst sınır yine de bağlı: istemcinin istediği kadar
+    // büyük bir sayfa istemesi, GitHub kotasını tek istekte tüketmenin yolu olurdu.
+    const perPage = Math.min(Math.max(Number(req.query.per_page) || 15, 1), 100);
     const response = await safeFetch(
-      `https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=15`,
+      `https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=${perPage}`,
       {
         headers: { 'User-Agent': 'Code4Ever-Platform', Accept: 'application/vnd.github+json' },
         allowedHosts: ['api.github.com'],
@@ -2346,6 +2370,347 @@ app.post(
     res.status(cleared ? 200 : 502).json({ success: cleared });
   }
 );
+
+// -------------------------------------------------------------
+// PROJELER
+// -------------------------------------------------------------
+
+/**
+ * Proje vitrini. Oturumsuz ziyaretçi de görebilir; oturum varsa "ben beğendim mi / takip
+ * ediyor muyum" bilgisi de eklenir.
+ */
+app.get(
+  '/api/projects',
+  rateLimit({ scope: 'projects-list', windowMs: 60000, max: 60 }),
+  async (req: Request, res: Response) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const sortParam = asString(req.query.sort, 10);
+    const sort: ProjectSort = sortParam === 'top' ? 'top' : sortParam === 'mine' ? 'mine' : 'new';
+    const userId = req.auth?.userId || '';
+
+    // "Benim projelerim" oturum ister; oturumsuz istekte boş liste dönmek sessizce yanıltıcı
+    // olurdu ("hiç projem yok" gibi görünürdü).
+    if (sort === 'mine' && !userId) {
+      res.status(401).json({ success: false, error: 'auth_required' });
+      return;
+    }
+
+    const limit = Math.min(Math.max(toPositiveInt(req.query.limit, 30), 1), 50);
+    const projects = await listProjects({ sort, ownerId: userId, limit });
+    const ids = projects.map((p: any) => String(p.id));
+
+    const [liked, followed] = userId
+      ? await Promise.all([readRelations('like', userId, ids), readRelations('follow', userId, ids)])
+      : [{}, {}];
+
+    res.json({
+      success: true,
+      projects: projects.map((p: any) => ({
+        ...p,
+        liked_by_me: Boolean(liked[p.id]),
+        followed_by_me: Boolean(followed[p.id])
+      }))
+    });
+  }
+);
+
+/** Liderlik tabloları: haftanın projesi ve tüm zamanların en çok beğenileni. */
+app.get(
+  '/api/projects/highlights',
+  rateLimit({ scope: 'projects-highlights', windowMs: 60000, max: 60 }),
+  async (_req: Request, res: Response) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const [week, allTime] = await Promise.all([projectOfTheWeek(), allTimeTop()]);
+    res.json({
+      success: true,
+      week: week ? { ...week.project, weekly_likes: week.weeklyLikes } : null,
+      all_time: allTime
+    });
+  }
+);
+
+/**
+ * Yeni proje.
+ *
+ * DEPO SAHİPLİĞİ SUNUCUDA DOĞRULANIR. Üye yalnızca KENDİ bağlı GitHub hesabına ait bir
+ * depoyu tanıtabilir. Bu kontrol olmasaydı herkes tanınmış bir depoyu kendi adına ekleyip
+ * onun üzerinden beğeni toplar, liderlik tablosu da gerçek işi yapanı değil en hızlı
+ * davrananı ödüllendirirdi.
+ */
+app.post(
+  '/api/projects',
+  requireAuth,
+  // Sınır REDDEDİLEN denemeleri de sayıyor (doğru davranış: hammering'i o durdurur). Ama
+  // 10 fazla düşüktü: depo adını birkaç kez yanlış yazan biri kendini bir dakika dışarıda
+  // bırakıyordu. 30, insan kullanımı için rahat, kötüye kullanım için hâlâ dar.
+  rateLimit({ scope: 'projects-create', windowMs: 60000, max: 30, perUser: true }),
+  async (req: Request, res: Response) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const userId = req.auth?.userId || '';
+    const profile = await findById(userId);
+    if (!profile) {
+      res.status(404).json({ success: false, error: 'profile_not_found' });
+      return;
+    }
+
+    // GitHub bağlı değilse depo sahipliği doğrulanamaz; bu yüzden proje de açılamaz.
+    if (!profile.github_username) {
+      res.status(409).json({
+        success: false,
+        error: 'github_required',
+        message: 'Proje ekleyebilmek için önce GitHub hesabınızı bağlayın.'
+      });
+      return;
+    }
+
+    const repoFullName = normalizeRepoFullName(req.body?.repo);
+    if (!repoFullName) {
+      res.status(400).json({ success: false, error: 'invalid_repo' });
+      return;
+    }
+
+    const repo = await readRepo(repoFullName);
+    if (!repo) {
+      res.status(404).json({
+        success: false,
+        error: 'repo_not_found',
+        message: 'Depo bulunamadı. Herkese açık bir depo olmalı.'
+      });
+      return;
+    }
+
+    if (repo.ownerLogin.toLowerCase() !== String(profile.github_username).toLowerCase()) {
+      res.status(403).json({
+        success: false,
+        error: 'not_your_repo',
+        message: 'Yalnızca kendi GitHub hesabınızdaki depoları ekleyebilirsiniz.'
+      });
+      return;
+    }
+
+    const existing = await findProjectByRepo(repo.fullName);
+    if (existing) {
+      res.status(409).json({
+        success: false,
+        error: 'repo_already_added',
+        message: 'Bu depo için zaten bir proje var.'
+      });
+      return;
+    }
+
+    const name = cleanText(req.body?.name, 80) || repo.fullName.split('/')[1];
+    const about = cleanText(req.body?.about, 600) || repo.description || '';
+
+    const created = await insertProject({
+      id: newProjectId(),
+      owner_id: userId,
+      owner_username: profile.username,
+      name,
+      about,
+      repo_full_name: repo.fullName,
+      repo_url: repo.htmlUrl,
+      repo_default_branch: repo.defaultBranch,
+      language: repo.language
+    });
+
+    if (!created) {
+      res.status(502).json({ success: false, error: 'create_failed' });
+      return;
+    }
+
+    res.status(201).json({ success: true, project: { ...created, liked_by_me: false, followed_by_me: false } });
+  }
+);
+
+/**
+ * Commit tarayıcısı: takipçisi olan projelerde yeni commit arar ve bildirim bırakır.
+ *
+ * Yetki mantığı bildirim e-postası dağıtımıyla aynı: zamanlayıcı sırrı ya da yönetici
+ * oturumu. Herkese açık olsaydı, GitHub'a giden istekleri istediği sıklıkta tetikleyen biri
+ * hem kotayı tüketir hem de takipçilere bildirim akışı yarattırırdı.
+ */
+app.all(
+  '/api/projects/watch',
+  rateLimit({ scope: 'projects-watch', windowMs: 60000, max: 12 }),
+  async (req: Request, res: Response) => {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.status(405).json({ success: false, error: 'method_not_allowed' });
+      return;
+    }
+
+    const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1] || '';
+    const viaCron =
+      cronSecretMatches(String(req.headers['x-cron-secret'] || '')) || cronSecretMatches(bearer);
+
+    if (!viaCron) {
+      await new Promise<void>((resolve) => requireAdmin(req, res, () => resolve()));
+      if (res.headersSent) return;
+    }
+
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const result = await runCommitWatch({
+      budgetMs: toPositiveInt(req.body?.budgetMs, 20000),
+      maxProjects: toPositiveInt(req.body?.maxProjects, 25)
+    });
+    res.json({ success: true, ...result });
+  }
+);
+
+/** Tek proje. */
+app.get(
+  '/api/projects/:id',
+  rateLimit({ scope: 'projects-detail', windowMs: 60000, max: 60 }),
+  async (req: Request, res: Response) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: 'not_found' });
+      return;
+    }
+
+    const userId = req.auth?.userId || '';
+    const [liked, followed] = userId
+      ? await Promise.all([
+          readRelations('like', userId, [project.id]),
+          readRelations('follow', userId, [project.id])
+        ])
+      : [{}, {}];
+
+    res.json({
+      success: true,
+      project: {
+        ...project,
+        liked_by_me: Boolean(liked[project.id]),
+        followed_by_me: Boolean(followed[project.id])
+      }
+    });
+  }
+);
+
+/** Ad ve tanıtım yazısını günceller (yalnızca sahibi). */
+app.patch(
+  '/api/projects/:id',
+  requireAuth,
+  rateLimit({ scope: 'projects-update', windowMs: 60000, max: 20, perUser: true }),
+  async (req: Request, res: Response) => {
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: 'not_found' });
+      return;
+    }
+    if (project.owner_id !== req.auth?.userId && !req.auth?.isAdmin) {
+      res.status(403).json({ success: false, error: 'forbidden' });
+      return;
+    }
+
+    // Yalnızca bu iki alan. Depo, sahiplik ve sayaçlar burada hiç geçmiyor; şemadaki
+    // tetikleyici de onları ayrıca koruyor (iki katman bilinçli).
+    const patch: Record<string, unknown> = {};
+    if (req.body?.name !== undefined) {
+      const name = cleanText(req.body.name, 80);
+      if (!name) {
+        res.status(400).json({ success: false, error: 'invalid_name' });
+        return;
+      }
+      patch.name = name;
+    }
+    if (req.body?.about !== undefined) patch.about = cleanText(req.body.about, 600);
+
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ success: false, error: 'nothing_to_update' });
+      return;
+    }
+
+    const saved = await updateProject(project.id, patch);
+    res.status(saved ? 200 : 502).json({ success: saved });
+  }
+);
+
+app.delete(
+  '/api/projects/:id',
+  requireAuth,
+  rateLimit({ scope: 'projects-delete', windowMs: 60000, max: 20, perUser: true }),
+  async (req: Request, res: Response) => {
+    const project = await findProjectById(asString(req.params.id, 60));
+    if (!project) {
+      res.status(404).json({ success: false, error: 'not_found' });
+      return;
+    }
+    if (project.owner_id !== req.auth?.userId && !req.auth?.isAdmin) {
+      res.status(403).json({ success: false, error: 'forbidden' });
+      return;
+    }
+
+    const removed = await softDeleteProject(project.id);
+    res.status(removed ? 200 : 502).json({ success: removed });
+  }
+);
+
+/**
+ * Beğeni ve takip.
+ *
+ * Tek bir gövde alanıyla açık durum gönderiliyor (`on: true/false`), aç/kapa değil. Aç/kapa
+ * olsaydı iki sekmeden aynı anda basmak veya bir isteğin yeniden denenmesi durumu ters
+ * çevirirdi: kullanıcı beğendiğini sanırken beğenisi geri alınmış olurdu.
+ *
+ * Beğeni bir vitrin, takip ise bir ABONELİK: yalnızca takip edenler commit bildirimi alır.
+ */
+for (const relation of ['like', 'follow'] as const) {
+  app.post(
+    `/api/projects/:id/${relation}`,
+    requireAuth,
+    rateLimit({ scope: `projects-${relation}`, windowMs: 60000, max: 60, perUser: true }),
+    async (req: Request, res: Response) => {
+      if (!projectsConfigured()) {
+        res.status(503).json({ success: false, error: 'not_configured' });
+        return;
+      }
+
+      const project = await findProjectById(asString(req.params.id, 60));
+      if (!project) {
+        res.status(404).json({ success: false, error: 'not_found' });
+        return;
+      }
+
+      const on = req.body?.on !== false;
+      const done = await setRelation(relation, project.id, req.auth?.userId || '', on);
+      if (!done) {
+        res.status(502).json({ success: false, error: 'update_failed' });
+        return;
+      }
+
+      // Sayaç tetikleyiciyle güncellendiği için taze satırı geri okuyoruz: istemcinin
+      // kendi kendine +1 yapması, iki sekme arasında tutarsız sayı gösterirdi.
+      const fresh = await findProjectById(project.id);
+      res.json({
+        success: true,
+        on,
+        likes_count: Number(fresh?.likes_count ?? project.likes_count),
+        followers_count: Number(fresh?.followers_count ?? project.followers_count)
+      });
+    }
+  );
+}
 
 // -------------------------------------------------------------
 // ERROR HANDLING & STATIC HOSTING

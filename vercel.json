@@ -22,6 +22,10 @@
     {
       "path": "/api/notifications/email/dispatch",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/projects/watch",
+      "schedule": "30 6 * * *"
     }
   ]
 }

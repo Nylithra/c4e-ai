@@ -12,7 +12,7 @@ import { apiFetchJson } from '../services/apiClient';
 
 type EmailType =
   | 'comment' | 'message' | 'follow' | 'job_application' | 'group_invite'
-  | 'community' | 'like' | 'repost' | 'star' | 'job_listing';
+  | 'community' | 'like' | 'repost' | 'star' | 'job_listing' | 'project_commit';
 
 interface EmailPrefs {
   enabled: boolean;
@@ -37,7 +37,12 @@ const GROUPS: Group[] = [
       { id: 'comment', label: 'Gönderine yanıt', description: 'Biri gönderine yorum yazdığında' },
       { id: 'message', label: 'Özel mesaj', description: 'Sana doğrudan mesaj geldiğinde' },
       { id: 'follow', label: 'Yeni takipçi', description: 'Biri seni takip etmeye başladığında' },
-      { id: 'group_invite', label: 'Grup daveti', description: 'Bir gruba davet edildiğinde' }
+      { id: 'group_invite', label: 'Grup daveti', description: 'Bir gruba davet edildiğinde' },
+      {
+        id: 'project_commit',
+        label: 'Takip ettiğin projeler',
+        description: 'Takip ettiğin bir projeye yeni commit geldiğinde'
+      }
     ]
   },
   {

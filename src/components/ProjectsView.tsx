@@ -1,172 +1,622 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Code2,
-  Star,
-  GitFork,
+  AlertCircle,
+  Bell,
+  BellOff,
+  Crown,
   ExternalLink,
-  RefreshCw,
+  GitCommit,
   Github,
-  Search
+  Heart,
+  Loader2,
+  Plus,
+  Search,
+  Star,
+  Trash2,
+  Trophy,
+  X
 } from 'lucide-react';
-import { UserProfile, GitHubRepo } from '../types';
+import { UserProfile } from '../types';
+import {
+  createProject,
+  deleteProject,
+  fetchHighlights,
+  fetchOwnRepos,
+  fetchProjects,
+  setProjectRelation,
+  type Highlights,
+  type Project,
+  type ProjectSort,
+  type RepoOption
+} from '../services/projectsClient';
 
 interface ProjectsViewProps {
   user: UserProfile;
   language: 'tr' | 'en';
 }
 
-export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) => {
-  const [repos, setRepos] = useState<GitHubRepo[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+/** "3 saat önce" biçiminde göreli zaman; commit tarihleri için. */
+function timeAgo(iso: string | null, tr: boolean): string {
+  if (!iso) return tr ? 'bilinmiyor' : 'unknown';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return tr ? 'bilinmiyor' : 'unknown';
 
-  const fetchUserRepos = async (targetUsername: string) => {
-    if (!targetUsername) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`https://api.github.com/users/${targetUsername}/repos?sort=updated&per_page=30`);
-      if (!res.ok) {
-        throw new Error(language === 'tr' ? 'GitHub depoları alınamadı.' : 'Failed to fetch GitHub repositories.');
-      }
-      const data = await res.json();
-      setRepos(data);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error fetching repos';
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return tr ? 'az önce' : 'just now';
+  if (minutes < 60) return tr ? `${minutes} dk önce` : `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return tr ? `${hours} sa önce` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return tr ? `${days} gün önce` : `${days}d ago`;
+  return new Date(iso).toLocaleDateString(tr ? 'tr-TR' : 'en-US');
+}
 
-  useEffect(() => {
-    fetchUserRepos(user.username);
-  }, [user.username]);
+// -------------------------------------------------------------
+// PROJE KARTI
+// -------------------------------------------------------------
 
-  const filteredRepos = repos.filter((repo) =>
-    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (repo.description && repo.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    (repo.language && repo.language.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+const ProjectCard: React.FC<{
+  project: Project;
+  tr: boolean;
+  isOwner: boolean;
+  busy: boolean;
+  onLike: () => void;
+  onFollow: () => void;
+  onDelete: () => void;
+}> = ({ project, tr, isOwner, busy, onLike, onFollow, onDelete }) => {
+  const liked = project.liked_by_me === true;
+  const followed = project.followed_by_me === true;
 
   return (
-    <div className="flex-1 min-w-0 w-full border-r border-zinc-800/60 min-h-screen pb-16 bg-[#09090b]">
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#09090b]/90 border-b border-zinc-800/40 px-5 py-3.5 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-          <Code2 className="w-5 h-5 text-blue-400" />
-          <span>{language === 'tr' ? 'GitHub Depoları' : 'GitHub Repositories'}</span>
-        </h2>
+    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3 transition-colors hover:border-zinc-700">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h3 className="user-text text-sm font-bold text-white">{project.name}</h3>
+          <a
+            href={project.repo_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="user-text inline-flex items-center gap-1.5 text-[11px] text-zinc-400 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+          >
+            <Github className="h-3 w-3 flex-shrink-0" />
+            <span>{project.repo_full_name}</span>
+            <ExternalLink className="h-2.5 w-2.5 flex-shrink-0" />
+          </a>
+        </div>
 
-        <button
-          onClick={() => fetchUserRepos(user.username)}
-          disabled={loading}
-          className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
-          title={language === 'tr' ? 'Yenile' : 'Refresh'}
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-400' : ''}`} />
-        </button>
+        {isOwner && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            aria-label={tr ? 'Projeyi kaldır' : 'Remove project'}
+            className="flex min-h-9 min-w-9 flex-shrink-0 items-center justify-center rounded-xl border border-zinc-800 text-zinc-500 transition-colors hover:text-red-400 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
-      <div className="p-5 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="flex-1 relative">
-            <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={
-                language === 'tr'
-                  ? 'Depo adı, dil veya açıklama ara...'
-                  : 'Search repo name, language or description...'
-              }
-              className="w-full bg-[#121215] border border-zinc-800/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
+      {project.about && (
+        <p className="user-text text-[12px] leading-relaxed text-zinc-400">{project.about}</p>
+      )}
 
-        <div className="flex items-center justify-between px-1 text-xs text-zinc-400 font-mono">
-          <span className="flex items-center gap-1.5">
-            <Github className="w-3.5 h-3.5 text-zinc-300" />
-            <span>@{user.username} {language === 'tr' ? 'depoları' : 'repositories'}</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+        <span>@{project.owner_username}</span>
+        {project.language && (
+          <span className="flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+            {project.language}
           </span>
-          <span>{filteredRepos.length} {language === 'tr' ? 'depo bulundu' : 'repos found'}</span>
+        )}
+        {project.last_commit_at && (
+          <span className="flex items-center gap-1">
+            <GitCommit className="h-3 w-3" />
+            {tr ? 'son commit' : 'last commit'} {timeAgo(project.last_commit_at, tr)}
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onLike}
+          disabled={busy}
+          aria-pressed={liked}
+          /*
+            Erişilebilir ad elle veriliyor. İçerikten türetilen ad "2beğeni" oluyordu: ekran
+            okuyucuda anlamsız, ve neyin neyi beğendiği belirsiz.
+          */
+          aria-label={
+            tr
+              ? `${project.name} projesini beğen (${project.likes_count} beğeni)`
+              : `Like ${project.name} (${project.likes_count} likes)`
+          }
+          className={`flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-[11px] font-semibold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            liked
+              ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+              : 'border-zinc-800 text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Heart className={`h-3.5 w-3.5 ${liked ? 'fill-current' : ''}`} />
+          <span>{project.likes_count}</span>
+          <span>{tr ? 'beğeni' : 'likes'}</span>
+        </button>
+
+        {/*
+          Takip, beğeninin "daha fazlası" değil BAŞKA bir şey: abonelik. Bu yüzden düğme
+          bildirimi anlatıyor ("her commit'te haber al"), yoksa iki düğme aynı işi yapıyor
+          gibi görünür ve kimse neden ikisinin de olduğunu anlamaz.
+        */}
+        <button
+          type="button"
+          onClick={onFollow}
+          disabled={busy}
+          aria-pressed={followed}
+          aria-label={
+            tr
+              ? `${project.name} projesini takip et (${project.followers_count} takipçi)`
+              : `Follow ${project.name} (${project.followers_count} followers)`
+          }
+          title={
+            followed
+              ? tr
+                ? 'Her yeni commit için bildirim alıyorsun'
+                : 'You get a notification on every new commit'
+              : tr
+              ? 'Takip et, her yeni commit için bildirim al'
+              : 'Follow to get a notification on every new commit'
+          }
+          className={`flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-[11px] font-semibold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            followed
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+              : 'border-zinc-800 text-zinc-400 hover:text-white'
+          }`}
+        >
+          {followed ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+          <span>{followed ? (tr ? 'Takiptesin' : 'Following') : tr ? 'Takip et' : 'Follow'}</span>
+          <span className="text-zinc-500">{project.followers_count}</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// -------------------------------------------------------------
+// ÖNE ÇIKANLAR
+// -------------------------------------------------------------
+
+const HighlightCard: React.FC<{
+  project: Project;
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  accent: string;
+}> = ({ project, title, subtitle, icon, accent }) => (
+  <div className={`rounded-2xl border p-4 space-y-2 ${accent}`}>
+    <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+      {icon}
+      <span>{title}</span>
+    </p>
+    <h3 className="user-text text-sm font-bold text-white">{project.name}</h3>
+    <p className="user-text text-[11px] text-zinc-400">
+      @{project.owner_username} · {project.repo_full_name}
+    </p>
+    <p className="text-[11px] font-semibold text-zinc-300">{subtitle}</p>
+  </div>
+);
+
+// -------------------------------------------------------------
+// OLUŞTURMA PENCERESİ
+// -------------------------------------------------------------
+
+const CreateProjectDialog: React.FC<{
+  tr: boolean;
+  githubUsername: string | null;
+  onClose: () => void;
+  onCreated: (project: Project) => void;
+}> = ({ tr, githubUsername, onClose, onCreated }) => {
+  const [repos, setRepos] = useState<RepoOption[]>([]);
+  const [loadingRepos, setLoadingRepos] = useState(true);
+  const [filter, setFilter] = useState('');
+  const [selected, setSelected] = useState<RepoOption | null>(null);
+  const [name, setName] = useState('');
+  const [about, setAbout] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!githubUsername) {
+      setLoadingRepos(false);
+      return;
+    }
+    void (async () => {
+      setRepos(await fetchOwnRepos(githubUsername));
+      setLoadingRepos(false);
+    })();
+  }, [githubUsername]);
+
+  const visible = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return repos;
+    return repos.filter(
+      (r) =>
+        r.full_name.toLowerCase().includes(needle) ||
+        (r.description || '').toLowerCase().includes(needle)
+    );
+  }, [repos, filter]);
+
+  const choose = (repo: RepoOption) => {
+    setSelected(repo);
+    // Ad ve tanıtım depodan ön-doldurulur; çoğu kişi bunları olduğu gibi bırakmak ister,
+    // isteyen değiştirir.
+    setName((current) => current || repo.name);
+    setAbout((current) => current || repo.description || '');
+  };
+
+  const submit = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    const result = await createProject({ repo: selected.full_name, name: name.trim(), about: about.trim() });
+    if (result.ok && result.project) {
+      onCreated(result.project);
+      onClose();
+      return;
+    }
+    setError(result.error || null);
+    setBusy(false);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[300] flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-zinc-800 bg-[#09090b] sm:rounded-3xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3">
+          <h2 className="text-sm font-bold text-white">{tr ? 'Proje Oluştur' : 'Create Project'}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={tr ? 'Kapat' : 'Close'}
+            className="flex min-h-9 min-w-9 items-center justify-center rounded-xl text-zinc-500 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        {error && (
-          <div className="p-4 bg-red-950/40 border border-red-800/50 rounded-2xl text-xs text-red-300">
-            {error}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          {!githubUsername ? (
+            /*
+              GitHub bağlı değilse depo sahipliği doğrulanamaz, dolayısıyla proje de
+              açılamaz. Bunu pencerenin içinde söylemek, kullanıcının formu doldurup
+              sonunda reddedilmesinden iyidir.
+            */
+            <div className="flex items-start gap-2 rounded-xl border border-amber-700/50 bg-amber-950/20 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+              <p className="user-text text-[12px] leading-relaxed text-amber-200/90">
+                {tr
+                  ? 'Proje ekleyebilmek için önce Ayarlar > Bağlı Hesaplar bölümünden GitHub hesabını bağlaman gerekiyor. Depoyu gerçekten senin olduğunu böyle doğruluyoruz.'
+                  : 'To add a project, link your GitHub account under Settings > Connected Accounts first. That is how we verify the repository is really yours.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                  {tr ? '1. GitHub deposu seç' : '1. Pick a GitHub repository'}
+                </label>
+
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-600" />
+                  <input
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder={tr ? 'Depolarında ara' : 'Search your repositories'}
+                    aria-label={tr ? 'Depo ara' : 'Search repositories'}
+                    className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 pl-9 pr-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                </div>
+
+                <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-xl border border-zinc-800/60 p-1.5">
+                  {loadingRepos ? (
+                    <div className="flex items-center justify-center gap-2 p-4 text-[11px] text-zinc-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>{tr ? 'Depoların yükleniyor...' : 'Loading your repositories...'}</span>
+                    </div>
+                  ) : visible.length === 0 ? (
+                    <p className="p-4 text-center text-[11px] text-zinc-500">
+                      {tr ? 'Depo bulunamadı.' : 'No repositories found.'}
+                    </p>
+                  ) : (
+                    visible.map((repo) => (
+                      <button
+                        key={repo.full_name}
+                        type="button"
+                        onClick={() => choose(repo)}
+                        className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                          selected?.full_name === repo.full_name
+                            ? 'bg-indigo-500/15 text-white'
+                            : 'text-zinc-400 hover:bg-zinc-900'
+                        }`}
+                      >
+                        <span className="user-text min-w-0 text-[12px] font-semibold">{repo.name}</span>
+                        <span className="flex flex-shrink-0 items-center gap-1 text-[10px] text-zinc-500">
+                          <Star className="h-2.5 w-2.5" />
+                          {repo.stargazers_count}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="proje-adi"
+                  className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500"
+                >
+                  {tr ? '2. Proje adı' : '2. Project name'}
+                </label>
+                <input
+                  id="proje-adi"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={80}
+                  placeholder={tr ? 'Projenin adı' : 'Project name'}
+                  className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="proje-hakkinda"
+                  className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500"
+                >
+                  {tr ? '3. Hakkında' : '3. About'}
+                </label>
+                <textarea
+                  id="proje-hakkinda"
+                  value={about}
+                  onChange={(e) => setAbout(e.target.value)}
+                  maxLength={600}
+                  rows={3}
+                  placeholder={tr ? 'Proje ne yapıyor?' : 'What does this project do?'}
+                  className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-xs leading-relaxed text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <p className="text-right text-[10px] text-zinc-600">{about.length}/600</p>
+              </div>
+            </>
+          )}
+
+          {error && (
+            <p className="user-text flex items-start gap-1.5 text-[11px] text-red-400">
+              <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-2 border-t border-zinc-800/60 p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-11 flex-1 rounded-xl border border-zinc-800 text-xs font-semibold text-zinc-400 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {tr ? 'Vazgeç' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || !selected || !name.trim() || !githubUsername}
+            className="brand-gradient flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl text-xs font-bold shadow-lg transition-opacity disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            <span>{tr ? 'Oluştur' : 'Create'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// -------------------------------------------------------------
+// GÖRÜNÜM
+// -------------------------------------------------------------
+
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) => {
+  const tr = language === 'tr';
+  const [sort, setSort] = useState<ProjectSort>('new');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [highlights, setHighlights] = useState<Highlights>({ week: null, all_time: null });
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const githubUsername = user.github_username || null;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [list, tops] = await Promise.all([fetchProjects(sort), fetchHighlights()]);
+    setProjects(list);
+    setHighlights(tops);
+    setLoading(false);
+  }, [sort]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /**
+   * Beğeni / takip.
+   *
+   * Sunucunun döndürdüğü sayılar yazılıyor, istemci kendi kendine +1 yapmıyor: iki sekmede
+   * açık olan bir sayfa aksi hâlde farklı sayılar gösterir ve "haftanın projesi" gibi bir
+   * sıralamada yanlış sayı, yanlış kazanandan daha kötüdür.
+   */
+  const toggle = async (project: Project, relation: 'like' | 'follow') => {
+    const on = relation === 'like' ? project.liked_by_me !== true : project.followed_by_me !== true;
+    setBusyId(project.id);
+    const result = await setProjectRelation(project.id, relation, on);
+    setBusyId(null);
+    if (!result.ok) return;
+
+    setProjects((current) =>
+      current.map((p) =>
+        p.id === project.id
+          ? {
+              ...p,
+              likes_count: result.likes_count ?? p.likes_count,
+              followers_count: result.followers_count ?? p.followers_count,
+              ...(relation === 'like' ? { liked_by_me: on } : { followed_by_me: on })
+            }
+          : p
+      )
+    );
+  };
+
+  const remove = async (project: Project) => {
+    setBusyId(project.id);
+    const done = await deleteProject(project.id);
+    setBusyId(null);
+    if (done) setProjects((current) => current.filter((p) => p.id !== project.id));
+  };
+
+  const tabs: { key: ProjectSort; label: string }[] = [
+    { key: 'new', label: tr ? 'Yeni' : 'New' },
+    { key: 'top', label: tr ? 'En çok beğenilen' : 'Most liked' },
+    { key: 'mine', label: tr ? 'Benim projelerim' : 'My projects' }
+  ];
+
+  return (
+    <div className="content-column min-h-screen w-full min-w-0 flex-1 border-r border-zinc-800/60 pb-16">
+      <div className="sticky top-0 z-20 border-b border-zinc-800/40 bg-[#09090b]/90 px-4 py-3 backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight text-white">
+            <Github className="h-5 w-5 text-indigo-400" />
+            <span>{tr ? 'Projeler' : 'Projects'}</span>
+          </h2>
+
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="brand-gradient flex min-h-9 items-center gap-1.5 rounded-xl px-3.5 text-xs font-bold shadow-lg transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>{tr ? 'Proje Oluştur' : 'Create'}</span>
+          </button>
+        </div>
+
+        <div className="mt-3 flex gap-1.5 overflow-x-auto">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setSort(tab.key)}
+              className={`min-h-9 flex-shrink-0 rounded-xl px-3 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                sort === tab.key ? 'nav-active text-white' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+        {(highlights.week || highlights.all_time) && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {highlights.week && (
+              <HighlightCard
+                project={highlights.week}
+                title={tr ? 'Haftanın Projesi' : 'Project of the Week'}
+                subtitle={
+                  tr
+                    ? `Son 7 günde ${highlights.week.weekly_likes ?? 0} beğeni`
+                    : `${highlights.week.weekly_likes ?? 0} likes in the last 7 days`
+                }
+                icon={<Trophy className="h-3 w-3" />}
+                accent="border-amber-700/40 bg-amber-950/20 text-amber-300"
+              />
+            )}
+            {highlights.all_time && (
+              <HighlightCard
+                project={highlights.all_time}
+                title={tr ? 'Tüm Zamanların En Çok Beğenileni' : 'All-Time Most Liked'}
+                subtitle={
+                  tr
+                    ? `Toplam ${highlights.all_time.likes_count} beğeni`
+                    : `${highlights.all_time.likes_count} likes in total`
+                }
+                icon={<Crown className="h-3 w-3" />}
+                accent="border-indigo-700/40 bg-indigo-950/20 text-indigo-300"
+              />
+            )}
           </div>
         )}
 
         {loading ? (
-          <div className="py-12 text-center text-zinc-500 text-xs font-mono animate-pulse">
-            {language === 'tr' ? 'GitHub depoları yükleniyor...' : 'Loading GitHub repositories...'}
+          <div className="flex items-center justify-center gap-2 p-10 text-xs text-zinc-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{tr ? 'Projeler yükleniyor...' : 'Loading projects...'}</span>
           </div>
-        ) : filteredRepos.length === 0 ? (
-          <div className="py-12 text-center text-zinc-500 text-xs font-mono bg-[#0c0c0e] border border-zinc-800/40 rounded-2xl p-6">
-            {language === 'tr' ? 'Henüz gösterilecek depo bulunamadı.' : 'No repositories found.'}
+        ) : projects.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-zinc-800 p-8 text-center">
+            <Github className="mx-auto mb-3 h-7 w-7 text-zinc-700" />
+            <p className="text-xs text-zinc-400">
+              {sort === 'mine'
+                ? tr
+                  ? 'Henüz bir projen yok.'
+                  : 'You have no projects yet.'
+                : tr
+                ? 'Henüz proje eklenmemiş. İlk olan sen ol.'
+                : 'No projects yet. Be the first.'}
+            </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3">
-            {filteredRepos.map((repo) => (
-              <div
-                key={repo.id}
-                className="p-4 bg-[#0c0c0e] border border-zinc-800/50 rounded-2xl hover:border-zinc-700 transition-all space-y-2.5"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <a
-                      href={repo.html_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-bold text-white hover:text-blue-400 hover:underline flex items-center gap-1.5"
-                    >
-                      <span>{repo.name}</span>
-                    </a>
-                    {repo.description && (
-                      <p className="text-xs text-zinc-400 mt-1 leading-relaxed line-clamp-2">
-                        {repo.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <a
-                    href={repo.html_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-zinc-800/40 text-xs font-mono">
-                  <div className="flex items-center gap-4">
-                    {repo.language && (
-                      <span className="flex items-center gap-1.5 text-blue-400 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
-                        {repo.language}
-                      </span>
-                    )}
-                    <span className="flex items-center gap-1 text-zinc-400">
-                      <Star className="w-3.5 h-3.5 text-amber-400" /> {repo.stargazers_count}
-                    </span>
-                    <span className="flex items-center gap-1 text-zinc-400">
-                      <GitFork className="w-3.5 h-3.5" /> {repo.forks_count}
-                    </span>
-                  </div>
-
-                  <span className="text-[10px] text-zinc-500">
-                    {new Date(repo.updated_at).toLocaleDateString()}
-                  </span>
-                </div>
-              </div>
+          <div className="space-y-3">
+            {projects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                tr={tr}
+                isOwner={project.owner_username === user.username}
+                busy={busyId === project.id}
+                onLike={() => toggle(project, 'like')}
+                onFollow={() => toggle(project, 'follow')}
+                onDelete={() => remove(project)}
+              />
             ))}
           </div>
         )}
+
+        {/*
+          Takibin ne işe yaradığını bir kez açıkça söylüyoruz. Beğeni ve takip düğmeleri yan
+          yana durduğunda aradaki fark ("biri vitrin, öteki abonelik") kendiliğinden anlaşılmaz.
+        */}
+        <p className="user-text px-1 text-center text-[11px] leading-relaxed text-zinc-600">
+          {tr
+            ? 'Bir projeyi takip edersen her yeni commit için bildirim alırsın. Takip etmezsen sadece beğenirsin, bildirim gelmez.'
+            : 'Follow a project to get a notification on every new commit. Without following you can still like it, but you get no notifications.'}
+        </p>
       </div>
+
+      {showCreate && (
+        <CreateProjectDialog
+          tr={tr}
+          githubUsername={githubUsername}
+          onClose={() => setShowCreate(false)}
+          onCreated={(project) => {
+            setProjects((current) => [project, ...current]);
+          }}
+        />
+      )}
     </div>
   );
 };

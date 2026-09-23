@@ -48,7 +48,8 @@ export type NotificationEmailType =
   | 'like'
   | 'repost'
   | 'star'
-  | 'job_listing';
+  | 'job_listing'
+  | 'project_commit';
 
 export interface EmailPrefs {
   /** Ana anahtar. Kapalıysa hiçbir bildirim e-postası gitmez. */
@@ -76,7 +77,11 @@ export const DEFAULT_EMAIL_PREFS: EmailPrefs = {
     like: false,
     repost: false,
     star: false,
-    job_listing: false
+    job_listing: false,
+    // Takip, üyenin kendi eliyle kurduğu bir ABONELİK: "bu projeden haberim olsun".
+    // Beğeni/repost gibi kendiliğinden gelen olaylardan farklı, bu yüzden açık geliyor —
+    // kapalı gelseydi üyenin açıkça istediği şey sessizce yok sayılmış olurdu.
+    project_commit: true
   }
 };
 
@@ -194,7 +199,8 @@ const TYPE_LABELS: Record<string, string> = {
   like: 'gönderini beğendi',
   repost: 'gönderini yeniden paylaştı',
   star: 'gönderine yıldız verdi',
-  job_listing: 'yeni bir ilan paylaştı'
+  job_listing: 'yeni bir ilan paylaştı',
+  project_commit: 'takip ettiğin projeye yeni commit attı'
 };
 
 function actorName(row: any): string {

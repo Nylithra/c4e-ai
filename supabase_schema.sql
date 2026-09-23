@@ -285,6 +285,65 @@ CREATE TABLE IF NOT EXISTS public.post_reports (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ----------------------------------------------------------------
+-- PROJELER
+-- ----------------------------------------------------------------
+--
+-- Bir proje, bir üyenin kendi GitHub deposunu platforma tanıtmasıdır: ad, tanıtım yazısı
+-- ve deponun kendisi. Üyeler projeyi BEĞENEBİLİR (vitrin) ve TAKİP EDEBİLİR (bildirim).
+-- İkisi ayrı şeyler ve bilinçli olarak ayrı tutuluyor: beğeni "güzelmiş" demektir,
+-- takip ise "her commit'te bana haber ver" demektir.
+CREATE TABLE IF NOT EXISTS public.projects (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  owner_username TEXT NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  about VARCHAR(600),
+  -- "kullanici/depo" — GitHub'daki tam ad. Sahiplik sunucuda doğrulanır.
+  repo_full_name TEXT NOT NULL,
+  repo_url TEXT NOT NULL,
+  repo_default_branch TEXT,
+  language TEXT,
+
+  -- SAYAÇLAR TÜRETİLMİŞ VERİDİR ve tetikleyiciyle yönetilir (bkz. 4.7).
+  --
+  -- Liderlik tabloları bu iki sayıya bakıyor, yani bunlar bir YARIŞMANIN PUANI. İstemciye
+  -- açık bırakılsaydı herhangi bir üye kendi satırında likes_count = 999999 yazıp "tüm
+  -- zamanların en çok beğenilen projesi" olurdu. Gerçek kayıt project_likes /
+  -- project_follows tablolarında; bu sütunlar yalnızca hızlı sıralama için var.
+  likes_count INTEGER DEFAULT 0,
+  followers_count INTEGER DEFAULT 0,
+
+  -- Commit takibi. last_commit_sha "bu commit için bildirim gönderildi" demektir; bildirim
+  -- gönderildikten SONRA yazılır, böylece yarıda kalan bir tur sessizce commit atlamaz.
+  last_commit_sha TEXT,
+  last_commit_at TIMESTAMPTZ,
+  last_checked_at TIMESTAMPTZ,
+  check_failures INTEGER DEFAULT 0,
+
+  is_deleted BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Beğeni ve takip ayrı satırlar: JSONB dizisi yerine birleşim tablosu, çünkü "haftanın
+-- projesi" son 7 günde gelen beğenileri saymak zorunda — dizi içindeki elemanın ne zaman
+-- eklendiği bilgisi yoktur. Birincil anahtar aynı zamanda tekilliği sağlıyor: aynı üye bir
+-- projeyi iki kez beğenemez, dolayısıyla sayaç şişirilemez.
+CREATE TABLE IF NOT EXISTS public.project_likes (
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (project_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.project_follows (
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (project_id, user_id)
+);
+
 -- ================================================================
 -- 2. COLUMN MIGRATIONS (safe to re-run)
 -- ================================================================
@@ -1033,6 +1092,113 @@ CREATE TRIGGER trg_protect_notification_email_state
 BEFORE INSERT OR UPDATE ON public.notifications
 FOR EACH ROW EXECUTE FUNCTION public.protect_notification_email_state();
 
+-- 4.7 Projeler: puan istemciden yazılamaz, sayaçlar beğeni/takip satırlarından türetilir.
+--
+-- BU BİR YARIŞMA. "Haftanın projesi" ve "tüm zamanların en çok beğenileni" bu sayılara
+-- bakıyor. Sayaçlar serbest bırakılsaydı üyenin kendi projesinde tek bir UPDATE ile birinci
+-- olması yeterdi — liderlik tablosu da, beğeni de anlamsızlaşırdı. Bu yüzden:
+--   * sayaçları YALNIZCA aşağıdaki tetikleyiciler yazar (beğeni/takip satırı eklenip
+--     silindikçe),
+--   * projenin kendi UPDATE'inde sayaçlar ve sahiplik alanları eski değerlerine sabitlenir,
+--   * commit takip alanları da aynı şekilde korunur, aksi hâlde üye last_commit_sha'yı
+--     silip takipçilerine istediği zaman bildirim yağdırabilirdi.
+CREATE OR REPLACE FUNCTION public.protect_project_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- Yeni proje her zaman sıfırdan başlar; "1000 beğeniyle doğan" proje olmaz.
+    -- Bu, servis rolü için de geçerli: puanın tek kaynağı beğeni satırlarıdır.
+    NEW.likes_count := 0;
+    NEW.followers_count := 0;
+    RETURN NEW;
+  END IF;
+
+  -- SAYAÇLAR HER GÜNCELLEMEDE GERÇEK SATIRLARDAN YENİDEN HESAPLANIR.
+  --
+  -- "Eski değeri koru" yaklaşımı denendi ve YANLIŞTI: sayaçları besleyen tetikleyicinin
+  -- kendi UPDATE'ini de engelliyordu, yani beğeniler hiç sayılmıyordu. Buradaki biçim hem
+  -- o sorunu çözüyor hem de daha güçlü: sayaç ne yazılırsa yazılsın, kimin tarafından
+  -- yazılırsa yazılsın, sonuç her zaman project_likes / project_follows tablolarındaki
+  -- gerçek satır sayısı olur. Puanı uydurmanın yolu yok; beğeni satırı eklemek gerekir,
+  -- onu da RLS yalnızca kişinin kendi adına yapmasına izin veriyor.
+  NEW.likes_count := (SELECT count(*) FROM public.project_likes WHERE project_id = OLD.id);
+  NEW.followers_count := (SELECT count(*) FROM public.project_follows WHERE project_id = OLD.id);
+
+  -- Commit takip alanlarını yalnızca arka uç yazar. Serbest bırakılsaydı üye
+  -- last_commit_sha'yı silip takipçilerine istediği zaman bildirim yağdırabilirdi.
+  IF auth.role() = 'service_role' OR public.is_platform_admin() THEN
+    NEW.updated_at := NOW();
+    RETURN NEW;
+  END IF;
+
+  NEW.id := OLD.id;
+  NEW.owner_id := OLD.owner_id;
+  NEW.owner_username := OLD.owner_username;
+  NEW.created_at := OLD.created_at;
+
+  -- Depo değiştirilemez. Değiştirilebilseydi üye beğenileri toplanmış bir projenin deposunu
+  -- bambaşka bir şeyle değiştirip o beğenileri devralırdı.
+  NEW.repo_full_name := OLD.repo_full_name;
+  NEW.repo_url := OLD.repo_url;
+
+  NEW.last_commit_sha := OLD.last_commit_sha;
+  NEW.last_commit_at := OLD.last_commit_at;
+  NEW.last_checked_at := OLD.last_checked_at;
+  NEW.check_failures := OLD.check_failures;
+
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_project_columns ON public.projects;
+CREATE TRIGGER trg_protect_project_columns
+BEFORE INSERT OR UPDATE ON public.projects
+FOR EACH ROW EXECUTE FUNCTION public.protect_project_columns();
+
+-- Sayaçları beğeni/takip satırlarından türeten tetikleyici.
+--
+-- Tek bir fonksiyon iki tabloya da hizmet ediyor; hangi sütunu güncelleyeceğini
+-- TG_ARGV[0] söylüyor. Sayım her seferinde tablodan YENİDEN yapılıyor (+1/-1 yerine):
+-- artırma/azaltma, yarıda kalan bir işlem ya da elle silinen bir satırdan sonra sayacı
+-- kalıcı olarak yanlış bırakır ve bir daha kendini düzeltmez.
+CREATE OR REPLACE FUNCTION public.sync_project_counter()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  hedef TEXT := COALESCE(NEW.project_id, OLD.project_id);
+BEGIN
+  IF TG_ARGV[0] = 'likes' THEN
+    UPDATE public.projects
+       SET likes_count = (SELECT count(*) FROM public.project_likes WHERE project_id = hedef)
+     WHERE id = hedef;
+  ELSE
+    UPDATE public.projects
+       SET followers_count = (SELECT count(*) FROM public.project_follows WHERE project_id = hedef)
+     WHERE id = hedef;
+  END IF;
+
+  RETURN NULL; -- AFTER tetikleyici; dönüş değeri yok sayılır.
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_project_likes ON public.project_likes;
+CREATE TRIGGER trg_sync_project_likes
+AFTER INSERT OR DELETE ON public.project_likes
+FOR EACH ROW EXECUTE FUNCTION public.sync_project_counter('likes');
+
+DROP TRIGGER IF EXISTS trg_sync_project_follows ON public.project_follows;
+CREATE TRIGGER trg_sync_project_follows
+AFTER INSERT OR DELETE ON public.project_follows
+FOR EACH ROW EXECUTE FUNCTION public.sync_project_counter('follows');
+
 -- ================================================================
 -- 5. ROW LEVEL SECURITY
 -- ================================================================
@@ -1054,6 +1220,9 @@ ALTER TABLE public.community_api_keys ENABLE ROW LEVEL SECURITY;
 -- Same reasoning: the admin's cached mail is backend-only, reachable by no browser session.
 ALTER TABLE public.admin_mail_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_mail_sync_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_follows ENABLE ROW LEVEL SECURITY;
 
 -- Drop every existing policy on the tables this script manages, so the CREATE POLICY
 -- statements below are re-runnable. Without this the script fails on a second run with
@@ -1068,7 +1237,8 @@ DECLARE
   managed TEXT[] := ARRAY[
     'profiles', 'posts', 'communities', 'community_api_keys', 'job_listings',
     'job_applications', 'notifications', 'groups', 'messages', 'group_invites',
-    'system_error_reports', 'post_reports', 'admin_mail_cache', 'admin_mail_sync_state'
+    'system_error_reports', 'post_reports', 'admin_mail_cache', 'admin_mail_sync_state',
+    'projects', 'project_likes', 'project_follows'
   ];
 BEGIN
   FOR pol IN
@@ -1330,6 +1500,56 @@ CREATE POLICY "admin_mail_cache_service_role" ON public.admin_mail_cache
 CREATE POLICY "admin_mail_sync_state_service_role" ON public.admin_mail_sync_state
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- 5.14 Projeler ---------------------------------------------------
+-- Projeler bir vitrin: silinmemiş olanı herkes görür (oturumsuz ziyaretçi dahil).
+CREATE POLICY "projects_select_public" ON public.projects
+  FOR SELECT USING (is_deleted = false);
+
+-- Üye yalnızca KENDİ adına proje açabilir. owner_id başkasının olsaydı, üye başkasının
+-- hesabına proje ekleyip onun profilinde gösterebilirdi.
+CREATE POLICY "projects_insert_own" ON public.projects
+  FOR INSERT TO authenticated WITH CHECK (public.owns_profile(owner_id));
+
+-- Düzenleme ve silme sahibinin (veya yöneticinin). Hangi SÜTUNLARIN değişebileceğini
+-- yukarıdaki 4.7 tetikleyicisi sınırlıyor; RLS yalnızca HANGİ SATIR sorusunu yanıtlar.
+CREATE POLICY "projects_update_own" ON public.projects
+  FOR UPDATE TO authenticated
+  USING (public.owns_profile(owner_id) OR public.is_platform_admin())
+  WITH CHECK (public.owns_profile(owner_id) OR public.is_platform_admin());
+
+CREATE POLICY "projects_delete_own" ON public.projects
+  FOR DELETE TO authenticated
+  USING (public.owns_profile(owner_id) OR public.is_platform_admin());
+
+-- Beğeni ve takip satırları herkese açık okunur (GitHub'da yıldız ve izleyici listesi de
+-- öyledir), ama üye YALNIZCA KENDİ satırını ekleyip silebilir. Bu, sayaç tetikleyicisiyle
+-- birlikte beğeni sayısını gerçekten kazanılması gereken bir şey yapıyor: başkası adına
+-- beğeni satırı eklenemez, aynı üye iki kez beğenemez (birincil anahtar), sayacı da
+-- doğrudan yazmak mümkün değil.
+CREATE POLICY "project_likes_select_public" ON public.project_likes FOR SELECT USING (true);
+CREATE POLICY "project_likes_insert_own" ON public.project_likes
+  FOR INSERT TO authenticated WITH CHECK (public.owns_profile(user_id));
+CREATE POLICY "project_likes_delete_own" ON public.project_likes
+  FOR DELETE TO authenticated USING (public.owns_profile(user_id));
+
+-- Commit tarayıcısı projeleri servis rolüyle güncelliyor (last_commit_sha, last_checked_at).
+-- Supabase'in service_role'ü normalde BYPASSRLS'tir, ama 5.12'deki gerekçenin aynısı burada
+-- da geçerli: politikayı açıkça yazmak, service_role'ün BYPASSRLS OLMADIĞI bir kümede
+-- tarayıcının çalışmaya devam etmesini sağlıyor. Aksi hâlde güncelleme hiçbir politikayla
+-- eşleşmez, sessizce 0 satır etkiler ve bildirimler hiç gitmez — hata da vermez.
+CREATE POLICY "projects_service_role" ON public.projects
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "project_likes_service_role" ON public.project_likes
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "project_follows_service_role" ON public.project_follows
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "project_follows_select_public" ON public.project_follows FOR SELECT USING (true);
+CREATE POLICY "project_follows_insert_own" ON public.project_follows
+  FOR INSERT TO authenticated WITH CHECK (public.owns_profile(user_id));
+CREATE POLICY "project_follows_delete_own" ON public.project_follows
+  FOR DELETE TO authenticated USING (public.owns_profile(user_id));
+
 -- ================================================================
 -- 6. GRANTS
 -- ================================================================
@@ -1342,13 +1562,21 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
-GRANT SELECT ON public.posts, public.communities, public.job_listings TO anon;
+GRANT SELECT ON
+  public.posts, public.communities, public.job_listings,
+  public.projects, public.project_likes, public.project_follows
+TO anon;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.posts, public.communities, public.job_listings,
   public.job_applications, public.notifications, public.groups, public.messages,
-  public.group_invites, public.system_error_reports, public.post_reports
+  public.group_invites, public.system_error_reports, public.post_reports,
+  public.projects
 TO authenticated;
+
+-- Beğeni ve takip satırlarında UPDATE'e gerek yok: bir beğeni ya vardır ya yoktur.
+-- Vermemek, "başkasının beğenisini kendi üstüne alma" gibi bir hamleyi baştan imkânsız kılar.
+GRANT SELECT, INSERT, DELETE ON public.project_likes, public.project_follows TO authenticated;
 
 -- profiles: everything EXCEPT the e-mail address is world-readable.
 --
@@ -1440,6 +1668,32 @@ CREATE INDEX IF NOT EXISTS idx_system_error_reports_created_at ON public.system_
 CREATE INDEX IF NOT EXISTS idx_post_reports_created_at ON public.post_reports(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_community_api_keys_hash ON public.community_api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_api_keys(community_id, revoked_at);
+
+-- Projeler.
+--
+-- Bir depo için YALNIZCA BİR proje. Sunucu eklemeden önce zaten bakıyor ama
+-- önce-oku-sonra-yaz bir yarış penceresi bırakır; asıl garanti burada. Aksi hâlde aynı depo
+-- liderlik tablosunda üç kez görünür ve beğenileri bölünürdü. lower(): GitHub depo adları
+-- büyük/küçük harf duyarsızdır. Silinmiş projeler kapsam dışı, böylece bir projeyi silip
+-- aynı depoyla yeniden açmak mümkün kalıyor.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_repo
+  ON public.projects(lower(repo_full_name)) WHERE is_deleted = false;
+
+CREATE INDEX IF NOT EXISTS idx_projects_likes ON public.projects(likes_count DESC) WHERE is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_projects_created ON public.projects(created_at DESC) WHERE is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON public.projects(owner_id) WHERE is_deleted = false;
+-- Commit tarayıcısı "en uzun süredir bakılmamış" projeleri seçiyor; NULLS FIRST sayesinde
+-- hiç bakılmamış yeni projeler sıranın başına geçiyor.
+CREATE INDEX IF NOT EXISTS idx_projects_checked ON public.projects(last_checked_at ASC NULLS FIRST)
+  WHERE is_deleted = false;
+
+-- "Haftanın projesi" son 7 günün beğenilerini sayıyor: tarih sırası olmadan bu her seferinde
+-- tam tarama olurdu.
+CREATE INDEX IF NOT EXISTS idx_project_likes_recent ON public.project_likes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_likes_user ON public.project_likes(user_id);
+CREATE INDEX IF NOT EXISTS idx_project_follows_user ON public.project_follows(user_id);
+-- Bildirim turu her proje için takipçileri okuyor.
+CREATE INDEX IF NOT EXISTS idx_project_follows_project ON public.project_follows(project_id);
 -- The inbox list is always "this mailbox, newest UID first", which is exactly this index.
 CREATE INDEX IF NOT EXISTS idx_admin_mail_cache_mailbox ON public.admin_mail_cache(mailbox, uid DESC);
 -- Gönderici sorgusu tam olarak şudur: "e-postası gönderilmemiş, yeni bildirimler".
