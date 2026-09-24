@@ -64,7 +64,8 @@ const ProjectCard: React.FC<{
   onLike: () => void;
   onFollow: () => void;
   onDelete: () => void;
-}> = ({ project, tr, isOwner, busy, onLike, onFollow, onDelete }) => {
+  onOpen: () => void;
+}> = ({ project, tr, isOwner, busy, onLike, onFollow, onDelete, onOpen }) => {
   const liked = project.liked_by_me === true;
   const followed = project.followed_by_me === true;
 
@@ -72,7 +73,19 @@ const ProjectCard: React.FC<{
     <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3 transition-colors hover:border-zinc-700">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <h3 className="user-text text-sm font-bold text-white">{project.name}</h3>
+          <a
+            href={`/project/${project.slug}`}
+            onClick={(e) => {
+              // Ctrl/Cmd+tık ve orta tık yeni sekmede açılsın: bağlantı gibi davranan bir
+              // şeyin bağlantı gibi çalışmaması can sıkıcı.
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onOpen();
+            }}
+            className="user-text block text-sm font-bold text-white transition-colors hover:text-indigo-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+          >
+            {project.name}
+          </a>
           <a
             href={project.repo_url}
             target="_blank"
@@ -193,13 +206,24 @@ const HighlightCard: React.FC<{
   subtitle: string;
   icon: React.ReactNode;
   accent: string;
-}> = ({ project, title, subtitle, icon, accent }) => (
+  onOpen: () => void;
+}> = ({ project, title, subtitle, icon, accent, onOpen }) => (
   <div className={`rounded-2xl border p-4 space-y-2 ${accent}`}>
     <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
       {icon}
       <span>{title}</span>
     </p>
-    <h3 className="user-text text-sm font-bold text-white">{project.name}</h3>
+    <a
+      href={`/project/${project.slug}`}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        onOpen();
+      }}
+      className="user-text block text-sm font-bold text-white transition-colors hover:text-indigo-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+    >
+      {project.name}
+    </a>
     <p className="user-text text-[11px] text-zinc-400">
       @{project.owner_username} · {project.repo_full_name}
     </p>
@@ -542,6 +566,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
     );
   };
 
+  /**
+   * Projenin sayfasına gider. `pushState` + `popstate`: uygulama kendi yönlendirmesini
+   * adres çubuğundan okuyor, tam sayfa yenileme yapmadan oraya geçmenin yolu bu.
+   */
+  const openProject = (project: Project) => {
+    window.history.pushState(null, '', `/project/${project.slug}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   const remove = async (project: Project) => {
     setBusyId(project.id);
     const done = await deleteProject(project.id);
@@ -604,6 +637,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
                 }
                 icon={<Trophy className="h-3 w-3" />}
                 accent="border-amber-700/40 bg-amber-950/20 text-amber-300"
+                onOpen={() => openProject(highlights.week!)}
               />
             )}
             {highlights.all_time && (
@@ -617,6 +651,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
                 }
                 icon={<Crown className="h-3 w-3" />}
                 accent="border-indigo-700/40 bg-indigo-950/20 text-indigo-300"
+                onOpen={() => openProject(highlights.all_time!)}
               />
             )}
           </div>
@@ -652,6 +687,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
                 onLike={() => toggle(project, 'like')}
                 onFollow={() => toggle(project, 'follow')}
                 onDelete={() => remove(project)}
+                onOpen={() => openProject(project)}
               />
             ))}
           </div>

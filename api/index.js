@@ -2350,6 +2350,54 @@ function cleanText(raw, max) {
 function newProjectId() {
   return `prj_${import_node_crypto5.default.randomBytes(9).toString("hex")}`;
 }
+var TR_MAP = {
+  \u0131: "i",
+  \u0130: "i",
+  \u015F: "s",
+  \u015E: "s",
+  \u011F: "g",
+  \u011E: "g",
+  \u00FC: "u",
+  \u00DC: "u",
+  \u00F6: "o",
+  \u00D6: "o",
+  \u00E7: "c",
+  \u00C7: "c"
+};
+function slugify(raw) {
+  const latin = String(raw || "").replace(/[ıİşŞğĞüÜöÖçÇ]/g, (ch) => TR_MAP[ch] || ch);
+  const base = latin.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 90).replace(/-+$/g, "");
+  return base || "proje";
+}
+async function allocateSlug(name) {
+  const base = slugify(name);
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidate = attempt === 0 ? base : `${base.slice(0, 84)}-${attempt + 1}`;
+    if (!await findProjectBySlug(candidate)) return candidate;
+  }
+  return `${base.slice(0, 80)}-${import_node_crypto5.default.randomBytes(3).toString("hex")}`;
+}
+var MAX_IMAGE_CHARS = 500 * 1e3;
+var MAX_GALLERY = 6;
+var PROJECT_BODY_LIMIT = "4mb";
+function cleanImage(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (value.length > MAX_IMAGE_CHARS) return null;
+  if (/^data:image\/(png|jpe?g|gif|webp|avif)[;,]/i.test(value)) return value;
+  if (/^https:\/\/[^\s<>"']+$/i.test(value)) return value;
+  return null;
+}
+function cleanGallery(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    const candidate = cleanImage(typeof item === "string" ? item : item?.url);
+    if (candidate) out.push(candidate);
+    if (out.length >= MAX_GALLERY) break;
+  }
+  return out;
+}
 function toPositiveInt3(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -2407,7 +2455,21 @@ async function readLatestCommit(fullName, branch) {
     return null;
   }
 }
-var PROJECT_FIELDS = "id,owner_id,owner_username,name,about,repo_full_name,repo_url,repo_default_branch,language,likes_count,followers_count,last_commit_sha,last_commit_at,last_checked_at,created_at";
+var PROJECT_FIELDS = "id,slug,owner_id,owner_username,name,about,repo_full_name,repo_url,repo_default_branch,language,likes_count,followers_count,last_commit_sha,last_commit_at,last_checked_at,created_at";
+var PROJECT_DETAIL_FIELDS = `${PROJECT_FIELDS},description,cover_url,gallery`;
+async function findProjectBySlug(slug) {
+  if (!slug) return null;
+  const { ok, rows } = await rest4(
+    `projects?slug=ilike.${encodeURIComponent(slug)}&is_deleted=eq.false&select=${PROJECT_DETAIL_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
+async function findProjectDetail(id) {
+  const { ok, rows } = await rest4(
+    `projects?id=eq.${encodeURIComponent(id)}&is_deleted=eq.false&select=${PROJECT_DETAIL_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
 async function findProjectById(id) {
   const { ok, rows } = await rest4(
     `projects?id=eq.${encodeURIComponent(id)}&is_deleted=eq.false&select=${PROJECT_FIELDS}&limit=1`
@@ -2421,7 +2483,7 @@ async function findProjectByRepo(fullName) {
   return ok && rows.length ? rows[0] : null;
 }
 async function insertProject(row) {
-  const { ok, rows } = await rest4(`projects?select=${PROJECT_FIELDS}`, {
+  const { ok, rows } = await rest4(`projects?select=${PROJECT_DETAIL_FIELDS}`, {
     method: "POST",
     body: JSON.stringify(row),
     headers: { Prefer: "return=representation" }
@@ -4320,9 +4382,11 @@ app.get(
     });
   }
 );
+var projectBody = import_express.default.json({ limit: PROJECT_BODY_LIMIT });
 app.post(
   "/api/projects",
   requireAuth,
+  projectBody,
   // Sınır REDDEDİLEN denemeleri de sayıyor (doğru davranış: hammering'i o durdurur). Ama
   // 10 fazla düşüktü: depo adını birkaç kez yanlış yazan biri kendini bir dakika dışarıda
   // bırakıyordu. 30, insan kullanımı için rahat, kötüye kullanım için hâlâ dar.
@@ -4356,10 +4420,14 @@ app.post(
     const about = cleanText(req.body?.about, 600) || repo?.description || "";
     const created = await insertProject({
       id: newProjectId(),
+      slug: await allocateSlug(name),
       owner_id: userId,
       owner_username: profile.username,
       name,
       about,
+      description: cleanText(req.body?.description, 4e3),
+      cover_url: cleanImage(req.body?.cover_url),
+      gallery: cleanGallery(req.body?.gallery),
       repo_full_name: repo ? repo.fullName : null,
       repo_url: repo ? repo.htmlUrl : null,
       repo_default_branch: repo ? repo.defaultBranch : null,
@@ -4398,6 +4466,34 @@ app.all(
   }
 );
 app.get(
+  "/api/projects/slug/:slug",
+  rateLimit({ scope: "projects-slug", windowMs: 6e4, max: 90 }),
+  async (req, res) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: "not_configured" });
+      return;
+    }
+    const project = await findProjectBySlug(asString(req.params.slug, 90));
+    if (!project) {
+      res.status(404).json({ success: false, error: "not_found" });
+      return;
+    }
+    const userId = req.auth?.userId || "";
+    const [liked, followed] = userId ? await Promise.all([
+      readRelations("like", userId, [project.id]),
+      readRelations("follow", userId, [project.id])
+    ]) : [{}, {}];
+    res.json({
+      success: true,
+      project: {
+        ...project,
+        liked_by_me: Boolean(liked[project.id]),
+        followed_by_me: Boolean(followed[project.id])
+      }
+    });
+  }
+);
+app.get(
   "/api/projects/:id",
   rateLimit({ scope: "projects-detail", windowMs: 6e4, max: 60 }),
   async (req, res) => {
@@ -4405,7 +4501,7 @@ app.get(
       res.status(503).json({ success: false, error: "not_configured" });
       return;
     }
-    const project = await findProjectById(asString(req.params.id, 60));
+    const project = await findProjectDetail(asString(req.params.id, 60));
     if (!project) {
       res.status(404).json({ success: false, error: "not_found" });
       return;
@@ -4428,6 +4524,7 @@ app.get(
 app.patch(
   "/api/projects/:id",
   requireAuth,
+  projectBody,
   rateLimit({ scope: "projects-update", windowMs: 6e4, max: 20, perUser: true }),
   async (req, res) => {
     const project = await findProjectById(asString(req.params.id, 60));
@@ -4449,6 +4546,9 @@ app.patch(
       patch.name = name;
     }
     if (req.body?.about !== void 0) patch.about = cleanText(req.body.about, 600);
+    if (req.body?.description !== void 0) patch.description = cleanText(req.body.description, 4e3);
+    if (req.body?.cover_url !== void 0) patch.cover_url = cleanImage(req.body.cover_url);
+    if (req.body?.gallery !== void 0) patch.gallery = cleanGallery(req.body.gallery);
     if (req.body?.repo !== void 0 && String(req.body.repo || "").trim() !== "") {
       if (project.repo_full_name) {
         res.status(409).json({

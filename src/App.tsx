@@ -120,6 +120,7 @@ import {
 import { Button } from './components/ui/button';
 import { DevDocsView } from './components/public/DevDocsView';
 import { LegalView } from './components/public/LegalView';
+import { ProjectPageView } from './components/public/ProjectPageView';
 
 /**
  * Routes that render without a session and without the app shell: developer docs and the
@@ -128,7 +129,7 @@ import { LegalView } from './components/public/LegalView';
  *
  * Matching is case-insensitive so /ToS, /tos and /TOS all work.
  */
-type PublicPage = 'dev-docs' | 'tos' | 'privacy';
+type PublicPage = 'dev-docs' | 'tos' | 'privacy' | 'project';
 
 const PUBLIC_ROUTES: Record<string, PublicPage> = {
   '/dev/docs': 'dev-docs',
@@ -145,7 +146,20 @@ const PUBLIC_ROUTES: Record<string, PublicPage> = {
   '/gizlilik-ilkeleri': 'privacy'
 };
 
+/**
+ * /project/<slug> sabit tabloya sığmıyor çünkü adresin bir parçası değişken. Ayrı olarak
+ * eşleştiriliyor ve slug geri döndürülüyor.
+ *
+ * Bu sayfa da giriş gerektirmiyor: paylaşılan bir proje bağlantısını açan biri, hesabı
+ * olmasa bile projeyi görmeli. `isAuthenticated` kapısının ÖNÜNDE çözülmesinin sebebi bu.
+ */
+function resolveProjectSlug(pathname: string): string | null {
+  const match = pathname.match(/^\/project\/([A-Za-z0-9-]{1,90})\/?$/);
+  return match ? match[1].toLowerCase() : null;
+}
+
 function resolvePublicPage(pathname: string): PublicPage | null {
+  if (resolveProjectSlug(pathname)) return 'project';
   const clean = pathname.toLowerCase().replace(/\/+$/, '') || '/';
   return PUBLIC_ROUTES[clean] || null;
 }
@@ -154,6 +168,9 @@ export default function App() {
   // Resolved once from the entry URL, then kept in sync with history navigation.
   const [publicPage, setPublicPage] = useState<PublicPage | null>(() =>
     typeof window === 'undefined' ? null : resolvePublicPage(window.location.pathname)
+  );
+  const [projectSlug, setProjectSlug] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : resolveProjectSlug(window.location.pathname)
   );
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('feed');
@@ -260,6 +277,7 @@ export default function App() {
     // Public pages win over every app route: they render their own shell.
     const publicMatch = resolvePublicPage(path);
     setPublicPage(publicMatch);
+    setProjectSlug(resolveProjectSlug(path));
     if (publicMatch) return;
 
     if (path && path.length > 1) {
@@ -1210,6 +1228,20 @@ export default function App() {
   }
   if (publicPage === 'tos' || publicPage === 'privacy') {
     return <LegalView language={language} page={publicPage} />;
+  }
+  if (publicPage === 'project' && projectSlug) {
+    return (
+      <ProjectPageView
+        slug={projectSlug}
+        language={language}
+        // Oturum varsa beğeni/takip ve düzenleme açılır; yoksa sayfa salt okunur kalır.
+        currentUserId={isAuthenticated ? user.id : null}
+        onBack={() => {
+          window.history.pushState(null, '', '/projects');
+          checkUrlRoute();
+        }}
+      />
+    );
   }
 
   if (!isAuthenticated) {

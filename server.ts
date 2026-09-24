@@ -104,9 +104,15 @@ import {
 import { renderMailHtml } from './src/server/mailTemplate';
 import {
   allTimeTop,
+  allocateSlug,
+  cleanGallery,
+  cleanImage,
   cleanText,
+  PROJECT_BODY_LIMIT,
   findProjectById,
   findProjectByRepo,
+  findProjectBySlug,
+  findProjectDetail,
   insertProject,
   listProjects,
   newProjectId,
@@ -2447,9 +2453,12 @@ app.get(
  * Depo EKLENİRSE sahipliği doğrulanır — işte o zaman GitHub bağlantısı gerekir. Yani
  * doğrulama, iddianın kendisiyle orantılı: "şu depo benim" demiyorsan kanıt da istenmiyor.
  */
+const projectBody = express.json({ limit: PROJECT_BODY_LIMIT });
+
 app.post(
   '/api/projects',
   requireAuth,
+  projectBody,
   // Sınır REDDEDİLEN denemeleri de sayıyor (doğru davranış: hammering'i o durdurur). Ama
   // 10 fazla düşüktü: depo adını birkaç kez yanlış yazan biri kendini bir dakika dışarıda
   // bırakıyordu. 30, insan kullanımı için rahat, kötüye kullanım için hâlâ dar.
@@ -2492,10 +2501,14 @@ app.post(
 
     const created = await insertProject({
       id: newProjectId(),
+      slug: await allocateSlug(name),
       owner_id: userId,
       owner_username: profile.username,
       name,
       about,
+      description: cleanText(req.body?.description, 4000),
+      cover_url: cleanImage(req.body?.cover_url),
+      gallery: cleanGallery(req.body?.gallery),
       repo_full_name: repo ? repo.fullName : null,
       repo_url: repo ? repo.htmlUrl : null,
       repo_default_branch: repo ? repo.defaultBranch : null,
@@ -2549,7 +2562,51 @@ app.all(
   }
 );
 
-/** Tek proje. */
+/**
+ * Proje sayfası — /project/<slug> adresinin veri kaynağı.
+ *
+ * OTURUM ARANMIYOR. Sayfanın amacı paylaşılabilir olması: bağlantıyı alan biri, hesabı
+ * olmasa bile projeyi görebilmeli. `requireAuth` eklenseydi paylaşılan her bağlantı giriş
+ * ekranına düşerdi ve özellik anlamını yitirirdi.
+ *
+ * `:id` rotasından ÖNCE tanımlı: sonra gelseydi "slug" bir proje kimliği sanılır ve her
+ * adres 404 dönerdi.
+ */
+app.get(
+  '/api/projects/slug/:slug',
+  rateLimit({ scope: 'projects-slug', windowMs: 60000, max: 90 }),
+  async (req: Request, res: Response) => {
+    if (!projectsConfigured()) {
+      res.status(503).json({ success: false, error: 'not_configured' });
+      return;
+    }
+
+    const project = await findProjectBySlug(asString(req.params.slug, 90));
+    if (!project) {
+      res.status(404).json({ success: false, error: 'not_found' });
+      return;
+    }
+
+    const userId = req.auth?.userId || '';
+    const [liked, followed] = userId
+      ? await Promise.all([
+          readRelations('like', userId, [project.id]),
+          readRelations('follow', userId, [project.id])
+        ])
+      : [{}, {}];
+
+    res.json({
+      success: true,
+      project: {
+        ...project,
+        liked_by_me: Boolean(liked[project.id]),
+        followed_by_me: Boolean(followed[project.id])
+      }
+    });
+  }
+);
+
+/** Tek proje (kimliğe göre). */
 app.get(
   '/api/projects/:id',
   rateLimit({ scope: 'projects-detail', windowMs: 60000, max: 60 }),
@@ -2559,7 +2616,7 @@ app.get(
       return;
     }
 
-    const project = await findProjectById(asString(req.params.id, 60));
+    const project = await findProjectDetail(asString(req.params.id, 60));
     if (!project) {
       res.status(404).json({ success: false, error: 'not_found' });
       return;
@@ -2596,6 +2653,7 @@ app.get(
 app.patch(
   '/api/projects/:id',
   requireAuth,
+  projectBody,
   rateLimit({ scope: 'projects-update', windowMs: 60000, max: 20, perUser: true }),
   async (req: Request, res: Response) => {
     const project = await findProjectById(asString(req.params.id, 60));
@@ -2620,6 +2678,12 @@ app.patch(
       patch.name = name;
     }
     if (req.body?.about !== undefined) patch.about = cleanText(req.body.about, 600);
+    if (req.body?.description !== undefined) patch.description = cleanText(req.body.description, 4000);
+
+    // Görseller. `null` gönderilmesi "kaldır" demek; sessizce yok saymak, kapağı silmek
+    // isteyen üyenin bunu hiç yapamaması anlamına gelirdi.
+    if (req.body?.cover_url !== undefined) patch.cover_url = cleanImage(req.body.cover_url);
+    if (req.body?.gallery !== undefined) patch.gallery = cleanGallery(req.body.gallery);
 
     if (req.body?.repo !== undefined && String(req.body.repo || '').trim() !== '') {
       // Zaten bağlıysa reddediyoruz. Sessizce yok saymak, üyenin "değiştirdim" sanıp

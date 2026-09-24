@@ -11,6 +11,8 @@ import { apiFetchJson } from './apiClient';
 
 export interface Project {
   id: string;
+  /** /project/<slug> adresinin kendisi. */
+  slug: string;
   owner_id: string;
   owner_username: string;
   name: string;
@@ -23,6 +25,10 @@ export interface Project {
   last_commit_sha: string | null;
   last_commit_at: string | null;
   created_at: string;
+  /** Yalnızca detay okumasında dolu (liste sorgusu görselleri taşımıyor). */
+  description?: string | null;
+  cover_url?: string | null;
+  gallery?: string[];
   liked_by_me?: boolean;
   followed_by_me?: boolean;
   /** Yalnızca "haftanın projesi" kartında dolu gelir. */
@@ -95,6 +101,37 @@ export async function setProjectRelation(
   return ok && data
     ? { ok: true, likes_count: data.likes_count, followers_count: data.followers_count }
     : { ok: false };
+}
+
+/** Proje sayfası: adrese göre, OTURUMSUZ da çalışır. */
+export async function fetchProjectBySlug(slug: string): Promise<Project | null> {
+  const { ok, data } = await apiFetchJson<{ project: Project }>(
+    `/api/projects/slug/${encodeURIComponent(slug)}`,
+    // Oturum yoksa başlık göndermeye çalışmak gereksiz; sayfa zaten herkese açık.
+    { auth: true }
+  );
+  return ok && data?.project ? data.project : null;
+}
+
+export interface ProjectEdit {
+  name?: string;
+  about?: string;
+  description?: string;
+  cover_url?: string | null;
+  gallery?: string[];
+  repo?: string;
+}
+
+export async function updateProject(
+  projectId: string,
+  patch: ProjectEdit
+): Promise<{ ok: boolean; error?: string }> {
+  const { ok, data } = await apiFetchJson<{ error?: string; message?: string }>(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    { method: 'PATCH', json: patch }
+  );
+  if (ok) return { ok: true };
+  return { ok: false, error: CREATE_ERRORS[String(data?.error)] || data?.message || 'Kaydedilemedi.' };
 }
 
 export async function deleteProject(projectId: string): Promise<boolean> {

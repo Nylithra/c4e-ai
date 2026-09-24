@@ -299,6 +299,23 @@ CREATE TABLE IF NOT EXISTS public.projects (
   owner_username TEXT NOT NULL,
   name VARCHAR(80) NOT NULL,
   about VARCHAR(600),
+
+  -- /project/<slug> adresinin kendisi. Addan türetilir, tekildir ve bir kez verildikten
+  -- sonra DEĞİŞMEZ: değişseydi paylaşılmış her bağlantı kırılırdı.
+  slug VARCHAR(90),
+
+  -- Proje sayfasındaki uzun anlatım. `about` listedeki tek satırlık tanıtım, bu ise
+  -- sayfanın gövdesi; ikisi ayrı çünkü liste kartına 4000 karakter sığmaz.
+  description TEXT,
+
+  -- Kapak görseli ve galeri.
+  --
+  -- Görseller data URL olarak saklanıyor (uygulamanın başka yerlerdeki medya düzeniyle
+  -- aynı). BU YÜZDEN LİSTE SORGULARINDA OKUNMUYORLAR: tek bir kapak birkaç yüz kilobayt
+  -- tutabilir ve 30 projelik bir liste onlarca megabayta çıkardı. Sunucudaki alan listesi
+  -- (PROJECT_FIELDS) bunları dışarıda bırakır, yalnızca detay sorgusu okur.
+  cover_url TEXT,
+  gallery JSONB DEFAULT '[]'::jsonb,
   -- "kullanici/depo" — GitHub'daki tam ad. İSTEĞE BAĞLI.
   --
   -- Depo zorunlu değil: bir proje GitHub'da olmayabilir (kapalı kaynak, başka bir platform,
@@ -462,6 +479,67 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_prefs JSONB;
 -- CREATE TABLE IF NOT EXISTS var olan bir tabloyu değiştirmez.
 ALTER TABLE public.projects ALTER COLUMN repo_full_name DROP NOT NULL;
 ALTER TABLE public.projects ALTER COLUMN repo_url DROP NOT NULL;
+
+-- Proje sayfası: adres, uzun anlatım ve görseller.
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS slug VARCHAR(90);
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS cover_url TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS gallery JSONB DEFAULT '[]'::jsonb;
+
+-- Mevcut projelere adres üret.
+--
+-- Slug olmadan proje sayfası açılamaz, yani bu güncellemeden ÖNCE açılmış her proje
+-- adressiz kalırdı. Türkçe harfler çevriliyor (ı→i, ş→s, ğ→g, ü→u, ö→o, ç→c): aksi hâlde
+-- "Şahane Proje" → "ahane-proje" gibi harf yiyen adresler çıkar.
+--
+-- Çakışma olursa sonuna kısa bir ek geliyor. `id`'nin son 6 hanesi kullanılıyor çünkü
+-- satır başına zaten tekil ve ek bir sorgu gerektirmiyor.
+DO $$
+DECLARE
+  korunuyor BOOLEAN := EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.projects'::regclass
+      AND tgname = 'trg_protect_project_columns'
+      AND NOT tgisinternal
+  );
+BEGIN
+  IF korunuyor THEN
+    ALTER TABLE public.projects DISABLE TRIGGER trg_protect_project_columns;
+  END IF;
+
+  WITH temel AS (
+    SELECT
+      id,
+      nullif(
+        trim(both '-' from regexp_replace(
+          lower(translate(name, 'ıİşŞğĞüÜöÖçÇ', 'iisSgGuUoOcC')),
+          '[^a-z0-9]+', '-', 'g'
+        )),
+        ''
+      ) AS taban
+    FROM public.projects
+    WHERE slug IS NULL
+  ),
+  numarali AS (
+    SELECT
+      id,
+      COALESCE(taban, 'proje') AS taban,
+      ROW_NUMBER() OVER (PARTITION BY COALESCE(taban, 'proje') ORDER BY id) AS sira
+    FROM temel
+  )
+  UPDATE public.projects p
+  SET slug = CASE
+        WHEN n.sira = 1 THEN left(n.taban, 90)
+        ELSE left(n.taban, 82) || '-' || right(replace(p.id, '-', ''), 6)
+      END
+  FROM numarali n
+  WHERE p.id = n.id;
+
+  IF korunuyor THEN
+    ALTER TABLE public.projects ENABLE TRIGGER trg_protect_project_columns;
+  END IF;
+END;
+$$;
 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
@@ -1151,6 +1229,11 @@ BEGIN
   NEW.owner_username := OLD.owner_username;
   NEW.created_at := OLD.created_at;
 
+  -- ADRES SABİT. /project/<slug> paylaşılabilir bir bağlantı; değişmesine izin vermek,
+  -- daha önce paylaşılmış her bağlantıyı sessizce kırmak demek. Proje adı değiştirilebilir
+  -- ama adres ilk hâliyle kalır.
+  NEW.slug := OLD.slug;
+
   -- DEPO BİR KEZ BAĞLANIR, SONRA DEĞİŞTİRİLEMEZ.
   --
   -- Depo isteğe bağlı olduğu için "hiç değiştirilemez" demek yanlış olurdu: deposuz açılmış
@@ -1702,6 +1785,12 @@ CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_repo
   ON public.projects(lower(repo_full_name))
   WHERE is_deleted = false AND repo_full_name IS NOT NULL;
+
+-- Proje sayfasının adresi tekil olmalı, yoksa iki proje aynı bağlantıyı paylaşır ve
+-- ziyaretçi hangisini göreceğini sıraya bırakmış olur. Silinmiş projeler kapsam dışı:
+-- bir projeyi silip aynı adı yeniden kullanmak mümkün kalıyor.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug
+  ON public.projects(lower(slug)) WHERE is_deleted = false AND slug IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_projects_likes ON public.projects(likes_count DESC) WHERE is_deleted = false;
 CREATE INDEX IF NOT EXISTS idx_projects_created ON public.projects(created_at DESC) WHERE is_deleted = false;

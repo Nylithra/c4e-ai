@@ -585,6 +585,43 @@ indekse hiç girmiyor, dolayısıyla birbirleriyle çakışmıyorlar. Commit tar
 projeleri **sorguda** süzüyor: döngüde süzseydi, deposuz projeler tarama kotasını doldurur ve
 depolu projelerin sırası hiç gelmezdi.
 
+### Proje sayfası: /project/&lt;slug&gt;
+
+Her projenin paylaşılabilir bir adresi var ve bu sayfa **oturum gerektirmiyor**. Bağlantıyı
+alan biri, hesabı olmasa bile projeyi görebilmeli — `requireAuth` eklenseydi paylaşılan her
+bağlantı giriş ekranına düşer ve özellik anlamını yitirirdi. Sayfa, kimlik doğrulama
+kapısının ÖNÜNDE çözülüyor (aynı `/dev/docs` ve yasal sayfalar gibi).
+
+Adres proje adından üretiliyor ve **Türkçe harfler çevriliyor, atılmıyor**: yalnızca
+`[^a-z0-9]` süzgecinden geçirmek "Şahane Proje" → "ahane-proje" gibi harf yiyen adresler
+üretirdi. Çakışma beklenen bir durum (iki üye aynı adı verebilir), sonuna artan bir sayı
+ekleniyor.
+
+**Adres bir kez verilir ve DEĞİŞMEZ.** Proje adı düzenlenebilir ama adres ilk hâliyle kalır;
+değişmesine izin vermek, daha önce paylaşılmış her bağlantıyı sessizce kırmak demekti.
+Şemadaki tetikleyici `slug`'ı sabitliyor, yani gövdeye `slug` yazmak da işe yaramıyor.
+
+### Görseller
+
+Kapak ve galeri data URL olarak saklanıyor (uygulamanın başka yerlerdeki medya düzeniyle
+aynı). Üç şey bilinçli:
+
+- **Liste sorguları görselleri okumuyor.** Tek bir kapak birkaç yüz kilobayt tutabilir; liste
+  alanlarına eklenselerdi 30 projelik bir vitrin onlarca megabayta çıkardı. Yalnızca detay
+  sorgusu okuyor, ve uçtan uca test listede gerçekten bulunmadıklarını ölçüyor.
+- **SVG kabul edilmiyor.** Satır içi SVG `<script>` taşıyabilir ve doğrudan açıldığında ya da
+  `<object>`/`<iframe>` içine alındığında XSS taşıyıcısına dönüşür — `sanitizeUrl` de aynı
+  sebeple `data:image/svg+xml`'i dışarıda bırakıyor. `http:` de kabul edilmiyor, yalnızca
+  `https:` ve raster `data:image`.
+- **Boyut sınırları birlikte seçildi, ayrı ayrı değil.** Görsel başına 500KB, galeride 6
+  görsel, rota gövde sınırı 4MB: en kötü durum (500KB × 7 = 3,5MB) hem rotanın hem Vercel'in
+  4,5MB istek sınırının altında. Bağımsız seçilselerdi "kabul edilir" denen bir görsel gövde
+  ayrıştırıcısı tarafından 413 ile reddedilir ve kullanıcı sebebini anlamazdı. İstemci
+  göndermeden önce görselleri küçültüyor; bu kolaylık, **sınır sunucudaki**.
+
+Düzenleme sahibine ait: oturumsuz istek 401, başkası 403. Bu kontrol hem ad/açıklama hem
+görseller için aynı yerde.
+
 ### Bildirim yalnızca takip edenlere
 
 Commit tarayıcısı zamanlayıcı sırrı ya da yönetici oturumu ister; herkese açık olsaydı, onu
@@ -615,7 +652,9 @@ almamış bir proje de ödül almaz.
 ### Doğrulama
 
 Uçtan uca 85 doğrulama (gerçek Express rotaları, sahte GitHub'a gerçek HTTP) ve arayüzde 41
-doğrulama geçti. Kapsanan saldırılar: başkasının deposunu kendi projesi gibi eklemek (hem
+doğrulama geçti. Proje sayfası ayrıca 31 sunucu + 28 tarayıcı doğrulamasıyla ölçüldü;
+tarayıcı testinin ilk bölümü TAMAMEN OTURUMSUZ bir bağlamda (localStorage boş, hiçbir jeton
+yok) sayfanın açıldığını doğruluyor. Kapsanan saldırılar: başkasının deposunu kendi projesi gibi eklemek (hem
 açarken hem sonradan), aynı depoyu iki kez eklemek (farklı harflerle dahil), bağlı bir depoyu
 takas etmek, beğeni isteğini tekrarlayarak sayacı şişirmek, düzenleme gövdesiyle
 depo/puan/sahiplik yazmak, takip etmeyene bildirim gitmesi, aynı commit için ikinci kez

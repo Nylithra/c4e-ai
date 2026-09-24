@@ -86,6 +86,111 @@ export function newProjectId(): string {
   return `prj_${crypto.randomBytes(9).toString('hex')}`;
 }
 
+// -------------------------------------------------------------
+// ADRES (SLUG)
+// -------------------------------------------------------------
+
+/** Türkçe harfler önce Latin karşılıklarına çevriliyor, sonra sadeleştiriliyor. */
+const TR_MAP: Record<string, string> = {
+  ı: 'i', İ: 'i', ş: 's', Ş: 's', ğ: 'g', Ğ: 'g',
+  ü: 'u', Ü: 'u', ö: 'o', Ö: 'o', ç: 'c', Ç: 'c'
+};
+
+/**
+ * Proje adından /project/<slug> adresini üretir.
+ *
+ * TÜRKÇE HARFLER ÇEVRİLİYOR, ATILMIYOR. Sadece `[^a-z0-9]` süzgecinden geçirmek
+ * "Şahane Proje" → "ahane-proje" gibi harf yiyen adresler üretirdi; okunmaz ve paylaşılınca
+ * yanlış görünür.
+ */
+export function slugify(raw: string): string {
+  const latin = String(raw || '').replace(/[ıİşŞğĞüÜöÖçÇ]/g, (ch) => TR_MAP[ch] || ch);
+  const base = latin
+    .toLowerCase()
+    .normalize('NFD')
+    // Kalan aksanları (é, ñ ...) da düşür; taban harf korunur.
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 90)
+    .replace(/-+$/g, '');
+
+  // Hiç harf/rakam içermeyen adlar (":)" gibi) adressiz kalmasın.
+  return base || 'proje';
+}
+
+/**
+ * Kullanılmayan bir adres bulur.
+ *
+ * Çakışma beklenen bir durum, hata değil: iki üye projesine aynı adı verebilir. Sonuna
+ * artan bir sayı ekleniyor; birkaç denemede bulunamazsa rastgeleye düşülüyor (pratikte
+ * ulaşılmayan bir dal, ama sonsuz döngüye alternatif olarak var).
+ */
+export async function allocateSlug(name: string): Promise<string> {
+  const base = slugify(name);
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidate = attempt === 0 ? base : `${base.slice(0, 84)}-${attempt + 1}`;
+    if (!(await findProjectBySlug(candidate))) return candidate;
+  }
+  return `${base.slice(0, 80)}-${crypto.randomBytes(3).toString('hex')}`;
+}
+
+// -------------------------------------------------------------
+// GÖRSELLER
+// -------------------------------------------------------------
+
+/**
+ * Görsel sınırları ve gövde sınırı BİRLİKTE seçildi, ayrı ayrı değil.
+ *
+ * En kötü durumda bir istek kapak + galeri kadar veri taşır: 500KB × (1 + 6) = 3,5MB.
+ * Rotanın gövde sınırı 4MB, Vercel'in istek sınırı ise 4,5MB — yani en kötü durum bile
+ * ikisinin altında kalıyor. Sayılar bağımsız seçilseydi, "kabul edilir" denen bir görsel
+ * gövde ayrıştırıcısı tarafından 413 ile reddedilir ve kullanıcı sebebini anlamazdı.
+ *
+ * İstemci göndermeden önce görselleri küçültüyor (bkz. utils/imageResize.ts), bu yüzden
+ * telefon fotoğrafları pratikte 150-300KB'a iniyor; 500KB rahat bir tavan.
+ */
+export const MAX_IMAGE_CHARS = 500 * 1000;
+export const MAX_GALLERY = 6;
+/** Proje yazma rotalarının gövde sınırı; yukarıdaki sayılarla uyumlu olmalı. */
+export const PROJECT_BODY_LIMIT = '4mb';
+
+/**
+ * Bir görsel değerini kabul edilebilir hâle getirir; kabul edilemezse null döner.
+ *
+ * SVG KABUL EDİLMİYOR. Satır içi SVG `<script>` taşıyabilir ve doğrudan açıldığında ya da
+ * `<object>`/`<iframe>` içine alındığında XSS taşıyıcısına dönüşür — `sanitizeUrl` de aynı
+ * sebeple data:image/svg+xml'i dışarıda bırakıyor.
+ *
+ * Boyut sınırı hem tarayıcıda hem burada: istemcideki kontrol kullanıcıya hızlı geri bildirim
+ * için, buradaki ise gerçek sınır. Yalnızca istemcide olsaydı, isteği elle kuran biri
+ * veritabanına istediği kadar büyük bir satır yazabilirdi.
+ */
+export function cleanImage(raw: unknown): string | null {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (value.length > MAX_IMAGE_CHARS) return null;
+
+  if (/^data:image\/(png|jpe?g|gif|webp|avif)[;,]/i.test(value)) return value;
+  if (/^https:\/\/[^\s<>"']+$/i.test(value)) return value;
+  return null;
+}
+
+/** Galeriyi temizler: geçersizler düşer, sayı sınırlanır. */
+export function cleanGallery(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    // Hem düz dize hem {url} biçimi kabul ediliyor; istemcinin ikisinden birini
+    // göndermesi yüzünden galerinin sessizce boşalması can sıkıcı bir hata olurdu.
+    const candidate = cleanImage(typeof item === 'string' ? item : item?.url);
+    if (candidate) out.push(candidate);
+    if (out.length >= MAX_GALLERY) break;
+  }
+  return out;
+}
+
 /**
  * Sayı ayrıştırma; geçersiz veya eksik değerde varsayılana düşer.
  *
@@ -189,9 +294,41 @@ export async function readLatestCommit(fullName: string, branch: string): Promis
 // PROJE KAYITLARI
 // -------------------------------------------------------------
 
+/**
+ * Liste alanları. GÖRSELLER BİLİNÇLİ OLARAK YOK.
+ *
+ * Kapak ve galeri data URL olarak saklanıyor; tek bir kapak birkaç yüz kilobayt tutabilir.
+ * Buraya eklenselerdi 30 projelik bir liste onlarca megabayta çıkar ve telefonda vitrin
+ * açılmaz olurdu. Görselleri yalnızca DETAY sorgusu okuyor.
+ */
 const PROJECT_FIELDS =
-  'id,owner_id,owner_username,name,about,repo_full_name,repo_url,repo_default_branch,language,' +
+  'id,slug,owner_id,owner_username,name,about,repo_full_name,repo_url,repo_default_branch,language,' +
   'likes_count,followers_count,last_commit_sha,last_commit_at,last_checked_at,created_at';
+
+/** Detay alanları: liste alanları + sayfanın gövdesi ve görseller. */
+const PROJECT_DETAIL_FIELDS = `${PROJECT_FIELDS},description,cover_url,gallery`;
+
+/**
+ * Adrese göre proje. HERKESE AÇIK: oturum aranmıyor.
+ *
+ * `ilike`: adres büyük/küçük harf duyarsız eşleşmeli — birinin paylaştığı bağlantı
+ * kopyalanırken harf değişirse sayfa "yok" dememeli.
+ */
+export async function findProjectBySlug(slug: string): Promise<any | null> {
+  if (!slug) return null;
+  const { ok, rows } = await rest(
+    `projects?slug=ilike.${encodeURIComponent(slug)}&is_deleted=eq.false&select=${PROJECT_DETAIL_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
+
+/** Detay okuması (görseller dahil). */
+export async function findProjectDetail(id: string): Promise<any | null> {
+  const { ok, rows } = await rest(
+    `projects?id=eq.${encodeURIComponent(id)}&is_deleted=eq.false&select=${PROJECT_DETAIL_FIELDS}&limit=1`
+  );
+  return ok && rows.length ? rows[0] : null;
+}
 
 export async function findProjectById(id: string): Promise<any | null> {
   const { ok, rows } = await rest(
@@ -209,7 +346,7 @@ export async function findProjectByRepo(fullName: string): Promise<any | null> {
 }
 
 export async function insertProject(row: Record<string, unknown>): Promise<any | null> {
-  const { ok, rows } = await rest(`projects?select=${PROJECT_FIELDS}`, {
+  const { ok, rows } = await rest(`projects?select=${PROJECT_DETAIL_FIELDS}`, {
     method: 'POST',
     body: JSON.stringify(row),
     headers: { Prefer: 'return=representation' }
