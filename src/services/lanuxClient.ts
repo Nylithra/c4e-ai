@@ -121,6 +121,27 @@ export async function linkGithub(): Promise<{ ok: boolean; error?: string; redir
   });
 
   if (error) {
+    /*
+     * "Identity is already linked": hesapta GitHub kimliği ZATEN var demek — yani üye
+     * GitHub ile kayıt olmuş. Bu durumda sunucunun kullanıcı adını kimlikten okuyup
+     * bitirmiş olması gerekirdi; okuyamadıysa sebebi genelde yapılandırmadır
+     * (SUPABASE_SERVICE_ROLE_KEY eksikse yönetici API'sine hiç ulaşılamaz).
+     *
+     * Bir kez daha deniyoruz: geçici bir aksaklıksa bu onu çözer. Hâlâ olmuyorsa
+     * kullanıcıya İNGİLİZCE ham hata yerine ne olduğunu söylüyoruz — "hata veriyor"
+     * diye geri bildirilen şey tam olarak o ham hataydı.
+     */
+    if (/already linked/i.test(error.message)) {
+      const healed = await reconcileGithubLink({ force: true });
+      if (healed) return { ok: true };
+      return {
+        ok: false,
+        error:
+          'GitHub hesabın bu hesapta zaten bağlı görünüyor ama kaydedilemedi. ' +
+          'Sunucu yapılandırması eksik olabilir; yöneticiye bildir.'
+      };
+    }
+
     // Supabase projesinde "Manual linking" kapalıysa buraya düşülür; sebebi gizlemek
     // kullanıcıyı da yöneticiyi de boşuna uğraştırır.
     return {

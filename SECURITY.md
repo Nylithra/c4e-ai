@@ -560,14 +560,30 @@ gönderdi" tablosundan ibaret olurdu. Bu yüzden:
 besleyen tetikleyicinin kendi güncellemesini de engelliyordu — beğeniler hiç sayılmıyordu.
 Gerçek PostgreSQL üzerindeki test bunu yakaladı.
 
-### Depo sahipliği GitHub'a sorulur
+### Depo İSTEĞE BAĞLI, ama eklenirse sahipliği GitHub'a sorulur
 
-Üye yalnızca **kendi bağlı GitHub hesabındaki** bir depoyu tanıtabilir; sunucu depoyu
-GitHub'dan okuyup `owner.login` ile üyenin doğrulanmış `github_username` alanını
-karşılaştırır. Bu yüzden proje eklemek GitHub bağlantısı ister (bkz. 2.4) — bağlantı yoksa
-sahiplik doğrulanamaz. Bir depo için yalnızca bir proje olabilir; garanti
-`lower(repo_full_name)` üzerindeki kısmi UNIQUE indekste (sunucunun ön kontrolü
-önce-oku-sonra-yaz yarışı bırakır).
+**Proje paylaşmak GitHub gerektirmiyor.** İlk sürümde depo zorunluydu ve bu, GitHub bağlamayı
+da zorunlu kılıyordu — yani GitHub kullanmayan biri hiçbir şey paylaşamıyordu. Her proje
+GitHub'da değil: kapalı kaynak olabilir, başka bir platformda olabilir, henüz yayımlanmamış
+olabilir.
+
+Depo **eklenirse** sahipliği doğrulanır: sunucu depoyu GitHub'dan okuyup `owner.login` ile
+üyenin doğrulanmış `github_username` alanını karşılaştırır. Yani doğrulama iddiayla orantılı —
+"şu depo benim" demiyorsan kanıt da istenmiyor. Aynı doğrulama hem proje açılırken hem
+sonradan depo eklenirken **tek bir fonksiyondan** geçiyor; iki ayrı kopya, birinin gevşek
+kalması için açık davetiye olurdu.
+
+Depo **sonradan eklenebilir** ama **bir kez bağlandıktan sonra değiştirilemez**: değişebilseydi
+beğenileri toplanmış bir projenin deposu bambaşka bir şeyle takas edilip o beğeniler
+devralınırdı. Şemadaki tetikleyici yalnızca BOŞTAN DOLUYA geçişe izin veriyor; sunucu da
+zaten bağlı bir depoyu değiştirmeyi 409 ile reddediyor (sessizce yok saymak, üyenin
+"değiştirdim" sanıp eskisiyle devam ettiğini fark etmemesine yol açardı).
+
+Bir depo için yalnızca bir proje olabilir; garanti `lower(repo_full_name)` üzerindeki kısmi
+UNIQUE indekste (sunucunun ön kontrolü önce-oku-sonra-yaz yarışı bırakır). Deposuz projeler
+indekse hiç girmiyor, dolayısıyla birbirleriyle çakışmıyorlar. Commit tarayıcısı da deposuz
+projeleri **sorguda** süzüyor: döngüde süzseydi, deposuz projeler tarama kotasını doldurur ve
+depolu projelerin sırası hiç gelmezdi.
 
 ### Bildirim yalnızca takip edenlere
 
@@ -598,13 +614,15 @@ almamış bir proje de ödül almaz.
 
 ### Doğrulama
 
-Uçtan uca 68 doğrulama (gerçek Express rotaları, sahte GitHub'a gerçek HTTP) ve arayüzde 30
-doğrulama geçti. Kapsanan saldırılar: başkasının deposunu kendi projesi gibi eklemek, aynı
-depoyu iki kez eklemek (farklı harflerle dahil), beğeni isteğini tekrarlayarak sayacı
-şişirmek, düzenleme gövdesiyle depo/puan/sahiplik yazmak, takip etmeyene bildirim gitmesi,
-aynı commit için ikinci kez bildirim, takibi bıraktıktan sonra bildirim almaya devam etmek,
-tarayıcıyı yetkisiz tetiklemek. Şema güvenceleri ayrıca gerçek PostgreSQL üzerinde 18 kontrolle
-ölçüldü.
+Uçtan uca 85 doğrulama (gerçek Express rotaları, sahte GitHub'a gerçek HTTP) ve arayüzde 41
+doğrulama geçti. Kapsanan saldırılar: başkasının deposunu kendi projesi gibi eklemek (hem
+açarken hem sonradan), aynı depoyu iki kez eklemek (farklı harflerle dahil), bağlı bir depoyu
+takas etmek, beğeni isteğini tekrarlayarak sayacı şişirmek, düzenleme gövdesiyle
+depo/puan/sahiplik yazmak, takip etmeyene bildirim gitmesi, aynı commit için ikinci kez
+bildirim, takibi bıraktıktan sonra bildirim almaya devam etmek, tarayıcıyı yetkisiz
+tetiklemek. Ayrıca deposuz projelerin tarama kotasını tıkamadığı ölçülüyor. Şema güvenceleri
+gerçek PostgreSQL üzerinde ayrıca doğrulandı: eski (NOT NULL'lu) şemadan yükseltme yolu dahil,
+deposuz proje açma, sonradan depo bağlama, bağlandıktan sonra takas edememe.
 
 ---
 

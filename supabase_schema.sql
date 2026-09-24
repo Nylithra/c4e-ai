@@ -299,9 +299,14 @@ CREATE TABLE IF NOT EXISTS public.projects (
   owner_username TEXT NOT NULL,
   name VARCHAR(80) NOT NULL,
   about VARCHAR(600),
-  -- "kullanici/depo" — GitHub'daki tam ad. Sahiplik sunucuda doğrulanır.
-  repo_full_name TEXT NOT NULL,
-  repo_url TEXT NOT NULL,
+  -- "kullanici/depo" — GitHub'daki tam ad. İSTEĞE BAĞLI.
+  --
+  -- Depo zorunlu değil: bir proje GitHub'da olmayabilir (kapalı kaynak, başka bir platform,
+  -- ya da henüz yayımlanmamış). Depoyu zorunlu tutmak, GitHub bağlamayı da zorunlu kılıyordu
+  -- — proje paylaşmanın önkoşulu olmaması gereken bir şey. Depo EKLENDİĞİNDE sahiplik
+  -- sunucuda doğrulanır; işte o zaman GitHub bağlantısı gerekir.
+  repo_full_name TEXT,
+  repo_url TEXT,
   repo_default_branch TEXT,
   language TEXT,
 
@@ -451,6 +456,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_github_username
   ON public.profiles(lower(github_username)) WHERE github_username IS NOT NULL;
 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_prefs JSONB;
+
+-- Proje deposu artık isteğe bağlı. İlk sürümde NOT NULL idi ve bu, proje paylaşmayı
+-- GitHub bağlamaya mecbur bırakıyordu. Mevcut kurulumlarda kısıtı düşürmek gerekiyor;
+-- CREATE TABLE IF NOT EXISTS var olan bir tabloyu değiştirmez.
+ALTER TABLE public.projects ALTER COLUMN repo_full_name DROP NOT NULL;
+ALTER TABLE public.projects ALTER COLUMN repo_url DROP NOT NULL;
 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
@@ -1140,10 +1151,19 @@ BEGIN
   NEW.owner_username := OLD.owner_username;
   NEW.created_at := OLD.created_at;
 
-  -- Depo değiştirilemez. Değiştirilebilseydi üye beğenileri toplanmış bir projenin deposunu
-  -- bambaşka bir şeyle değiştirip o beğenileri devralırdı.
-  NEW.repo_full_name := OLD.repo_full_name;
-  NEW.repo_url := OLD.repo_url;
+  -- DEPO BİR KEZ BAĞLANIR, SONRA DEĞİŞTİRİLEMEZ.
+  --
+  -- Depo isteğe bağlı olduğu için "hiç değiştirilemez" demek yanlış olurdu: deposuz açılmış
+  -- bir projeye sonradan depo eklenebilmeli. Ama bir kez bağlandıktan sonra değiştirilebilseydi,
+  -- üye beğenileri toplanmış bir projenin deposunu bambaşka bir şeyle değiştirip o beğenileri
+  -- devralırdı. Bu yüzden yalnızca BOŞTAN DOLUYA geçişe izin var.
+  --
+  -- Sahiplik doğrulaması sunucuda yapılıyor (üye yalnızca kendi GitHub hesabındaki bir depoyu
+  -- bağlayabilir); buradaki kural onun üzerine binen ikinci katman.
+  IF OLD.repo_full_name IS NOT NULL THEN
+    NEW.repo_full_name := OLD.repo_full_name;
+    NEW.repo_url := OLD.repo_url;
+  END IF;
 
   NEW.last_commit_sha := OLD.last_commit_sha;
   NEW.last_commit_at := OLD.last_commit_at;
@@ -1676,8 +1696,12 @@ CREATE INDEX IF NOT EXISTS idx_community_api_keys_community ON public.community_
 -- liderlik tablosunda üç kez görünür ve beğenileri bölünürdü. lower(): GitHub depo adları
 -- büyük/küçük harf duyarsızdır. Silinmiş projeler kapsam dışı, böylece bir projeyi silip
 -- aynı depoyla yeniden açmak mümkün kalıyor.
+-- `repo_full_name IS NOT NULL` açıkça yazılı: deposuz projeler indekse hiç girmesin.
+-- (Postgres NULL'ları zaten benzersiz saymaz, ama kuralı okuyanın "deposuz iki proje
+-- çakışır mı" diye düşünmesine gerek kalmıyor.)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_repo
-  ON public.projects(lower(repo_full_name)) WHERE is_deleted = false;
+  ON public.projects(lower(repo_full_name))
+  WHERE is_deleted = false AND repo_full_name IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_projects_likes ON public.projects(likes_count DESC) WHERE is_deleted = false;
 CREATE INDEX IF NOT EXISTS idx_projects_created ON public.projects(created_at DESC) WHERE is_deleted = false;

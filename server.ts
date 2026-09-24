@@ -110,17 +110,17 @@ import {
   insertProject,
   listProjects,
   newProjectId,
-  normalizeRepoFullName,
   projectOfTheWeek,
   projectsConfigured,
   readRelations,
-  readRepo,
   runCommitWatch,
   setRelation,
   softDeleteProject,
   toPositiveInt,
   updateProject,
-  type ProjectSort
+  verifyOwnRepo,
+  type ProjectSort,
+  type RepoFacts
 } from './src/server/projects';
 
 const app = express();
@@ -2440,10 +2440,12 @@ app.get(
 /**
  * Yeni proje.
  *
- * DEPO SAHİPLİĞİ SUNUCUDA DOĞRULANIR. Üye yalnızca KENDİ bağlı GitHub hesabına ait bir
- * depoyu tanıtabilir. Bu kontrol olmasaydı herkes tanınmış bir depoyu kendi adına ekleyip
- * onun üzerinden beğeni toplar, liderlik tablosu da gerçek işi yapanı değil en hızlı
- * davrananı ödüllendirirdi.
+ * GITHUB GEREKMİYOR. Proje paylaşmak için GitHub bağlamak zorunda olmak yanlıştı: her proje
+ * GitHub'da değil (kapalı kaynak, başka platform, henüz yayımlanmamış) ve GitHub kullanmayan
+ * birinin hiçbir şey paylaşamaması anlamına geliyordu.
+ *
+ * Depo EKLENİRSE sahipliği doğrulanır — işte o zaman GitHub bağlantısı gerekir. Yani
+ * doğrulama, iddianın kendisiyle orantılı: "şu depo benim" demiyorsan kanıt da istenmiyor.
  */
 app.post(
   '/api/projects',
@@ -2465,53 +2467,28 @@ app.post(
       return;
     }
 
-    // GitHub bağlı değilse depo sahipliği doğrulanamaz; bu yüzden proje de açılamaz.
-    if (!profile.github_username) {
-      res.status(409).json({
-        success: false,
-        error: 'github_required',
-        message: 'Proje ekleyebilmek için önce GitHub hesabınızı bağlayın.'
-      });
+    // Depo isteğe bağlı: gönderilmediyse proje deposuz açılır.
+    const wantsRepo = req.body?.repo !== undefined && String(req.body.repo || '').trim() !== '';
+    let repo: RepoFacts | null = null;
+
+    if (wantsRepo) {
+      const check = await verifyOwnRepo(profile.github_username, req.body.repo);
+      if (!check.ok || !check.repo) {
+        res.status(check.status).json({ success: false, error: check.error, message: check.message });
+        return;
+      }
+      repo = check.repo;
+    }
+
+    // Deposuz projede ad ZORUNLU: depodan türetilecek bir ad yok ve adsız proje listede
+    // hiçbir şey ifade etmez.
+    const name = cleanText(req.body?.name, 80) || (repo ? repo.fullName.split('/')[1] : '');
+    if (!name) {
+      res.status(400).json({ success: false, error: 'name_required', message: 'Proje adı gerekli.' });
       return;
     }
 
-    const repoFullName = normalizeRepoFullName(req.body?.repo);
-    if (!repoFullName) {
-      res.status(400).json({ success: false, error: 'invalid_repo' });
-      return;
-    }
-
-    const repo = await readRepo(repoFullName);
-    if (!repo) {
-      res.status(404).json({
-        success: false,
-        error: 'repo_not_found',
-        message: 'Depo bulunamadı. Herkese açık bir depo olmalı.'
-      });
-      return;
-    }
-
-    if (repo.ownerLogin.toLowerCase() !== String(profile.github_username).toLowerCase()) {
-      res.status(403).json({
-        success: false,
-        error: 'not_your_repo',
-        message: 'Yalnızca kendi GitHub hesabınızdaki depoları ekleyebilirsiniz.'
-      });
-      return;
-    }
-
-    const existing = await findProjectByRepo(repo.fullName);
-    if (existing) {
-      res.status(409).json({
-        success: false,
-        error: 'repo_already_added',
-        message: 'Bu depo için zaten bir proje var.'
-      });
-      return;
-    }
-
-    const name = cleanText(req.body?.name, 80) || repo.fullName.split('/')[1];
-    const about = cleanText(req.body?.about, 600) || repo.description || '';
+    const about = cleanText(req.body?.about, 600) || repo?.description || '';
 
     const created = await insertProject({
       id: newProjectId(),
@@ -2519,10 +2496,10 @@ app.post(
       owner_username: profile.username,
       name,
       about,
-      repo_full_name: repo.fullName,
-      repo_url: repo.htmlUrl,
-      repo_default_branch: repo.defaultBranch,
-      language: repo.language
+      repo_full_name: repo ? repo.fullName : null,
+      repo_url: repo ? repo.htmlUrl : null,
+      repo_default_branch: repo ? repo.defaultBranch : null,
+      language: repo ? repo.language : null
     });
 
     if (!created) {
@@ -2607,7 +2584,15 @@ app.get(
   }
 );
 
-/** Ad ve tanıtım yazısını günceller (yalnızca sahibi). */
+/**
+ * Ad, tanıtım yazısı ve — henüz bağlı değilse — GitHub deposu (yalnızca sahibi).
+ *
+ * Depo SONRADAN eklenebilir: proje deposuz açılabildiği için, sonradan GitHub'a taşınan
+ * bir projenin deposunu bağlayamamak keyfi bir kısıt olurdu. Bağlandıktan sonra
+ * DEĞİŞTİRİLEMEZ (şemadaki tetikleyici de ayrıca engelliyor): değiştirilebilseydi,
+ * beğenileri toplanmış bir projenin deposu bambaşka bir şeyle takas edilip o beğeniler
+ * devralınabilirdi.
+ */
 app.patch(
   '/api/projects/:id',
   requireAuth,
@@ -2623,8 +2608,8 @@ app.patch(
       return;
     }
 
-    // Yalnızca bu iki alan. Depo, sahiplik ve sayaçlar burada hiç geçmiyor; şemadaki
-    // tetikleyici de onları ayrıca koruyor (iki katman bilinçli).
+    // Sahiplik ve sayaçlar burada hiç geçmiyor; şemadaki tetikleyici de onları ayrıca
+    // koruyor (iki katman bilinçli).
     const patch: Record<string, unknown> = {};
     if (req.body?.name !== undefined) {
       const name = cleanText(req.body.name, 80);
@@ -2635,6 +2620,31 @@ app.patch(
       patch.name = name;
     }
     if (req.body?.about !== undefined) patch.about = cleanText(req.body.about, 600);
+
+    if (req.body?.repo !== undefined && String(req.body.repo || '').trim() !== '') {
+      // Zaten bağlıysa reddediyoruz. Sessizce yok saymak, üyenin "değiştirdim" sanıp
+      // eskisiyle devam ettiğini fark etmemesine yol açardı.
+      if (project.repo_full_name) {
+        res.status(409).json({
+          success: false,
+          error: 'repo_already_set',
+          message: 'Bu projenin deposu zaten bağlı ve değiştirilemez.'
+        });
+        return;
+      }
+
+      const profile = await findById(req.auth?.userId || '');
+      const check = await verifyOwnRepo(profile?.github_username, req.body.repo);
+      if (!check.ok || !check.repo) {
+        res.status(check.status).json({ success: false, error: check.error, message: check.message });
+        return;
+      }
+
+      patch.repo_full_name = check.repo.fullName;
+      patch.repo_url = check.repo.htmlUrl;
+      patch.repo_default_branch = check.repo.defaultBranch;
+      patch.language = check.repo.language;
+    }
 
     if (Object.keys(patch).length === 0) {
       res.status(400).json({ success: false, error: 'nothing_to_update' });

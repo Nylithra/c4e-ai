@@ -47,11 +47,16 @@ export async function fetchHighlights(): Promise<Highlights> {
 }
 
 const CREATE_ERRORS: Record<string, string> = {
-  github_required: 'Proje ekleyebilmek için önce Ayarlar > Bağlı Hesaplar bölümünden GitHub hesabını bağla.',
+  // Bu mesaj yalnızca DEPO EKLENMEK istendiğinde çıkar. Proje açmak GitHub gerektirmiyor;
+  // metnin bunu yansıtması önemli, çünkü eski hâli ("proje ekleyebilmek için") özelliği
+  // olduğundan daha kapalı gösteriyordu.
+  github_required: 'Depo bağlamak için Ayarlar > Bağlı Hesaplar bölümünden GitHub hesabını bağla. Depo eklemeden de proje paylaşabilirsin.',
   invalid_repo: 'Depo adı "kullanıcı/depo" biçiminde olmalı.',
   repo_not_found: 'Depo bulunamadı. Herkese açık bir depo olmalı.',
   not_your_repo: 'Yalnızca kendi GitHub hesabındaki depoları ekleyebilirsin.',
-  repo_already_added: 'Bu depo için zaten bir proje var.'
+  repo_already_added: 'Bu depo için zaten bir proje var.',
+  repo_already_set: 'Bu projenin deposu zaten bağlı ve değiştirilemez.',
+  name_required: 'Proje adı gerekli.'
 };
 
 export async function createProject(input: {

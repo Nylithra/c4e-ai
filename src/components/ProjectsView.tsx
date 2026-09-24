@@ -221,7 +221,9 @@ const CreateProjectDialog: React.FC<{
 }> = ({ tr, cachedGithubUsername, onClose, onCreated, onGithubResolved }) => {
   const [githubUsername, setGithubUsername] = useState<string | null>(cachedGithubUsername);
   const [repos, setRepos] = useState<RepoOption[]>([]);
-  const [loadingRepos, setLoadingRepos] = useState(true);
+  // Üye "GitHub deposu bağla" dedi mi? Depo isteğe bağlı olduğu için varsayılan HAYIR.
+  const [wantRepo, setWantRepo] = useState(false);
+  const [loadingRepos, setLoadingRepos] = useState(false);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<RepoOption | null>(null);
   const [name, setName] = useState('');
@@ -230,32 +232,29 @@ const CreateProjectDialog: React.FC<{
   const [error, setError] = useState<string | null>(null);
 
   /*
-   * KAPIYI SUNUCUYA SORUYORUZ.
+   * GitHub bağlantısı YALNIZCA depo eklenmek istendiğinde sorgulanıyor.
    *
-   * Bu kural sunucuda zorunlu tutuluyor; istemcideki önbelleğe bakarak karar vermek,
-   * eskimiş bir alanın aslında izinli olan bir üyeyi sessizce engellemesi demekti — ve tam
-   * olarak öyle oldu: profil sorgusu `github_username` sütununu hiç istemediği için alan
-   * herkeste boştu ve kapı herkese kapalıydı.
+   * Proje paylaşmak GitHub gerektirmiyor, dolayısıyla pencere açılır açılmaz GitHub'a gitmek
+   * hem gereksiz bir istek hem de yanlış bir mesaj olurdu ("demek ki GitHub lazım").
+   * Doğrulama iddiayla orantılı: "şu depo benim" demiyorsan kanıt da istenmiyor.
    *
    * Bağlı görünmüyorsa bir de onarım deneniyor: GitHub ile kayıt olan üyenin kimliği auth
    * kaydında zaten var, yalnızca profil sütununa yazılmamış olabilir.
    */
-  useEffect(() => {
-    void (async () => {
-      const status = await fetchLanuxStatus();
-      let username = status?.github?.linked ? status.github.username || null : null;
+  const loadRepos = async () => {
+    setWantRepo(true);
+    setLoadingRepos(true);
 
-      if (!username) username = await reconcileGithubLink({ force: true });
+    const status = await fetchLanuxStatus();
+    let username = status?.github?.linked ? status.github.username || null : null;
+    if (!username) username = await reconcileGithubLink({ force: true });
 
-      setGithubUsername(username);
-      if (username) onGithubResolved(username);
+    setGithubUsername(username);
+    if (username) onGithubResolved(username);
 
-      setRepos(username ? await fetchOwnRepos(username) : []);
-      setLoadingRepos(false);
-    })();
-    // Yalnızca açılışta: pencere zaten her açılışta yeniden takılıyor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setRepos(username ? await fetchOwnRepos(username) : []);
+    setLoadingRepos(false);
+  };
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -276,10 +275,15 @@ const CreateProjectDialog: React.FC<{
   };
 
   const submit = async () => {
-    if (!selected) return;
+    if (!name.trim()) return;
     setBusy(true);
     setError(null);
-    const result = await createProject({ repo: selected.full_name, name: name.trim(), about: about.trim() });
+    // Depo seçilmediyse alan hiç gönderilmiyor; sunucu da onu "deposuz proje" diye anlıyor.
+    const result = await createProject({
+      repo: selected ? selected.full_name : '',
+      name: name.trim(),
+      about: about.trim()
+    });
     if (result.ok && result.project) {
       onCreated(result.project);
       onClose();
@@ -311,37 +315,94 @@ const CreateProjectDialog: React.FC<{
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {loadingRepos && !githubUsername ? (
-            /*
-              Sunucuya sorarken "GitHub'ı bağla" uyarısını göstermek YANLIŞ olur: bağlantısı
-              olan üye, yanıt gelene kadar bir saniyeliğine olmayan bir sorunu okur ve
-              çoğu kişi orada pencereyi kapatır.
-            */
-            <div className="flex items-center justify-center gap-2 p-6 text-[11px] text-zinc-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>{tr ? 'GitHub bağlantın kontrol ediliyor...' : 'Checking your GitHub link...'}</span>
-            </div>
-          ) : !githubUsername ? (
-            /*
-              GitHub bağlı değilse depo sahipliği doğrulanamaz, dolayısıyla proje de
-              açılamaz. Bunu pencerenin içinde söylemek, kullanıcının formu doldurup
-              sonunda reddedilmesinden iyidir.
-            */
-            <div className="flex items-start gap-2 rounded-xl border border-amber-700/50 bg-amber-950/20 p-3">
-              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-              <p className="user-text text-[12px] leading-relaxed text-amber-200/90">
-                {tr
-                  ? 'Proje ekleyebilmek için önce Ayarlar > Bağlı Hesaplar bölümünden GitHub hesabını bağlaman gerekiyor. Depoyu gerçekten senin olduğunu böyle doğruluyoruz.'
-                  : 'To add a project, link your GitHub account under Settings > Connected Accounts first. That is how we verify the repository is really yours.'}
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
-                  {tr ? '1. GitHub deposu seç' : '1. Pick a GitHub repository'}
-                </label>
+          {/*
+            SIRA DEĞİŞTİ: ad ve tanıtım önce, depo en sonda ve İSTEĞE BAĞLI.
+            Eskiden ilk adım "GitHub deposu seç"ti; bu, projenin GitHub'a ait olmasını
+            zorunluymuş gibi gösteriyordu ve GitHub bağlamayan kimse hiçbir şey
+            paylaşamıyordu.
+          */}
+          <div className="space-y-2">
+            <label htmlFor="proje-adi" className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+              {tr ? 'Proje adı' : 'Project name'}
+            </label>
+            <input
+              id="proje-adi"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={80}
+              placeholder={tr ? 'Projenin adı' : 'Project name'}
+              className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
 
+          <div className="space-y-2">
+            <label htmlFor="proje-hakkinda" className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+              {tr ? 'Hakkında' : 'About'}
+            </label>
+            <textarea
+              id="proje-hakkinda"
+              value={about}
+              onChange={(e) => setAbout(e.target.value)}
+              maxLength={600}
+              rows={3}
+              placeholder={tr ? 'Proje ne yapıyor?' : 'What does this project do?'}
+              className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-xs leading-relaxed text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <p className="text-right text-[10px] text-zinc-600">{about.length}/600</p>
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-zinc-800/60 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+              {tr ? 'GitHub deposu' : 'GitHub repository'}{' '}
+              <span className="font-semibold normal-case text-zinc-600">{tr ? '(isteğe bağlı)' : '(optional)'}</span>
+            </p>
+
+            {!wantRepo ? (
+              <>
+                <p className="user-text text-[11px] leading-relaxed text-zinc-500">
+                  {tr
+                    ? 'Depo eklersen her yeni commit takipçilerine bildirim olarak gider. Eklemezsen proje yine paylaşılır.'
+                    : 'Attaching a repository sends a notification to your followers on every new commit. Without one the project is still shared.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={loadRepos}
+                  className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-800 text-[11px] font-semibold text-zinc-300 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Github className="h-3.5 w-3.5" />
+                  <span>{tr ? 'GitHub deposu bağla' : 'Attach a GitHub repository'}</span>
+                </button>
+              </>
+            ) : loadingRepos ? (
+              <div className="flex items-center justify-center gap-2 p-4 text-[11px] text-zinc-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>{tr ? 'Depoların yükleniyor...' : 'Loading your repositories...'}</span>
+              </div>
+            ) : !githubUsername ? (
+              /*
+                Doğrulama YALNIZCA burada gerekiyor: "bu depo benim" iddiasını GitHub
+                kanıtlıyor. Proje oluşturmayı engellemiyor — üye depoyu atlayıp devam edebilir.
+              */
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-700/50 bg-amber-950/20 p-2.5">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-400" />
+                  <p className="user-text text-[11px] leading-relaxed text-amber-200/90">
+                    {tr
+                      ? 'Depo bağlamak için GitHub hesabın gerekiyor (Ayarlar > Bağlı Hesaplar). Deponun gerçekten senin olduğunu böyle doğruluyoruz. Depo eklemeden de projeni paylaşabilirsin.'
+                      : 'Attaching a repository needs your GitHub account (Settings > Connected Accounts). That is how we verify the repository is really yours. You can still share the project without one.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWantRepo(false)}
+                  className="min-h-11 w-full rounded-xl border border-zinc-800 text-[11px] font-semibold text-zinc-400 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {tr ? 'Depo eklemeden devam et' : 'Continue without a repository'}
+                </button>
+              </div>
+            ) : (
+              <>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-600" />
                   <input
@@ -354,13 +415,8 @@ const CreateProjectDialog: React.FC<{
                   />
                 </div>
 
-                <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-xl border border-zinc-800/60 p-1.5">
-                  {loadingRepos ? (
-                    <div className="flex items-center justify-center gap-2 p-4 text-[11px] text-zinc-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>{tr ? 'Depoların yükleniyor...' : 'Loading your repositories...'}</span>
-                    </div>
-                  ) : visible.length === 0 ? (
+                <div className="max-h-44 space-y-1.5 overflow-y-auto rounded-xl border border-zinc-800/60 p-1.5">
+                  {visible.length === 0 ? (
                     <p className="p-4 text-center text-[11px] text-zinc-500">
                       {tr ? 'Depo bulunamadı.' : 'No repositories found.'}
                     </p>
@@ -385,46 +441,19 @@ const CreateProjectDialog: React.FC<{
                     ))
                   )}
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <label
-                  htmlFor="proje-adi"
-                  className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500"
-                >
-                  {tr ? '2. Proje adı' : '2. Project name'}
-                </label>
-                <input
-                  id="proje-adi"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={80}
-                  placeholder={tr ? 'Projenin adı' : 'Project name'}
-                  className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor="proje-hakkinda"
-                  className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500"
-                >
-                  {tr ? '3. Hakkında' : '3. About'}
-                </label>
-                <textarea
-                  id="proje-hakkinda"
-                  value={about}
-                  onChange={(e) => setAbout(e.target.value)}
-                  maxLength={600}
-                  rows={3}
-                  placeholder={tr ? 'Proje ne yapıyor?' : 'What does this project do?'}
-                  className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-xs leading-relaxed text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-                <p className="text-right text-[10px] text-zinc-600">{about.length}/600</p>
-              </div>
-            </>
-          )}
+                {selected && (
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    className="min-h-9 text-[11px] font-semibold text-zinc-500 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                  >
+                    {tr ? 'Depo seçimini kaldır' : 'Clear repository'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
 
           {error && (
             <p className="user-text flex items-start gap-1.5 text-[11px] text-red-400">
@@ -445,7 +474,7 @@ const CreateProjectDialog: React.FC<{
           <button
             type="button"
             onClick={submit}
-            disabled={busy || !selected || !name.trim() || !githubUsername}
+            disabled={busy || !name.trim()}
             className="brand-gradient flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl text-xs font-bold shadow-lg transition-opacity disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}

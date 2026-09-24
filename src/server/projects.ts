@@ -230,6 +230,82 @@ export async function softDeleteProject(id: string): Promise<boolean> {
 }
 
 // -------------------------------------------------------------
+// DEPO SAHİPLİĞİ
+// -------------------------------------------------------------
+
+/**
+ * Ayrık birleşim (`{ok:true,...} | {ok:false,...}`) yerine tek bir şekil.
+ *
+ * Bu projede `strictNullChecks` kapalı ve o olmadan TypeScript ayrık birleşimi daraltmıyor:
+ * `if (!check.ok)` içinde bile `check.status` "yok" diye hata veriyor. Tüm projeyi strict'e
+ * çevirmek bu değişikliğin kapsamı dışında, bu yüzden tip, derleyicinin daraltmasına hiç
+ * ihtiyaç duymayacak biçimde yazıldı.
+ */
+export interface RepoCheck {
+  ok: boolean;
+  /** Yalnızca ok=true iken dolu. */
+  repo?: RepoFacts;
+  /** Hata durumunda HTTP durumu; başarıda 200. */
+  status: number;
+  error?: string;
+  message?: string;
+}
+
+/**
+ * Bir deponun üyeye ait olduğunu doğrular.
+ *
+ * DEPO İSTEĞE BAĞLI, AMA EKLENİYORSA SAHİPLİĞİ KANITLANMALI. Proje açmak için GitHub
+ * gerekmiyor — projelerin hepsi GitHub'da olmak zorunda değil ve bunu önkoşul yapmak,
+ * GitHub kullanmayan birinin hiçbir şey paylaşamaması demekti. Ama bir depo BAĞLANIYORSA
+ * o depo gerçekten üyenin olmalı: aksi hâlde herkes tanınmış bir depoyu kendi adına ekleyip
+ * onun üzerinden beğeni toplar ve liderlik tablosu gerçek işi yapanı değil en hızlı
+ * davrananı ödüllendirirdi.
+ *
+ * Hem proje açılırken hem sonradan depo eklenirken AYNI fonksiyon çağrılıyor; iki ayrı
+ * kopya, birinin gevşek kalması için açık davetiye olurdu.
+ */
+export async function verifyOwnRepo(
+  githubUsername: string | null | undefined,
+  rawRepo: unknown
+): Promise<RepoCheck> {
+  const repoFullName = normalizeRepoFullName(rawRepo);
+  if (!repoFullName) {
+    return { ok: false, status: 400, error: 'invalid_repo', message: 'Depo adı "kullanıcı/depo" biçiminde olmalı.' };
+  }
+
+
+  if (!githubUsername) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'github_required',
+      message: 'GitHub deposu eklemek için önce GitHub hesabınızı bağlayın.'
+    };
+  }
+
+  const repo = await readRepo(repoFullName);
+  if (!repo) {
+    return { ok: false, status: 404, error: 'repo_not_found', message: 'Depo bulunamadı. Herkese açık bir depo olmalı.' };
+  }
+
+  if (repo.ownerLogin.toLowerCase() !== String(githubUsername).toLowerCase()) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'not_your_repo',
+      message: 'Yalnızca kendi GitHub hesabınızdaki depoları ekleyebilirsiniz.'
+    };
+  }
+
+  const existing = await findProjectByRepo(repo.fullName);
+  if (existing) {
+    return { ok: false, status: 409, error: 'repo_already_added', message: 'Bu depo için zaten bir proje var.' };
+  }
+
+  return { ok: true, status: 200, repo };
+}
+
+// -------------------------------------------------------------
 // BEĞENİ VE TAKİP
 // -------------------------------------------------------------
 
@@ -428,8 +504,12 @@ export async function runCommitWatch(options: {
 
   const result: WatchResult = { checked: 0, newCommits: 0, notified: 0, failed: 0, timedOut: false };
 
+  // Deposuz projeler taramaya HİÇ girmiyor: bakılacak bir commit yok. Süzgeç sorguda,
+  // döngüde değil — aksi hâlde deposuz projeler `maxProjects` kotasını doldurur ve depolu
+  // projelerin sırası hiç gelmezdi.
   const { ok, rows } = await rest(
-    `projects?is_deleted=eq.false&select=${PROJECT_FIELDS}&order=last_checked_at.asc.nullsfirst&limit=${maxProjects}`
+    `projects?is_deleted=eq.false&repo_full_name=not.is.null&select=${PROJECT_FIELDS}` +
+      `&order=last_checked_at.asc.nullsfirst&limit=${maxProjects}`
   );
   if (!ok) return result;
 

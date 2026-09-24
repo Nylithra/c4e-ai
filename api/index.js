@@ -2438,6 +2438,37 @@ async function updateProject(id, patch) {
 async function softDeleteProject(id) {
   return updateProject(id, { is_deleted: true });
 }
+async function verifyOwnRepo(githubUsername, rawRepo) {
+  const repoFullName = normalizeRepoFullName(rawRepo);
+  if (!repoFullName) {
+    return { ok: false, status: 400, error: "invalid_repo", message: 'Depo ad\u0131 "kullan\u0131c\u0131/depo" bi\xE7iminde olmal\u0131.' };
+  }
+  if (!githubUsername) {
+    return {
+      ok: false,
+      status: 409,
+      error: "github_required",
+      message: "GitHub deposu eklemek i\xE7in \xF6nce GitHub hesab\u0131n\u0131z\u0131 ba\u011Flay\u0131n."
+    };
+  }
+  const repo = await readRepo(repoFullName);
+  if (!repo) {
+    return { ok: false, status: 404, error: "repo_not_found", message: "Depo bulunamad\u0131. Herkese a\xE7\u0131k bir depo olmal\u0131." };
+  }
+  if (repo.ownerLogin.toLowerCase() !== String(githubUsername).toLowerCase()) {
+    return {
+      ok: false,
+      status: 403,
+      error: "not_your_repo",
+      message: "Yaln\u0131zca kendi GitHub hesab\u0131n\u0131zdaki depolar\u0131 ekleyebilirsiniz."
+    };
+  }
+  const existing = await findProjectByRepo(repo.fullName);
+  if (existing) {
+    return { ok: false, status: 409, error: "repo_already_added", message: "Bu depo i\xE7in zaten bir proje var." };
+  }
+  return { ok: true, status: 200, repo };
+}
 var TABLE = {
   like: "project_likes",
   follow: "project_follows"
@@ -2532,7 +2563,7 @@ async function runCommitWatch(options = {}) {
   const deadline = Date.now() + budgetMs;
   const result = { checked: 0, newCommits: 0, notified: 0, failed: 0, timedOut: false };
   const { ok, rows } = await rest4(
-    `projects?is_deleted=eq.false&select=${PROJECT_FIELDS}&order=last_checked_at.asc.nullsfirst&limit=${maxProjects}`
+    `projects?is_deleted=eq.false&repo_full_name=not.is.null&select=${PROJECT_FIELDS}&order=last_checked_at.asc.nullsfirst&limit=${maxProjects}`
   );
   if (!ok) return result;
   for (const project of rows) {
@@ -4307,57 +4338,32 @@ app.post(
       res.status(404).json({ success: false, error: "profile_not_found" });
       return;
     }
-    if (!profile.github_username) {
-      res.status(409).json({
-        success: false,
-        error: "github_required",
-        message: "Proje ekleyebilmek i\xE7in \xF6nce GitHub hesab\u0131n\u0131z\u0131 ba\u011Flay\u0131n."
-      });
+    const wantsRepo = req.body?.repo !== void 0 && String(req.body.repo || "").trim() !== "";
+    let repo = null;
+    if (wantsRepo) {
+      const check = await verifyOwnRepo(profile.github_username, req.body.repo);
+      if (!check.ok || !check.repo) {
+        res.status(check.status).json({ success: false, error: check.error, message: check.message });
+        return;
+      }
+      repo = check.repo;
+    }
+    const name = cleanText(req.body?.name, 80) || (repo ? repo.fullName.split("/")[1] : "");
+    if (!name) {
+      res.status(400).json({ success: false, error: "name_required", message: "Proje ad\u0131 gerekli." });
       return;
     }
-    const repoFullName = normalizeRepoFullName(req.body?.repo);
-    if (!repoFullName) {
-      res.status(400).json({ success: false, error: "invalid_repo" });
-      return;
-    }
-    const repo = await readRepo(repoFullName);
-    if (!repo) {
-      res.status(404).json({
-        success: false,
-        error: "repo_not_found",
-        message: "Depo bulunamad\u0131. Herkese a\xE7\u0131k bir depo olmal\u0131."
-      });
-      return;
-    }
-    if (repo.ownerLogin.toLowerCase() !== String(profile.github_username).toLowerCase()) {
-      res.status(403).json({
-        success: false,
-        error: "not_your_repo",
-        message: "Yaln\u0131zca kendi GitHub hesab\u0131n\u0131zdaki depolar\u0131 ekleyebilirsiniz."
-      });
-      return;
-    }
-    const existing = await findProjectByRepo(repo.fullName);
-    if (existing) {
-      res.status(409).json({
-        success: false,
-        error: "repo_already_added",
-        message: "Bu depo i\xE7in zaten bir proje var."
-      });
-      return;
-    }
-    const name = cleanText(req.body?.name, 80) || repo.fullName.split("/")[1];
-    const about = cleanText(req.body?.about, 600) || repo.description || "";
+    const about = cleanText(req.body?.about, 600) || repo?.description || "";
     const created = await insertProject({
       id: newProjectId(),
       owner_id: userId,
       owner_username: profile.username,
       name,
       about,
-      repo_full_name: repo.fullName,
-      repo_url: repo.htmlUrl,
-      repo_default_branch: repo.defaultBranch,
-      language: repo.language
+      repo_full_name: repo ? repo.fullName : null,
+      repo_url: repo ? repo.htmlUrl : null,
+      repo_default_branch: repo ? repo.defaultBranch : null,
+      language: repo ? repo.language : null
     });
     if (!created) {
       res.status(502).json({ success: false, error: "create_failed" });
@@ -4443,6 +4449,26 @@ app.patch(
       patch.name = name;
     }
     if (req.body?.about !== void 0) patch.about = cleanText(req.body.about, 600);
+    if (req.body?.repo !== void 0 && String(req.body.repo || "").trim() !== "") {
+      if (project.repo_full_name) {
+        res.status(409).json({
+          success: false,
+          error: "repo_already_set",
+          message: "Bu projenin deposu zaten ba\u011Fl\u0131 ve de\u011Fi\u015Ftirilemez."
+        });
+        return;
+      }
+      const profile = await findById(req.auth?.userId || "");
+      const check = await verifyOwnRepo(profile?.github_username, req.body.repo);
+      if (!check.ok || !check.repo) {
+        res.status(check.status).json({ success: false, error: check.error, message: check.message });
+        return;
+      }
+      patch.repo_full_name = check.repo.fullName;
+      patch.repo_url = check.repo.htmlUrl;
+      patch.repo_default_branch = check.repo.defaultBranch;
+      patch.language = check.repo.language;
+    }
     if (Object.keys(patch).length === 0) {
       res.status(400).json({ success: false, error: "nothing_to_update" });
       return;
