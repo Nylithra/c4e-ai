@@ -128,7 +128,7 @@ export async function sendNativeNotification(options: NativeNotificationOptions)
   const {
     title,
     body,
-    icon = '/logo.png',
+    icon = '/logo-192.png',
     tag = 'code4ever-alert',
     url = '/',
     playSound = true,
@@ -159,7 +159,7 @@ export async function sendNativeNotification(options: NativeNotificationOptions)
   const notifOptions: any = {
     body,
     icon,
-    badge: '/logo.png',
+    badge: '/logo-192.png',
     tag,
     data: { url },
     renotify: true,

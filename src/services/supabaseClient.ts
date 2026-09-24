@@ -350,7 +350,14 @@ export const PUBLIC_PROFILE_COLUMNS =
   'id,username,display_name,avatar_url,banner_url,bio,role,verified,website,' +
   'theme_color,accent_color,joined_communities,custom_fields,pinned_repos,badges,' +
   'integrations,is_admin,supporter_tier,profile_theme,saved_post_ids,' +
-  'allow_group_invites,show_liked_posts,is_online,last_seen_at,created_at,updated_at';
+  'allow_group_invites,show_liked_posts,is_online,last_seen_at,created_at,updated_at,' +
+  // KİMLİK BAĞLANTILARI. Bu liste açıkça sayıldığı için, sonradan eklenen bir sütun
+  // buraya yazılmadıkça tarayıcıya HİÇ ulaşmaz. `github_username` tam olarak böyle
+  // gözden kaçtı: bağlama sunucuda başarıyla yazılıyor ama istemci sütunu hiç
+  // istemediği için `user.github_username` her zaman boş kalıyor, proje oluşturma
+  // kapısı da herkese kapalı duruyordu. Yeni bir kimlik sütunu eklenirse buraya da
+  // eklenmeli.
+  'github_username,github_linked_at,lanux_user_id,lanux_username,lanux_linked_at';
 
 /**
  * supabase-js infers the row shape from a STRING LITERAL select, so a runtime-built column

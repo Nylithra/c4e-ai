@@ -608,6 +608,61 @@ tarayıcıyı yetkisiz tetiklemek. Şema güvenceleri ayrıca gerçek PostgreSQL
 
 ---
 
+## 2.6 Kapatılan hata: GitHub ile kayıt olanlar "bağlı değil" görünüyordu
+
+GitHub ile kayıt olmuş bir üye, uygulamada "GitHub hesabını bağla" uyarısı alıyor ve proje
+oluşturamıyordu. Bağlamayı yapsa bile uyarı geçmiyordu. **İki ayrı hata üst üste binmişti:**
+
+1. **İstemci profil sorgusu `github_username` sütununu hiç istemiyordu.** `email` sızıntısı
+   kapatılırken sütunlar tek tek sayılmıştı (bkz. 2.3); sonradan eklenen kimlik sütunları o
+   listeye yazılmadı. Sonuç: bağlama sunucuda BAŞARIYLA yazılıyor, ama tarayıcı sütunu hiç
+   okumadığı için `user.github_username` herkeste boş kalıyor ve proje oluşturma kapısı
+   herkese kapalı duruyordu. Açıkça sayılan bir sütun listesi bu hatayı sessiz yapar:
+   eksik sütun hata vermez, yalnızca hiç gelmez.
+2. **Sütunu dolduran bir şey yoktu.** GitHub ile kayıt olan üyenin GitHub kimliği auth
+   kaydında zaten var, ama `profiles.github_username` sütununu yalnızca açık bağlama ucu
+   yazıyordu. Yani üyeye, zaten yaptığı bağlamayı yeniden yapması söyleniyordu.
+
+Düzeltme üç parçalı:
+
+- Kimlik sütunları istemci sorgusuna eklendi.
+- **Sessiz onarım:** oturum açılışında `github_username` boşsa, bağlama ucu bir kez
+  çağrılıyor. Uç kullanıcı adını auth kaydındaki kimlikten okuduğu için bu, yetkilendirmeye
+  hiç gitmeden tamamlanıyor. Kimlik yoksa uç `needs_authorization` döner ve hiçbir şey olmaz.
+- **Kapı artık sunucuya soruluyor.** Proje oluşturma kuralını sunucu zorunlu tutuyor;
+  istemcideki önbelleğe bakarak karar vermek, eskimiş bir alanın aslında izinli olan bir
+  üyeyi sessizce engellemesi demekti — ve tam olarak öyle oldu.
+
+Ders: **sunucunun zorunlu tuttuğu bir kuralın arayüzdeki karşılığı da sunucudan gelmeli.**
+İstemci önbelleğinden okunan bir "izin var mı" yanıtı, veri modeli değiştiğinde sessizce
+yanlışa döner.
+
+Doğrulama: hatayı birebir canlandıran 11 sunucu ve 7 tarayıcı doğrulaması eklendi (GitHub ile
+kayıt olmuş, profil sütunu boş bir üyeyle başlayıp proje oluşturmaya kadar).
+
+### Yan bulgular
+
+- **PWA simgesi hiç çalışmıyordu.** `public/logo.png` aslında `.png` uzantılı bir SVG
+  dosyasıydı; manifest onu `"type": "image/png"` diye tanıttığı için tarayıcı reddediyordu.
+  Gerçek 192/512 PNG'ler `scripts/build-email-logo.mjs` ile üretiliyor, dosya gerçek türüyle
+  (`logo-mark.svg`) yeniden adlandırıldı ve servis çalışanı önbellek sürümü yükseltildi —
+  aksi hâlde kurulu uygulamalar bozuk dosyayı sunmaya devam ederdi.
+- **Konsoldaki kalıcı "Status: VULNERABLE" yanlış alarmdı.** İstemci içi denetim,
+  `sanitizeText`in HTML etiketlerini SÖKMESİNİ bekliyordu; oysa uygulamada hiçbir yerde
+  `dangerouslySetInnerHTML` kullanılmıyor ve React metni zaten kaçışlıyor — etiket sökmek
+  güvenlik kazandırmaz, yalnızca "a < b" gibi meşru içeriği bozar. Sürekli yanlış alarm veren
+  bir gösterge gösterge olmaktan çıkar, bu yüzden ölçüt savunmanın gerçekten dayandığı iki
+  özelliğe çevrildi (HTML bağlamında `escapeHtml`, URL bağlamında `sanitizeUrl`).
+- **`sanitizeUrl` gerçekten gevşekti:** "içinde nokta var" gören her dizeye `https://`
+  ekliyordu, yani `<script>alert(document.cookie)</script>` → `https://<script>...`. Şema
+  https olduğu için XSS değildi ama olmayan bir adresi varmış gibi göstermek kendi başına bir
+  hata kaynağı. Artık yalnızca başlangıcı gerçek bir konak adı olan dizeler tamamlanıyor.
+  Aynı düzeltme, şemasız `konak:port` adreslerinin (`ornek.com:8443/yol`) yanlışlıkla
+  reddedilmesini de gideriyor. 24 doğrulama her iki yönü de ölçüyor: meşru adresler geçiyor,
+  tehlikeli ve anlamsız girdiler reddediliyor.
+
+---
+
 ## 3. Bilinen sınırlamalar
 
 - **Mesajlaşma gerçek anlamda E2EE değildir.** AES anahtarı, herkese açık istemci paketindeki

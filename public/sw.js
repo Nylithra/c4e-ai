@@ -1,10 +1,13 @@
 // Code4Ever PWA Service Worker v2 - Resilient Offline & Notification Engine
-const CACHE_NAME = 'c4e-pwa-cache-v2';
+// v3: simge dosyası değişti (/logo.png aslında .png uzantılı bir SVG idi ve tarayıcı onu
+// reddediyordu). Sürüm yükseltilmezse kurulu uygulamalar eski, bozuk dosyayı önbellekten
+// sunmaya devam eder — activate aşaması yalnızca ADI FARKLI önbellekleri siliyor.
+const CACHE_NAME = 'c4e-pwa-cache-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/logo.png'
+  '/logo-192.png'
 ];
 
 // Install Event
@@ -154,8 +157,8 @@ self.addEventListener('push', (event) => {
       const title = data.title || 'Code4Ever';
       const options = {
         body: data.body || 'Yeni bir bildiriminiz var.',
-        icon: data.icon || '/logo.png',
-        badge: '/logo.png',
+        icon: data.icon || '/logo-192.png',
+        badge: '/logo-192.png',
         vibrate: [100, 50, 100, 50, 200],
         tag: data.tag || 'c4e-notification',
         renotify: true,

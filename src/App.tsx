@@ -82,7 +82,7 @@ import {
 } from './utils/securityHelper';
 import { Sidebar } from './components/Sidebar';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { claimPendingLanuxSession } from './services/lanuxClient';
+import { claimPendingLanuxSession, reconcileGithubLink } from './services/lanuxClient';
 import { RightPanel } from './components/RightPanel';
 import { FeedView } from './components/FeedView';
 import { ExploreView } from './components/ExploreView';
@@ -343,6 +343,24 @@ export default function App() {
           saveStoredProfile(authenticatedUser);
           setIsAuthenticated(true);
           checkUrlRoute(authenticatedUser);
+
+          /*
+           * GitHub ile kayıt olanların bağlantısını onar.
+           *
+           * Bu üyelerin auth kaydında GitHub kimliği zaten var, ama `github_username`
+           * sütununu hiçbir şey doldurmuyordu — sütun sonradan eklendi. Onarılmazsa
+           * uygulama, kullanıcıya ZATEN yaptığı bağlamayı yapmasını söylüyor ve proje
+           * oluşturmayı kapalı tutuyor. Sunucu kullanıcı adını kimlikten okuduğu için
+           * bu, yetkilendirmeye gitmeden tamamlanıyor.
+           */
+          if (!authenticatedUser.github_username) {
+            void reconcileGithubLink().then((username) => {
+              if (!username) return;
+              const healed = { ...authenticatedUser, github_username: username };
+              setUser(healed);
+              saveStoredProfile(healed);
+            });
+          }
         } else {
           const stored = loadStoredProfile();
           if (stored && stored.username) {
@@ -503,7 +521,7 @@ export default function App() {
         sendNativeNotification({
           title: `Code4Ever • @${sender}`,
           body: newNotif.content,
-          icon: newNotif.actor?.avatar_url || '/logo.png',
+          icon: newNotif.actor?.avatar_url || '/logo-192.png',
           playSound: true,
           vibrate: true
         });
@@ -539,7 +557,7 @@ export default function App() {
     sendNativeNotification({
       title: `Code4Ever • @${sender}`,
       body: notif.content,
-      icon: notif.actor?.avatar_url || '/logo.png',
+      icon: notif.actor?.avatar_url || '/logo-192.png',
       playSound: true,
       vibrate: true
     });

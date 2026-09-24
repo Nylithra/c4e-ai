@@ -67,7 +67,15 @@ export interface UserProfile {
   updated_at?: string;
   email?: string;
   is_github_connected?: boolean;
+  /**
+   * Kimlik bağlantıları. Bunları YALNIZCA sunucu yazar (profil tetikleyicisi istemci
+   * yazmalarını geri alır); istemci için salt okunurdur.
+   */
   github_username?: string;
+  github_linked_at?: string;
+  lanux_user_id?: string;
+  lanux_username?: string;
+  lanux_linked_at?: string;
   badges?: BadgeItem[];
   betaStatus?: 'pending' | 'approved' | 'rejected';
   betaContact?: string;

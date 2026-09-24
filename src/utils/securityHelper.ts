@@ -108,15 +108,29 @@ export function sanitizeUrl(url?: string | null): string {
     return trimmed;
   }
 
-  // Reject any other explicit scheme (e.g. "customscheme:payload") before the
-  // domain-like heuristic below can turn it into an https URL.
-  if (/^[a-z][a-z0-9+.-]*:/.test(schemeNormalized)) {
-    return '';
+  /*
+   * Alan adı gibi görünen bir dize (github.com/user) https:// ile tamamlanır.
+   *
+   * "İçinde nokta var" TEK BAŞINA yeterli değil: `<script>alert(document.cookie)</script>`
+   * de nokta içeriyor ve eski kontrol onu `https://<script>...` diye "geçerli" bir adrese
+   * çeviriyordu. Şema https olduğu için bu bir XSS değil, ama olmayan bir adresi varmış
+   * gibi göstermek — bağlantı, önizleme, yönlendirme — kendi başına bir hata kaynağı.
+   * Bu yüzden yalnızca BAŞLANGICI gerçek bir konak adı olan dizeler tamamlanıyor.
+   *
+   * Bu kontrol, aşağıdaki "açık şema" reddinden ÖNCE geliyor: `ornek.com:8443/yol` gibi
+   * şemasız bir konak:port adresinde `ornek.com:` bir şema gibi görünüyor ve aksi hâlde
+   * meşru adres sessizce reddediliyordu. Kalıp iki noktadan sonra YALNIZCA rakam kabul
+   * ettiği için `customscheme:payload` ya da `javascript:alert(1)` buradan geçemez.
+   */
+  const hostLike = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d{1,5})?([/?#]|$)/i;
+  if (!trimmed.startsWith('/') && hostLike.test(trimmed)) {
+    return `https://${trimmed}`;
   }
 
-  // If it's a domain-like string (e.g. github.com/user, mydomain.com), prepend https://
-  if (trimmed.includes('.') && !trimmed.startsWith('/')) {
-    return `https://${trimmed}`;
+  // Reject any other explicit scheme (e.g. "customscheme:payload") before the
+  // relative-path branch below can accept it.
+  if (/^[a-z][a-z0-9+.-]*:/.test(schemeNormalized)) {
+    return '';
   }
 
   // Relative path is allowed, but protocol-relative URLs ("//evil.tld") are not:
@@ -390,18 +404,36 @@ export function runSecurityPenetrationTest(): {
     '<svg/onload=alert(1)>',
     '<iframe src="https://phishing.site"></iframe>'
   ];
+  /*
+   * DOĞRU ÖLÇÜT NEDİR?
+   *
+   * Bu test eskiden `sanitizeText`in etiketleri SÖKMESİNİ bekliyordu ve beklediği şey
+   * olmadığı için konsola kalıcı bir "VULNERABLE" basıyordu. Oysa `sanitizeText` bunu
+   * bilinçli olarak yapmıyor: uygulamada hiçbir yerde `dangerouslySetInnerHTML`
+   * kullanılmıyor, metin React'in metin düğümü olarak basılıyor ve React zaten kaçışlıyor.
+   * Etiketleri sökmek güvenlik kazandırmaz, yalnızca "a < b" gibi meşru içeriği bozar.
+   *
+   * Sürekli yanlış alarm veren bir gösterge, gösterge olmaktan çıkar: gerçek bir açık
+   * çıktığında kimse fark etmez. Bu yüzden ölçüt, savunmanın GERÇEKTEN dayandığı iki
+   * özelliğe çevrildi:
+   *   1. HTML bağlamına giren metin `escapeHtml` ile zararsızlaşıyor mu,
+   *   2. URL bağlamına giren değer tehlikeli bir şema üretebiliyor mu.
+   */
   for (const payload of xssPayloads) {
-    const sanitized = sanitizeText(payload);
+    const escaped = escapeHtml(payload);
     const sanitizedUrl = sanitizeUrl(payload);
-    const audit = auditSecurityPayload(payload);
-    const noRawScript = !sanitized.includes('<script>') && !sanitized.includes('onerror=') && !sanitized.includes('javascript:');
-    const urlNeutralized = sanitizedUrl === '#' || !sanitizedUrl.startsWith('javascript:');
-    const neutralized = noRawScript && urlNeutralized;
+
+    const htmlNeutralized = !escaped.includes('<') && !escaped.includes('>');
+    const urlNeutralized =
+      sanitizedUrl === '' ||
+      sanitizedUrl === '#' ||
+      (/^(https?:|mailto:|\/)/i.test(sanitizedUrl) && !/[<>]/.test(sanitizedUrl));
+
     results.push({
       testName: 'XSS Vector Neutralization',
       payload,
-      neutralized,
-      details: `Raw tags stripped: ${noRawScript} | URL sanitized to: "${sanitizedUrl}"`
+      neutralized: htmlNeutralized && urlNeutralized,
+      details: `HTML escaped: ${htmlNeutralized} | URL sanitized to: "${sanitizedUrl}"`
     });
   }
 

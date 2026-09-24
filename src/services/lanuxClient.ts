@@ -134,6 +134,43 @@ export async function linkGithub(): Promise<{ ok: boolean; error?: string; redir
   return { ok: true, redirecting: true };
 }
 
+/**
+ * GitHub ile kayıt olmuş üyelerin bağlantısını sessizce onarır.
+ *
+ * SORUN: GitHub ile kayıt olan birinin auth kaydında GitHub kimliği ZATEN vardır, ama
+ * `profiles.github_username` sütununu hiçbir şey doldurmuyordu — o sütun sonradan eklendi.
+ * Sonuç, üyeye zaten yaptığı bağlamayı yeniden yapmasını söylemekti: "GitHub hesabını bağla",
+ * oysa hesabı o zaten GitHub'dı.
+ *
+ * ÇÖZÜM: bağlama ucu kullanıcı adını auth kaydındaki kimlikten okuyor, yani yetkilendirmeye
+ * hiç gitmeden çalışabiliyor. Burada tam olarak o çağrılıyor. Kimlik yoksa uç
+ * `needs_authorization` döner ve hiçbir şey olmaz — üye Ayarlar'dan kendisi bağlar.
+ *
+ * Oturum başına EN FAZLA BİR KEZ denenir: kimliği olmayan üyede her açılışta boşuna istek
+ * göndermek, düzeltmeye çalıştığımız sorundan daha pahalı olurdu.
+ */
+const RECONCILE_FLAG = 'c4e_github_reconciled';
+
+export async function reconcileGithubLink(options: { force?: boolean } = {}): Promise<string | null> {
+  // `force`: üye proje oluşturmaya çalışıyor, yani onarımın önemli olduğu tek an. Oturum
+  // bayrağı yüzünden bu denemeyi atlamak, kullanıcıyı çözülebilir bir engelin önünde
+  // bırakırdı.
+  if (!options.force) {
+    try {
+      if (sessionStorage.getItem(RECONCILE_FLAG)) return null;
+      sessionStorage.setItem(RECONCILE_FLAG, '1');
+    } catch {
+      // Gizli sekmede sessionStorage erişimi hata verebilir; bayrak tutulamazsa da akış
+      // çalışmalı, yalnızca tekrar denenir.
+    }
+  }
+
+  const { ok, data } = await apiFetchJson<{ username?: string }>('/api/auth/github/link', {
+    method: 'POST'
+  });
+  return ok && data?.username ? data.username : null;
+}
+
 export async function unlinkGithub(): Promise<{ ok: boolean; error?: string }> {
   const { ok, data } = await apiFetchJson<{ message?: string }>('/api/auth/github/unlink', {
     method: 'POST'

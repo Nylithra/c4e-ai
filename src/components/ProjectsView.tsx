@@ -17,6 +17,7 @@ import {
   X
 } from 'lucide-react';
 import { UserProfile } from '../types';
+import { fetchLanuxStatus, reconcileGithubLink } from '../services/lanuxClient';
 import {
   createProject,
   deleteProject,
@@ -212,10 +213,13 @@ const HighlightCard: React.FC<{
 
 const CreateProjectDialog: React.FC<{
   tr: boolean;
-  githubUsername: string | null;
+  /** Önbellekteki tahmin; gerçeği sunucuya soruyoruz. */
+  cachedGithubUsername: string | null;
   onClose: () => void;
   onCreated: (project: Project) => void;
-}> = ({ tr, githubUsername, onClose, onCreated }) => {
+  onGithubResolved: (username: string) => void;
+}> = ({ tr, cachedGithubUsername, onClose, onCreated, onGithubResolved }) => {
+  const [githubUsername, setGithubUsername] = useState<string | null>(cachedGithubUsername);
   const [repos, setRepos] = useState<RepoOption[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(true);
   const [filter, setFilter] = useState('');
@@ -225,16 +229,33 @@ const CreateProjectDialog: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * KAPIYI SUNUCUYA SORUYORUZ.
+   *
+   * Bu kural sunucuda zorunlu tutuluyor; istemcideki önbelleğe bakarak karar vermek,
+   * eskimiş bir alanın aslında izinli olan bir üyeyi sessizce engellemesi demekti — ve tam
+   * olarak öyle oldu: profil sorgusu `github_username` sütununu hiç istemediği için alan
+   * herkeste boştu ve kapı herkese kapalıydı.
+   *
+   * Bağlı görünmüyorsa bir de onarım deneniyor: GitHub ile kayıt olan üyenin kimliği auth
+   * kaydında zaten var, yalnızca profil sütununa yazılmamış olabilir.
+   */
   useEffect(() => {
-    if (!githubUsername) {
-      setLoadingRepos(false);
-      return;
-    }
     void (async () => {
-      setRepos(await fetchOwnRepos(githubUsername));
+      const status = await fetchLanuxStatus();
+      let username = status?.github?.linked ? status.github.username || null : null;
+
+      if (!username) username = await reconcileGithubLink({ force: true });
+
+      setGithubUsername(username);
+      if (username) onGithubResolved(username);
+
+      setRepos(username ? await fetchOwnRepos(username) : []);
       setLoadingRepos(false);
     })();
-  }, [githubUsername]);
+    // Yalnızca açılışta: pencere zaten her açılışta yeniden takılıyor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -290,7 +311,17 @@ const CreateProjectDialog: React.FC<{
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {!githubUsername ? (
+          {loadingRepos && !githubUsername ? (
+            /*
+              Sunucuya sorarken "GitHub'ı bağla" uyarısını göstermek YANLIŞ olur: bağlantısı
+              olan üye, yanıt gelene kadar bir saniyeliğine olmayan bir sorunu okur ve
+              çoğu kişi orada pencereyi kapatır.
+            */
+            <div className="flex items-center justify-center gap-2 p-6 text-[11px] text-zinc-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>{tr ? 'GitHub bağlantın kontrol ediliyor...' : 'Checking your GitHub link...'}</span>
+            </div>
+          ) : !githubUsername ? (
             /*
               GitHub bağlı değilse depo sahipliği doğrulanamaz, dolayısıyla proje de
               açılamaz. Bunu pencerenin içinde söylemek, kullanıcının formu doldurup
@@ -439,7 +470,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  const githubUsername = user.github_username || null;
+  // Önbellekten başlangıç değeri; pencere açıldığında sunucudan gelen gerçekle güncelleniyor.
+  const [githubUsername, setGithubUsername] = useState<string | null>(user.github_username || null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -610,7 +642,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, language }) =>
       {showCreate && (
         <CreateProjectDialog
           tr={tr}
-          githubUsername={githubUsername}
+          cachedGithubUsername={githubUsername}
+          onGithubResolved={setGithubUsername}
           onClose={() => setShowCreate(false)}
           onCreated={(project) => {
             setProjects((current) => [project, ...current]);
